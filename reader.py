@@ -8,11 +8,17 @@ notifications (`.sa -aon`) so the reader reports trigger state changes.
 
 A scan "burst" is finalized once no EP:/OK: lines have arrived for
 QUIET_GAP_SECONDS (the trigger has been released):
-  - check in / check out : ONE tag per trigger pull -- take the most-frequently
-                           -read EPC (the strongest / closest tag) of the burst.
+  - check in / check out : ONE tag per trigger pull -- take the EPC with the
+                           strongest peak RSSI (the closest tag); if no RSSI was
+                           captured, fall back to the most-frequently-read EPC.
   - inventory            : take every distinct EPC seen across the whole hold.
   - finder               : no burst; while the trigger is held, RSSI (`RI:`) for
                            one target EPC is streamed live to gauge proximity.
+                           Releasing the trigger (`SW: off`) emits a finder_reset
+                           so the UI drops its adaptive scale for the next aim.
+
+RSSI (`RI:`) output is enabled for check-in/check-out (to pick the closest tag)
+and the finder; it is left off for inventory to keep that stream clean.
 
 Output power is set per mode with `.iv -o<nn> -n` (set parameter, take no
 action), which persists for subsequent trigger-initiated inventories:
@@ -83,6 +89,14 @@ class ReaderWorker:
         self._pending_rssi = None
         self._applied_rssi = None
 
+        # Read-success beep toggle (off in finder so it doesn't compete with the
+        # browser proximity beep; on elsewhere); applied like power.
+        self._pending_beep = None
+        self._applied_beep = None
+
+        # One-shot handheld alert (buzz/vibrate) request; flushed by the worker.
+        self._pending_alert = False
+
         # Finder mode: stream RSSI for one specific tag.
         self._finder_target = None
         self._last_epc = None
@@ -90,6 +104,8 @@ class ReaderWorker:
         # Accumulator for the current burst.
         self._counts = Counter()
         self._distinct = set()
+        # Peak RSSI per EPC in the burst (check-in/check-out tag selection).
+        self._rssi_peak = {}
         self._last_read = 0.0
 
     # -- public API ----------------------------------------------------------
@@ -131,6 +147,12 @@ class ReaderWorker:
                 self._pending_power = dbm
         return dbm
 
+    def alert(self):
+        """Request a one-shot handheld alert (buzz/vibrate). Thread-safe; the
+        worker thread flushes it to the serial port on its next loop."""
+        with self._lock:
+            self._pending_alert = True
+
     def set_mode(self, mode, payload=None):
         with self._lock:
             self._mode = mode
@@ -142,11 +164,16 @@ class ReaderWorker:
             # Drop anything partially accumulated when the mode changes.
             self._counts.clear()
             self._distinct.clear()
+            self._rssi_peak.clear()
             power = _power_for_mode(mode, self._check_power)
             if power is not None:
                 self._pending_power = power
-            # RSSI output is only needed (and wanted) for the finder.
-            self._pending_rssi = (mode == FINDER)
+            # RSSI output: the finder streams it live; check-in/check-out use it
+            # to pick the closest tag. Off elsewhere to keep inventory clean.
+            self._pending_rssi = mode in (CHECKIN, CHECKOUT, FINDER)
+            # Mute the reader's read-success beep in finder mode so it doesn't
+            # compete with the browser's proximity beep; on in every other mode.
+            self._pending_beep = (mode != FINDER)
 
     def set_checkin_item_fields(self, fields):
         """Set the per-unit fields (SKU, mfc date) attached to the next tag."""
@@ -174,15 +201,17 @@ class ReaderWorker:
                 time.sleep(0.1)
                 self._ser.reset_input_buffer()
                 self._connected = True
-                # Reader resets parameters on power-up, so re-apply power and RSSI
-                # for whatever mode we're currently in.
+                # Reader resets parameters on power-up, so re-apply power, RSSI
+                # and the beep toggle for whatever mode we're currently in.
                 self._applied_power = None
                 self._applied_rssi = None
+                self._applied_beep = None
                 with self._lock:
                     power = _power_for_mode(self._mode, self._check_power)
                     if power is not None:
                         self._pending_power = power
-                    self._pending_rssi = (self._mode == FINDER)
+                    self._pending_rssi = self._mode in (CHECKIN, CHECKOUT, FINDER)
+                    self._pending_beep = (self._mode != FINDER)
                 self._emit({"event": "status", "connected": True,
                             "message": f"Reader connected on {self.port}"})
                 self._read_loop()
@@ -207,6 +236,8 @@ class ReaderWorker:
         while not self._stop.is_set():
             self._apply_pending_power()
             self._apply_pending_rssi()
+            self._apply_pending_beep()
+            self._apply_pending_alert()
             raw = self._ser.readline()
             if raw:
                 line = raw.decode(errors="ignore").strip()
@@ -252,6 +283,42 @@ class ReaderWorker:
                 if self._pending_rssi is None:
                     self._pending_rssi = want
 
+    def _apply_pending_beep(self):
+        """Toggle the reader's read-success beep (`.iv -al`) on the port.
+
+        Muted in finder mode so it doesn't compete with the browser proximity
+        beep; on otherwise so check-in/out/inventory still beep on each read.
+        """
+        with self._lock:
+            want = self._pending_beep
+            self._pending_beep = None
+        if want is None or want == self._applied_beep:
+            return
+        try:
+            flag = "on" if want else "off"
+            self._ser.write(f".iv -al {flag} -n\r\n".encode())
+            self._applied_beep = want
+        except Exception:
+            with self._lock:
+                if self._pending_beep is None:
+                    self._pending_beep = want
+
+    def _apply_pending_alert(self):
+        """Fire a one-shot handheld alert, then restore the default alert params
+        so the read-success beep used by other modes is left intact."""
+        with self._lock:
+            want = self._pending_alert
+            self._pending_alert = False
+        if not want:
+            return
+        try:
+            self._ser.write((config.ALERT_VIBRATE_CMD + "\r\n").encode())
+            self._ser.write((config.ALERT_RESTORE_CMD + "\r\n").encode())
+        except Exception:
+            # Couldn't write; leave it pending for the next loop / reconnect.
+            with self._lock:
+                self._pending_alert = True
+
     def _handle_line(self, line):
         if line.startswith("EP:"):
             epc = line[3:].strip().upper()
@@ -279,8 +346,23 @@ class ReaderWorker:
             with self._lock:
                 mode = self._mode
                 target = self._finder_target
-            if mode == FINDER and self._last_epc and self._last_epc == target:
+            if mode in (CHECKIN, CHECKOUT) and self._last_epc:
+                prev = self._rssi_peak.get(self._last_epc)
+                if prev is None or rssi > prev:
+                    self._rssi_peak[self._last_epc] = rssi
+            elif mode == FINDER and self._last_epc and self._last_epc == target:
                 self._emit({"event": "finder", "epc": self._last_epc, "rssi": rssi})
+        elif line.startswith("SW:"):
+            # Asynchronous switch (trigger) state from `.sa -aon`: single/off.
+            state = line[3:].strip().lower()
+            if state == "off":
+                self._last_epc = None
+                with self._lock:
+                    mode = self._mode
+                # Releasing the trigger ends a finder pass; tell the UI to drop
+                # its adaptive scale so the next aim starts from scratch.
+                if mode == FINDER:
+                    self._emit({"event": "finder_reset"})
         elif line.startswith(("OK:", "ER:")):
             # End of one .iv cycle; the quiet-gap check finalizes the burst.
             self._last_epc = None
@@ -309,24 +391,38 @@ class ReaderWorker:
             payload = self._checkin_payload
             counts = self._counts.copy()
             distinct = set(self._distinct)
+            rssi_peak = dict(self._rssi_peak)
             self._counts.clear()
             self._distinct.clear()
-        self._finalize(mode, payload, counts, distinct)
+            self._rssi_peak.clear()
+        self._finalize(mode, payload, counts, distinct, rssi_peak)
 
-    def _finalize(self, mode, payload, counts, distinct):
+    @staticmethod
+    def _pick_epc(counts, rssi_peak):
+        """Choose one EPC from a burst: strongest peak RSSI wins (read count
+        breaks ties); fall back to the most-read EPC when no RSSI was captured."""
+        if rssi_peak:
+            return max(rssi_peak,
+                       key=lambda e: (rssi_peak[e], counts.get(e, 0)))
+        return counts.most_common(1)[0][0]
+
+    def _finalize(self, mode, payload, counts, distinct, rssi_peak=None):
         if mode == IDLE or not distinct:
             return
+        rssi_peak = rssi_peak or {}
         if mode == CHECKOUT:
-            epc = counts.most_common(1)[0][0]
+            epc = self._pick_epc(counts, rssi_peak)
             self._emit({"event": "scan", "mode": CHECKOUT, "epc": epc,
-                        "reads": counts[epc], "candidates": len(distinct)})
+                        "reads": counts[epc], "candidates": len(distinct),
+                        "rssi": rssi_peak.get(epc)})
         elif mode == CHECKIN:
-            # One tag per trigger pull: use the strongest (most-read) EPC.
-            epc = counts.most_common(1)[0][0]
+            # One tag per trigger pull: use the closest (strongest-RSSI) EPC.
+            epc = self._pick_epc(counts, rssi_peak)
             with self._lock:
                 item_fields = dict(self._checkin_item)
             event = {"event": "checkin_batch", "epcs": [epc], "distinct": 1,
-                     "candidates": len(distinct), "item_fields": item_fields}
+                     "candidates": len(distinct), "item_fields": item_fields,
+                     "rssi": rssi_peak.get(epc)}
             if payload:
                 event["item_type"] = payload.get("item_type")
                 event["fields"] = payload.get("fields", {})

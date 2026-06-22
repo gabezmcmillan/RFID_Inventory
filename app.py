@@ -131,6 +131,10 @@ async def _handle_event(event: dict):
                          "rssi": event.get("rssi")})
         return
 
+    if kind == "finder_reset":
+        await broadcast({"type": "finder_reset"})
+        return
+
     if state.db is None:
         await broadcast({"type": "error",
                          "message": f"Database not available: {state.db_error}"})
@@ -232,6 +236,74 @@ async def get_inventory_group(item_type: str, value: str = "", group_by: str = "
         None, state.db.group_tags, item_type, group_by, value)
 
 
+# ---------------------------------------------------------------------------
+# Admin (PIN-gated)
+# ---------------------------------------------------------------------------
+class AdminAuth(BaseModel):
+    pin: Optional[str] = None
+
+
+class AdminTagRequest(BaseModel):
+    pin: Optional[str] = None
+    epc: str
+    fields: Optional[Dict[str, str]] = None
+
+
+class AdminEpcRequest(BaseModel):
+    pin: Optional[str] = None
+    epc: str
+
+
+def _check_pin(pin):
+    """Return None if the PIN is valid, else a 403 JSONResponse."""
+    if not pin or pin != config.ADMIN_PIN:
+        return JSONResponse({"ok": False, "message": "Invalid admin PIN"}, 403)
+    return None
+
+
+def _require_db():
+    if state.db is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    return None
+
+
+@app.post("/api/admin/verify")
+async def admin_verify(req: AdminAuth):
+    bad = _check_pin(req.pin)
+    if bad:
+        return bad
+    return {"ok": True}
+
+
+@app.post("/api/admin/clear")
+async def admin_clear(req: AdminAuth):
+    bad = _check_pin(req.pin) or _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, state.db.clear_all)
+    return result
+
+
+@app.post("/api/admin/tag")
+async def admin_update_tag(req: AdminTagRequest):
+    bad = _check_pin(req.pin) or _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, state.db.update_tag, req.epc, req.fields or {})
+
+
+@app.post("/api/admin/tag/clear_flag")
+async def admin_clear_flag(req: AdminEpcRequest):
+    bad = _check_pin(req.pin) or _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, state.db.clear_flag, req.epc)
+
+
 @app.post("/api/mode")
 async def set_mode(req: ModeRequest):
     if state.worker is None:
@@ -257,6 +329,15 @@ async def set_mode(req: ModeRequest):
 
     state.worker.set_mode(mode, payload)
     return {"ok": True, "mode": mode}
+
+
+@app.post("/api/alert")
+async def fire_alert():
+    """Fire a one-shot handheld alert (used by the finder on tag lock)."""
+    if state.worker is None:
+        return JSONResponse({"ok": False, "message": "Reader worker not ready"}, 503)
+    state.worker.alert()
+    return {"ok": True}
 
 
 class CheckinItemRequest(BaseModel):

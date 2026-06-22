@@ -4,9 +4,29 @@
 const MODE_TITLES = {
   checkin: "Check In", checkout: "Check Out",
   inventory: "Sweep & Count", warehouse: "Warehouse", finder: "Find a Tag",
+  admin: "Admin",
 };
 const VIEWS = ["checkin-view", "checkout-view", "inventory-view",
-               "warehouse-view", "finder-view"];
+               "warehouse-view", "finder-view", "admin-view"];
+
+// Tag fields an admin may edit (key, label, input type).
+const EDIT_FIELDS = [
+  { key: "item_type", label: "Type", type: "text" },
+  { key: "po_number", label: "PO #", type: "text" },
+  { key: "building", label: "Building #", type: "text" },
+  { key: "vendor", label: "Vendor", type: "text" },
+  { key: "sku", label: "SKU", type: "text" },
+  { key: "mfc_date", label: "Mfc date", type: "date" },
+  { key: "status", label: "Status", type: "status" },
+];
+
+// Finder audio/alert tuning.
+const FINDER_BEEP_MIN_MS = 70;     // fastest cadence (right on the tag)
+const FINDER_BEEP_MAX_MS = 1000;   // slowest cadence (far / no signal)
+const FINDER_PROX_ALPHA = 0.35;    // EMA smoothing for proximity
+const FINDER_FOUND_PROX = 0.9;     // enter "found" above this smoothed prox
+const FINDER_REARM_PROX = 0.6;     // re-arm (allow another buzz) below this
+const FINDER_MIN_SAMPLES = 8;      // readings required before "found" can fire
 
 const state = {
   config: { item_types: [], type_fields: {}, power_min: 10, power_max: 29 },
@@ -14,11 +34,14 @@ const state = {
   selectedType: null,
   shipment: null,
   whGroupBy: "po",     // warehouse grouping dimension
-  finder: null,        // {epc, rssiMin, rssiMax}
+  finder: null,        // {epc, rssiMin, rssiMax, proxEma, samples, found}
+  admin: { pin: null, editMode: false },
 };
 
 let powerSendTimer = null;
 let itemSendTimer = null;
+let finderAudioCtx = null;
+let finderBeepTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -96,6 +119,7 @@ function handleMessage(msg) {
     case "checkout_result": onCheckoutResult(msg); break;
     case "inventory_result": onInventoryResult(msg); break;
     case "finder": onFinder(msg); break;
+    case "finder_reset": onFinderReset(); break;
     case "error":
       logActivity(msg.message, "err");
       showResult("err", "Error", `<p>${escapeHtml(msg.message)}</p>`);
@@ -146,17 +170,28 @@ async function openMode(mode) {
     showScanner("Hold the trigger to sweep\u2026");
   } else if (mode === "warehouse") {
     await setServerMode("idle");
+    $("wh-edit-banner").classList.toggle("hidden", !isEditing());
     await loadWarehouse();
+  } else if (mode === "admin") {
+    await setServerMode("idle");
+    renderAdmin();
   }
 }
 
 async function backToModes() {
   await setServerMode("idle");
+  stopFinderBeep();
   state.mode = null;
   state.finder = null;
+  state.admin.editMode = false;
+  $("wh-edit-banner").classList.add("hidden");
   $("panel").classList.add("hidden");
   $("mode-picker").classList.remove("hidden");
   hide("power-control");
+}
+
+function isEditing() {
+  return Boolean(state.admin.pin && state.admin.editMode);
 }
 
 async function setServerMode(mode, extra = {}) {
@@ -352,9 +387,23 @@ function onInventoryResult(msg) {
     unknownHtml = `<p class="hint">${msg.unknown.length} unregistered tag(s):</p>
       <ul class="unknown-list">${msg.unknown.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`;
   }
-  showResult("ok", `Counted ${msg.total} tag(s)`,
-    `<table><tr><th>Type</th><th>Qty</th></tr>${rows}</table>${unknownHtml}`);
-  logActivity(`Inventory sweep: ${msg.total} tag(s)`, "ok");
+  const flagged = msg.flagged || [];
+  let flaggedHtml = "";
+  if (flagged.length) {
+    const items = flagged.map((f) =>
+      `<li><span class="epc">${escapeHtml(f.epc)}</span> &mdash;
+        ${escapeHtml(f.item_type)} (PO ${escapeHtml(f.po_number || "n/a")},
+        Bldg ${escapeHtml(f.building || "n/a")}), checked out ${escapeHtml(f.delivered_at || "")}</li>`
+    ).join("");
+    flaggedHtml = `<div class="flag-warning">
+      <strong>&#9888; ${flagged.length} checked-out item(s) detected &mdash; should NOT be in the warehouse:</strong>
+      <ul>${items}</ul></div>`;
+  }
+  showResult(flagged.length ? "warn" : "ok", `Counted ${msg.total} tag(s)`,
+    `${flaggedHtml}<table><tr><th>Type</th><th>Qty</th></tr>${rows}</table>${unknownHtml}`);
+  logActivity(`Inventory sweep: ${msg.total} tag(s)` +
+    (flagged.length ? `, ${flagged.length} flagged` : ""),
+    flagged.length ? "warn" : "ok");
   showScanner("Hold the trigger to sweep again\u2026");
 }
 
@@ -455,33 +504,118 @@ async function loadGroupTags(cell, itemType, groupBy, value) {
       cell.innerHTML = `<p class="hint">No units.</p>`;
       return;
     }
-    const rows = data.tags.map((tag) => {
-      const statusCls = tag.status === "Delivered" ? "badge-out" : "badge-in";
-      const findBtn = `<button class="find-btn" data-epc="${escapeHtml(tag.epc)}"
-        data-label="${escapeHtml(itemType + " \u00b7 " + (tag.sku || tag.epc))}">Find</button>`;
-      return `<tr>
-        <td class="epc">${escapeHtml(tag.epc)}</td>
-        <td>${escapeHtml(tag.sku || "")}</td>
-        <td>${escapeHtml(tag.mfc_date || "")}</td>
-        <td><span class="badge ${statusCls}">${escapeHtml(tag.status)}</span></td>
-        <td>${findBtn}</td>
-      </tr>`;
-    }).join("");
+    const editing = isEditing();
+    const rows = data.tags.map((tag) => tagRowHtml(tag, itemType, editing)).join("");
     cell.innerHTML = `<table class="wh-tag-table">
       <thead><tr><th>EPC</th><th>SKU</th><th>Mfc date</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
     cell.querySelectorAll(".find-btn").forEach((b) => {
       b.onclick = (ev) => { ev.stopPropagation(); openFinder(b.dataset.epc, b.dataset.label); };
     });
+    if (editing) wireTagEditors(cell);
   } catch (e) {
     cell.innerHTML = `<p class="hint">Could not load units.</p>`;
+  }
+}
+
+function tagRowHtml(tag, itemType, editing) {
+  const statusCls = tag.status === "Delivered" ? "badge-out" : "badge-in";
+  const flagBadge = tag.flag
+    ? `<span class="badge badge-flag" title="${escapeHtml(tag.flag)}">&#9888; Flagged</span>`
+    : "";
+  const findBtn = `<button class="find-btn" data-epc="${escapeHtml(tag.epc)}"
+    data-label="${escapeHtml(itemType + " \u00b7 " + (tag.sku || tag.epc))}">Find</button>`;
+  const editBtn = editing
+    ? ` <button class="edit-btn" data-epc="${escapeHtml(tag.epc)}">Edit</button>` : "";
+  let editorRow = "";
+  if (editing) {
+    editorRow = `<tr class="tag-editor-row hidden" data-editor="${escapeHtml(tag.epc)}">
+      <td colspan="5">${tagEditorHtml(tag)}</td></tr>`;
+  }
+  return `<tr>
+      <td class="epc">${escapeHtml(tag.epc)}</td>
+      <td>${escapeHtml(tag.sku || "")}</td>
+      <td>${escapeHtml(tag.mfc_date || "")}</td>
+      <td><span class="badge ${statusCls}">${escapeHtml(tag.status)}</span> ${flagBadge}</td>
+      <td>${findBtn}${editBtn}</td>
+    </tr>${editorRow}`;
+}
+
+function tagEditorHtml(tag) {
+  const fields = EDIT_FIELDS.map((f) => {
+    const val = tag[f.key] || "";
+    let input;
+    if (f.type === "status") {
+      const opts = ["In Warehouse", "Delivered"].map((s) =>
+        `<option value="${s}"${s === tag.status ? " selected" : ""}>${s}</option>`).join("");
+      input = `<select data-field="status">${opts}</select>`;
+    } else {
+      input = `<input type="${f.type === "date" ? "date" : "text"}"
+        data-field="${f.key}" value="${escapeHtml(val)}" />`;
+    }
+    return `<label class="edit-field"><span>${escapeHtml(f.label)}</span>${input}</label>`;
+  }).join("");
+  const clearFlagBtn = tag.flag
+    ? `<button class="warn-btn clear-flag-btn" data-epc="${escapeHtml(tag.epc)}">Clear flag</button>` : "";
+  return `<div class="tag-editor" data-epc="${escapeHtml(tag.epc)}">
+      <div class="edit-grid">${fields}</div>
+      <div class="edit-actions">
+        <button class="primary-btn save-tag-btn" data-epc="${escapeHtml(tag.epc)}">Save</button>
+        ${clearFlagBtn}
+      </div>
+    </div>`;
+}
+
+function wireTagEditors(cell) {
+  cell.querySelectorAll(".edit-btn").forEach((b) => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const editor = cell.querySelector(`tr[data-editor="${cssEscape(b.dataset.epc)}"]`);
+      if (editor) editor.classList.toggle("hidden");
+    };
+  });
+  cell.querySelectorAll(".save-tag-btn").forEach((b) => {
+    b.onclick = (ev) => { ev.stopPropagation(); saveTag(b.dataset.epc, b.closest(".tag-editor")); };
+  });
+  cell.querySelectorAll(".clear-flag-btn").forEach((b) => {
+    b.onclick = (ev) => { ev.stopPropagation(); clearTagFlag(b.dataset.epc); };
+  });
+}
+
+function cssEscape(s) {
+  return String(s).replace(/["\\]/g, "\\$&");
+}
+
+async function saveTag(epc, editorEl) {
+  if (!editorEl) return;
+  const fields = {};
+  editorEl.querySelectorAll("[data-field]").forEach((el) => {
+    fields[el.dataset.field] = el.value;
+  });
+  const data = await adminPost("/api/admin/tag", { epc, fields });
+  if (data && data.ok) {
+    logActivity(`Updated ${epc}`, "ok");
+    await loadWarehouse();
+  } else if (data) {
+    logActivity(data.message || "Edit failed", "err");
+  }
+}
+
+async function clearTagFlag(epc) {
+  const data = await adminPost("/api/admin/tag/clear_flag", { epc });
+  if (data && data.ok) {
+    logActivity(`Cleared flag on ${epc}`, "ok");
+    await loadWarehouse();
+  } else if (data) {
+    logActivity(data.message || "Could not clear flag", "err");
   }
 }
 
 // -- finder ------------------------------------------------------------------
 async function openFinder(epc, label) {
   state.mode = "finder";
-  state.finder = { epc, rssiMin: null, rssiMax: null };
+  state.finder = { epc, rssiMin: null, rssiMax: null,
+                   proxEma: null, samples: 0, found: false };
   $("panel-title").textContent = MODE_TITLES.finder;
   hide("power-control"); hide("scanner"); hide("result");
   showView("finder-view");
@@ -489,6 +623,8 @@ async function openFinder(epc, label) {
     `<div class="finder-label">${escapeHtml(label || epc)}</div>
      <div class="epc">${escapeHtml(epc)}</div>`;
   resetFinderPulse();
+  ensureFinderAudio();   // the Find click unlocks the AudioContext
+  startFinderBeep();
   await setServerMode("finder", { target_epc: epc });
   logActivity(`Finding ${epc}\u2026`, "ok");
 }
@@ -499,6 +635,14 @@ function resetFinderPulse() {
   p.style.setProperty("--prox", 0);
   $("finder-strength").textContent = "No signal yet";
   $("finder-rssi").textContent = "Hold the trigger and move the reader around.";
+  $("finder-view").classList.remove("finder-found");
+  if (state.finder) {
+    state.finder.rssiMin = null;
+    state.finder.rssiMax = null;
+    state.finder.proxEma = null;
+    state.finder.samples = 0;
+    state.finder.found = false;
+  }
 }
 
 function onFinder(msg) {
@@ -514,26 +658,193 @@ function onFinder(msg) {
   const span = f.rssiMax - f.rssiMin;
   const prox = span > 0 ? (rssi - f.rssiMin) / span : 0.5;
 
+  // Smooth proximity so the beep tempo and threshold don't jitter.
+  f.proxEma = f.proxEma == null
+    ? prox
+    : FINDER_PROX_ALPHA * prox + (1 - FINDER_PROX_ALPHA) * f.proxEma;
+  f.samples += 1;
+  const proxEma = f.proxEma;
+
   const p = $("finder-pulse");
-  p.style.animationDuration = `${(1.6 - prox * 1.4).toFixed(2)}s`;
-  p.style.setProperty("--prox", prox.toFixed(2));
+  p.style.animationDuration = `${(1.6 - proxEma * 1.4).toFixed(2)}s`;
+  p.style.setProperty("--prox", proxEma.toFixed(2));
 
   let word = "Far";
-  if (prox > 0.85) word = "Right here!";
-  else if (prox > 0.6) word = "Very close";
-  else if (prox > 0.35) word = "Getting warmer";
-  else if (prox > 0.15) word = "Cold";
+  if (proxEma > 0.85) word = "Right here!";
+  else if (proxEma > 0.6) word = "Very close";
+  else if (proxEma > 0.35) word = "Getting warmer";
+  else if (proxEma > 0.15) word = "Cold";
   $("finder-strength").textContent = word;
   $("finder-rssi").textContent = `Signal: ${rssi}`;
+
+  // Hybrid confidence gate with hysteresis: fire once on entering "found",
+  // re-arm only after backing away below the lower threshold.
+  if (!f.found && proxEma >= FINDER_FOUND_PROX && f.samples >= FINDER_MIN_SAMPLES) {
+    f.found = true;
+    onFinderLock();
+  } else if (f.found && proxEma <= FINDER_REARM_PROX) {
+    f.found = false;
+    $("finder-view").classList.remove("finder-found");
+  }
+}
+
+function onFinderReset() {
+  // Trigger released: forget the adaptive scale so the next aim starts fresh.
+  // The beep loop keeps running but goes silent until a new signal arrives.
+  if (state.mode !== "finder" || !state.finder) return;
+  resetFinderPulse();
+}
+
+function onFinderLock() {
+  $("finder-view").classList.add("finder-found");
+  // Distinct double-chirp so the lock is audible over the cadence beep.
+  playTick(1320, 90);
+  setTimeout(() => playTick(1320, 90), 130);
+  logActivity("Target locked \u2014 vibrating handheld", "ok");
+  fetch("/api/alert", { method: "POST" }).catch(() => {});
 }
 
 async function stopFinder() {
+  stopFinderBeep();
   state.finder = null;
   await setServerMode("idle");
   state.mode = "warehouse";
   $("panel-title").textContent = MODE_TITLES.warehouse;
   showView("warehouse-view");
   await loadWarehouse();
+}
+
+// -- finder audio ------------------------------------------------------------
+function ensureFinderAudio() {
+  try {
+    if (!finderAudioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      finderAudioCtx = new Ctx();
+    }
+    if (finderAudioCtx.state === "suspended") finderAudioCtx.resume();
+  } catch (e) {
+    return null;
+  }
+  return finderAudioCtx;
+}
+
+function playTick(freq = 880, durMs = 40) {
+  const ctx = ensureFinderAudio();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = freq;
+  const now = ctx.currentTime;
+  const dur = durMs / 1000;
+  // Short envelope to avoid clicks.
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.25, now + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + dur + 0.02);
+}
+
+function beepIntervalFor(prox) {
+  const p = Math.max(0, Math.min(1, prox));
+  return FINDER_BEEP_MAX_MS - p * (FINDER_BEEP_MAX_MS - FINDER_BEEP_MIN_MS);
+}
+
+function startFinderBeep() {
+  stopFinderBeep();
+  const tick = () => {
+    if (!state.finder) return;
+    const ema = state.finder.proxEma;
+    if (ema != null) playTick();  // silent until the first signal arrives
+    const interval = ema == null ? FINDER_BEEP_MAX_MS : beepIntervalFor(ema);
+    finderBeepTimer = setTimeout(tick, interval);
+  };
+  finderBeepTimer = setTimeout(tick, FINDER_BEEP_MAX_MS);
+}
+
+function stopFinderBeep() {
+  if (finderBeepTimer) {
+    clearTimeout(finderBeepTimer);
+    finderBeepTimer = null;
+  }
+}
+
+// -- admin -------------------------------------------------------------------
+function renderAdmin() {
+  const unlocked = Boolean(state.admin.pin);
+  $("admin-locked").classList.toggle("hidden", unlocked);
+  $("admin-panel").classList.toggle("hidden", !unlocked);
+  if (!unlocked) $("admin-pin").value = "";
+}
+
+async function adminPost(url, body) {
+  try {
+    const res = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: state.admin.pin, ...body }),
+    });
+    if (res.status === 403) {
+      // PIN no longer valid (e.g. changed server-side): re-lock.
+      state.admin.pin = null;
+      state.admin.editMode = false;
+      logActivity("Admin session locked (invalid PIN)", "err");
+      return { ok: false, message: "Invalid admin PIN" };
+    }
+    return await res.json();
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+    return null;
+  }
+}
+
+async function adminUnlock() {
+  const pin = $("admin-pin").value;
+  if (!pin) return;
+  try {
+    const res = await fetch("/api/admin/verify", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      state.admin.pin = pin;
+      renderAdmin();
+      logActivity("Admin unlocked", "ok");
+    } else {
+      logActivity("Invalid admin PIN", "err");
+    }
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+}
+
+function adminLock() {
+  state.admin.pin = null;
+  state.admin.editMode = false;
+  renderAdmin();
+  logActivity("Admin locked", "ok");
+}
+
+async function adminClearDatabase() {
+  if (!state.admin.pin) return;
+  const ok = window.confirm(
+    "Clear the ENTIRE database? This permanently deletes every tag/unit. " +
+    "This cannot be undone.");
+  if (!ok) return;
+  const data = await adminPost("/api/admin/clear", {});
+  if (data && data.ok) {
+    logActivity(data.message || "Database cleared", "warn");
+    showResult("warn", "Database cleared", `<p>${escapeHtml(data.message || "")}</p>`);
+  } else if (data) {
+    logActivity(data.message || "Clear failed", "err");
+  }
+}
+
+async function adminEditRecords() {
+  state.admin.editMode = true;
+  await openMode("warehouse");
 }
 
 // -- ui helpers --------------------------------------------------------------
@@ -576,6 +887,11 @@ function wireUI() {
   $("power-slider").oninput = onPowerInput;
   $("wh-refresh").onclick = loadWarehouse;
   $("finder-stop").onclick = stopFinder;
+  $("admin-unlock").onclick = adminUnlock;
+  $("admin-pin").onkeydown = (e) => { if (e.key === "Enter") adminUnlock(); };
+  $("admin-lock-btn").onclick = adminLock;
+  $("admin-clear").onclick = adminClearDatabase;
+  $("admin-edit-records").onclick = adminEditRecords;
   document.querySelectorAll(".seg-btn").forEach((b) => {
     b.onclick = () => {
       document.querySelectorAll(".seg-btn").forEach((x) => x.classList.remove("active"));

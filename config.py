@@ -35,10 +35,25 @@ def power_from_percent(pct):
 CHECK_POWER_DBM = power_from_percent(30)        # ~30% strength -> close-range only
 INVENTORY_POWER_DBM = READER_POWER_MAX_DBM      # full power for sweeps
 
+# TSL Alert command (`.al`) used by the finder to buzz/vibrate the handheld once
+# the target tag is locked. Params: -b buzzer on/off, -v vibrate on/off,
+# -d sho/med/lon duration; an `.al` without -n fires immediately (both off errors).
+# We fire a long vibrate (buzzer off), then restore the defaults *without* firing
+# (-n) so the normal read-success beep in other modes is unaffected.
+ALERT_VIBRATE_CMD = ".al -boff -von -dlon"      # fire: long vibrate, no buzzer
+ALERT_RESTORE_CMD = ".al -bon -dsho -von -n"    # restore defaults, no action
+
 # ---------------------------------------------------------------------------
 # Local database (SQLite)
 # ---------------------------------------------------------------------------
 DB_PATH = "inventory.db"
+
+# ---------------------------------------------------------------------------
+# Admin
+# ---------------------------------------------------------------------------
+# PIN required for admin actions (clear database, edit records). This is light
+# protection for a trusted local machine, not real security -- change it here.
+ADMIN_PIN = "1234"
 
 # ---------------------------------------------------------------------------
 # Web server

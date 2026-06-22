@@ -75,6 +75,8 @@ class Database:
                     status       TEXT NOT NULL DEFAULT 'In Warehouse',
                     received_at  TEXT NOT NULL,
                     delivered_at TEXT NOT NULL DEFAULT '',
+                    flag         TEXT NOT NULL DEFAULT '',
+                    flagged_at   TEXT NOT NULL DEFAULT '',
                     created_at   TEXT NOT NULL,
                     updated_at   TEXT NOT NULL
                 );
@@ -94,7 +96,17 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_tags_status ON tags (status);
                 """
             )
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self):
+        """Add columns to an existing `tags` table created by an older schema."""
+        have = {row["name"] for row in
+                self._conn.execute("PRAGMA table_info(tags)").fetchall()}
+        for col in ("flag", "flagged_at"):
+            if col not in have:
+                self._conn.execute(
+                    f"ALTER TABLE tags ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
     # -- internals -----------------------------------------------------------
     def _log(self, action, epc, item_type="", po_number="", building="",
@@ -126,6 +138,8 @@ class Database:
             "status": row["status"],
             "received_at": row["received_at"],
             "delivered_at": row["delivered_at"],
+            "flag": row["flag"],
+            "flagged_at": row["flagged_at"],
         }
 
     # -- writes --------------------------------------------------------------
@@ -214,25 +228,41 @@ class Database:
         """Inventory sweep: report tags present, grouped by item type.
 
         Read-only with respect to quantities (a partial sweep must not zero out
-        shipments it didn't cover); it logs COUNT rows for the audit trail.
+        shipments it didn't cover); it logs COUNT rows for the audit trail. A tag
+        that is already Delivered but detected here is persistently flagged: it
+        should not physically be in the warehouse.
         """
-        counts, unknown = {}, []
+        counts, unknown, flagged = {}, [], []
+        ts = _now()
         with self._lock:
             for epc in sorted(set(e.upper() for e in epcs)):
                 row = self._conn.execute(
-                    "SELECT item_type, po_number, building, vendor FROM tags "
-                    "WHERE epc=?", (epc,)).fetchone()
-                if row:
+                    "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
+                if row is None:
+                    unknown.append(epc)
+                    self._log("COUNT", epc, "UNKNOWN")
+                    continue
+                if row["status"] == STATUS_DELIVERED:
+                    flag = (f"Checked out {_date_of(row['delivered_at'])}; "
+                            "detected in sweep")
+                    self._conn.execute(
+                        "UPDATE tags SET flag=?, flagged_at=?, updated_at=? WHERE epc=?",
+                        (flag, ts, ts, epc))
+                    self._log("FLAG", epc, row["item_type"], row["po_number"],
+                              row["building"], row["vendor"], detail=flag)
+                    flagged.append({
+                        "epc": epc, "item_type": row["item_type"],
+                        "po_number": row["po_number"], "building": row["building"],
+                        "delivered_at": _date_of(row["delivered_at"]), "flag": flag,
+                    })
+                else:
                     counts[row["item_type"]] = counts.get(row["item_type"], 0) + 1
                     self._log("COUNT", epc, row["item_type"], row["po_number"],
                               row["building"], row["vendor"])
-                else:
-                    unknown.append(epc)
-                    self._log("COUNT", epc, "UNKNOWN")
             self._conn.commit()
 
-        return {"counts": counts, "unknown": unknown,
-                "total": sum(counts.values()) + len(unknown)}
+        return {"counts": counts, "unknown": unknown, "flagged": flagged,
+                "total": sum(counts.values()) + len(unknown) + len(flagged)}
 
     # -- reads (interactive inventory view) ----------------------------------
     def inventory_tree(self, group_by="po"):
@@ -291,6 +321,89 @@ class Database:
             row = self._conn.execute(
                 "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
         return self._tag_dict(row) if row else None
+
+    # -- admin ---------------------------------------------------------------
+    def clear_all(self):
+        """Delete every tag. Events are kept as an audit trail (plus a CLEAR)."""
+        with self._lock:
+            removed = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM tags").fetchone()["n"]
+            self._conn.execute("DELETE FROM tags")
+            self._log("CLEAR", "", detail=f"cleared {removed} tag(s)")
+            self._conn.commit()
+        return {"ok": True, "removed": removed,
+                "message": f"Cleared {removed} tag(s) from the database."}
+
+    # Fields an admin may edit on a tag.
+    EDITABLE = ("item_type", "po_number", "building", "vendor", "sku",
+                "mfc_date", "status")
+
+    def update_tag(self, epc, fields):
+        """Admin: overwrite editable fields on a tag. Returns the updated tag."""
+        epc = epc.upper()
+        fields = fields or {}
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"{epc} is not registered.",
+                        "epc": epc}
+
+            sets, params, changes = [], [], []
+            for key in self.EDITABLE:
+                if key in fields:
+                    new_val = ("" if fields[key] is None else str(fields[key])).strip()
+                    if new_val != (row[key] or ""):
+                        sets.append(f"{key}=?")
+                        params.append(new_val)
+                        changes.append(f"{key}: '{row[key]}' -> '{new_val}'")
+
+            # Keep delivered_at / flag consistent with a status change.
+            if "status" in fields:
+                if fields["status"] == STATUS_IN:
+                    sets += ["delivered_at=?", "flag=?", "flagged_at=?"]
+                    params += ["", "", ""]
+                elif fields["status"] == STATUS_DELIVERED and not row["delivered_at"]:
+                    sets.append("delivered_at=?")
+                    params.append(ts)
+
+            if not sets:
+                return {"ok": True, "message": "No changes.",
+                        "tag": self._tag_dict(row)}
+
+            sets.append("updated_at=?")
+            params.append(ts)
+            params.append(epc)
+            self._conn.execute(
+                f"UPDATE tags SET {', '.join(sets)} WHERE epc=?", params)
+            self._log("EDIT", epc, fields.get("item_type", row["item_type"]),
+                      detail="; ".join(changes) or "status/flag reset")
+            updated = self._conn.execute(
+                "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
+            self._conn.commit()
+        return {"ok": True, "message": f"Updated {epc}.",
+                "tag": self._tag_dict(updated)}
+
+    def clear_flag(self, epc):
+        """Admin: clear a tag's warning flag."""
+        epc = epc.upper()
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"{epc} is not registered.",
+                        "epc": epc}
+            self._conn.execute(
+                "UPDATE tags SET flag=?, flagged_at=?, updated_at=? WHERE epc=?",
+                ("", "", ts, epc))
+            self._log("UNFLAG", epc, row["item_type"])
+            updated = self._conn.execute(
+                "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
+            self._conn.commit()
+        return {"ok": True, "message": f"Cleared flag on {epc}.",
+                "tag": self._tag_dict(updated)}
 
     def close(self):
         with self._lock:

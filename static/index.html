@@ -38,6 +38,11 @@
         <span class="mode-title">Warehouse</span>
         <span class="mode-sub">Browse &amp; find items</span>
       </button>
+      <button class="mode-card" data-mode="admin">
+        <span class="mode-icon">&#x1F510;</span>
+        <span class="mode-title">Admin</span>
+        <span class="mode-sub">Edit &amp; clear records</span>
+      </button>
     </section>
 
     <!-- Active panel -->
@@ -73,8 +78,31 @@
         <p class="hint">Hold the trigger and sweep over the items. Release to count.</p>
       </div>
 
+      <!-- Admin -->
+      <div id="admin-view" class="view hidden">
+        <div id="admin-locked" class="admin-lock">
+          <p class="hint">Enter the admin PIN to manage records.</p>
+          <div class="dev-row">
+            <input id="admin-pin" type="password" placeholder="Admin PIN" />
+            <button id="admin-unlock" class="primary-btn">Unlock</button>
+          </div>
+        </div>
+        <div id="admin-panel" class="hidden">
+          <div class="admin-actions">
+            <button id="admin-edit-records" class="primary-btn">Edit warehouse records</button>
+            <button id="admin-clear" class="danger-btn">Clear database</button>
+            <button id="admin-lock-btn" class="back-btn">Lock</button>
+          </div>
+          <p class="hint">Edit mode lets you open any group and change a unit's fields,
+            fix its status, or clear a warning flag. Changes save immediately.</p>
+        </div>
+      </div>
+
       <!-- Warehouse browse / drill-down -->
       <div id="warehouse-view" class="view hidden">
+        <div id="wh-edit-banner" class="edit-banner hidden">
+          Edit mode is ON &mdash; you can edit units and clear flags. Changes save immediately.
+        </div>
         <div class="wh-controls">
           <span class="wh-controls-label">Group by</span>
           <div class="seg">
