@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RFID Inventory</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>RFID Inventory</h1>
+    <div class="status-pills">
+      <span id="reader-pill" class="pill pill-off">Reader</span>
+      <span id="sheets-pill" class="pill pill-off">Sheets</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Mode picker -->
+    <section id="mode-picker" class="mode-grid">
+      <button class="mode-card" data-mode="checkin">
+        <span class="mode-icon">&#x2193;</span>
+        <span class="mode-title">Check In</span>
+        <span class="mode-sub">Receive a shipment</span>
+      </button>
+      <button class="mode-card" data-mode="checkout">
+        <span class="mode-icon">&#x2191;</span>
+        <span class="mode-title">Check Out</span>
+        <span class="mode-sub">Deliver to site</span>
+      </button>
+      <button class="mode-card" data-mode="inventory">
+        <span class="mode-icon">&#x21BB;</span>
+        <span class="mode-title">Inventory</span>
+        <span class="mode-sub">Sweep &amp; count</span>
+      </button>
+    </section>
+
+    <!-- Active panel -->
+    <section id="panel" class="panel hidden">
+      <div class="panel-head">
+        <button id="back-btn" class="back-btn">&larr; Modes</button>
+        <h2 id="panel-title"></h2>
+      </div>
+
+      <!-- Check In (receive shipment) -->
+      <div id="checkin-view" class="view hidden">
+        <div class="field">
+          <label>Item type</label>
+          <div id="type-buttons" class="type-buttons"></div>
+        </div>
+        <form id="checkin-form" class="form hidden"></form>
+        <button id="arm-btn" class="primary-btn hidden">Start receiving shipment</button>
+        <button id="finish-btn" class="back-btn hidden">Finish / change shipment</button>
+      </div>
+
+      <!-- Check Out (deliver to site) -->
+      <div id="checkout-view" class="view hidden">
+        <p class="hint">Point the reader at a tag and pull the trigger to deliver it to site.</p>
+      </div>
+
+      <!-- Inventory -->
+      <div id="inventory-view" class="view hidden">
+        <p class="hint">Hold the trigger and sweep over the items. Release to count.</p>
+      </div>
+
+      <!-- Reader power (check-in / check-out only) -->
+      <div id="power-control" class="power-control hidden">
+        <label for="power-slider">
+          Scan power: <b id="power-value">&ndash;</b> dBm
+        </label>
+        <input id="power-slider" type="range" min="10" max="29" step="1" />
+        <span class="hint power-hint">Lower power = shorter range. Drop it until only the tag at the reader is read.</span>
+      </div>
+
+      <!-- Live scan indicator -->
+      <div id="scanner" class="scanner hidden">
+        <div class="pulse"></div>
+        <div class="scanner-text">
+          <strong id="scanner-title">Waiting for trigger&hellip;</strong>
+          <span id="scanner-sub">Distinct tags: <b id="live-count">0</b></span>
+        </div>
+      </div>
+
+      <!-- Result area -->
+      <div id="result" class="result hidden"></div>
+    </section>
+
+    <!-- Activity log -->
+    <section class="log-section">
+      <h3>Activity</h3>
+      <ul id="activity" class="activity"></ul>
+    </section>
+
+    <!-- Dev test tool -->
+    <details class="dev-tool">
+      <summary>Test without hardware</summary>
+      <div class="dev-row">
+        <input id="sim-epc" type="text" placeholder="EPC hex (comma-separated for sweep)" />
+        <button id="sim-btn">Simulate scan</button>
+      </div>
+    </details>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
