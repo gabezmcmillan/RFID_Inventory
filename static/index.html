@@ -11,7 +11,7 @@
     <h1>RFID Inventory</h1>
     <div class="status-pills">
       <span id="reader-pill" class="pill pill-off">Reader</span>
-      <span id="sheets-pill" class="pill pill-off">Sheets</span>
+      <span id="db-pill" class="pill pill-off">Database</span>
     </div>
   </header>
 
@@ -30,8 +30,13 @@
       </button>
       <button class="mode-card" data-mode="inventory">
         <span class="mode-icon">&#x21BB;</span>
-        <span class="mode-title">Inventory</span>
-        <span class="mode-sub">Sweep &amp; count</span>
+        <span class="mode-title">Sweep &amp; Count</span>
+        <span class="mode-sub">Live tag count</span>
+      </button>
+      <button class="mode-card" data-mode="warehouse">
+        <span class="mode-icon">&#x1F4E6;</span>
+        <span class="mode-title">Warehouse</span>
+        <span class="mode-sub">Browse &amp; find items</span>
       </button>
     </section>
 
@@ -51,6 +56,11 @@
         <form id="checkin-form" class="form hidden"></form>
         <button id="arm-btn" class="primary-btn hidden">Start receiving shipment</button>
         <button id="finish-btn" class="back-btn hidden">Finish / change shipment</button>
+
+        <!-- Per-unit fields, filled before each trigger pull -->
+        <form id="item-form" class="form item-form hidden">
+          <p class="hint">Fill in this unit's details, then pull the trigger to tag it.</p>
+        </form>
       </div>
 
       <!-- Check Out (deliver to site) -->
@@ -58,9 +68,36 @@
         <p class="hint">Point the reader at a tag and pull the trigger to deliver it to site.</p>
       </div>
 
-      <!-- Inventory -->
+      <!-- Inventory sweep -->
       <div id="inventory-view" class="view hidden">
         <p class="hint">Hold the trigger and sweep over the items. Release to count.</p>
+      </div>
+
+      <!-- Warehouse browse / drill-down -->
+      <div id="warehouse-view" class="view hidden">
+        <div class="wh-controls">
+          <span class="wh-controls-label">Group by</span>
+          <div class="seg">
+            <button class="seg-btn active" data-group="po">PO #</button>
+            <button class="seg-btn" data-group="building">Building #</button>
+          </div>
+          <button id="wh-refresh" class="back-btn">Refresh</button>
+        </div>
+        <div id="warehouse-tree" class="wh-tree"></div>
+      </div>
+
+      <!-- Finder -->
+      <div id="finder-view" class="view hidden">
+        <div id="finder-target" class="finder-target"></div>
+        <div class="finder-stage">
+          <div id="finder-pulse" class="finder-pulse"></div>
+        </div>
+        <div class="finder-readout">
+          <span id="finder-strength">No signal yet</span>
+          <span id="finder-rssi" class="hint"></span>
+        </div>
+        <p class="hint">Hold the trigger and sweep slowly. The pulse speeds up as you get closer.</p>
+        <button id="finder-stop" class="back-btn">Stop finding</button>
       </div>
 
       <!-- Reader power (check-in / check-out only) -->

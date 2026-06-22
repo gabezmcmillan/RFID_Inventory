@@ -36,10 +36,9 @@ CHECK_POWER_DBM = power_from_percent(30)        # ~30% strength -> close-range o
 INVENTORY_POWER_DBM = READER_POWER_MAX_DBM      # full power for sweeps
 
 # ---------------------------------------------------------------------------
-# Google Sheets
+# Local database (SQLite)
 # ---------------------------------------------------------------------------
-CREDENTIALS_FILE = "credentials.json"
-SPREADSHEET_NAME = "RFID-TRACKING"
+DB_PATH = "inventory.db"
 
 # ---------------------------------------------------------------------------
 # Web server
@@ -48,19 +47,27 @@ HOST = "127.0.0.1"
 PORT = 8000
 
 # ---------------------------------------------------------------------------
-# Item types and shipment fields
+# Item types and check-in fields
 # ---------------------------------------------------------------------------
-# A check-in registers a *shipment* of an item type. Each field below is shown
-# in the check-in form and stored on the WH Inventory / Tags rows. The Received
-# Date is auto-populated from the scan time, so it is not a form field.
-# Each field: key (stored), label (shown in UI + sheet header), type (input type).
-COMMON_FIELDS = [
-    {"key": "building_number", "label": "Building #", "type": "text"},
-    {"key": "po_number",       "label": "PO Number",  "type": "text"},
-    {"key": "vendor",          "label": "Vendor",     "type": "text"},
+# A check-in registers a shipment of an item type and tags each physical unit.
+# Fields carry a `scope`:
+#   "shipment" : entered once when arming the shipment, applied to every tag
+#                in it (Building #, PO Number, Vendor).
+#   "item"     : entered per unit, just before pulling the trigger on that tag
+#                (SKU, Manufactured Date) -- each tag can differ.
+# Each field: key (stored), label (shown in UI), type (input type), scope.
+SHIPMENT_FIELDS = [
+    {"key": "building_number", "label": "Building #", "type": "text", "scope": "shipment"},
+    {"key": "po_number",       "label": "PO Number",  "type": "text", "scope": "shipment"},
+    {"key": "vendor",          "label": "Vendor",     "type": "text", "scope": "shipment"},
 ]
+ITEM_FIELDS = [
+    {"key": "sku",      "label": "SKU",               "type": "text", "scope": "item"},
+    {"key": "mfc_date", "label": "Manufactured Date", "type": "date", "scope": "item"},
+]
+COMMON_FIELDS = SHIPMENT_FIELDS + ITEM_FIELDS
 
-# Item types double as the "Item Name" on the WH Inventory sheet.
+# Item types double as the "Item Name" in the database.
 ITEM_TYPES = ["TSC", "CDU", "W.I.F."]
 
 # For now every type shares COMMON_FIELDS. To give a type unique fields later,
