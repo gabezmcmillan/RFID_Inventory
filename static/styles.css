@@ -150,7 +150,7 @@ main {
 
 .form { display: grid; gap: 14px; margin-bottom: 18px; }
 .form .field { margin-bottom: 0; }
-.form input {
+.form input, .form select {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -159,7 +159,25 @@ main {
   padding: 11px 13px;
   font-size: 15px;
 }
-.form input:focus { outline: none; border-color: var(--accent); }
+.form input:focus, .form select:focus { outline: none; border-color: var(--accent); }
+
+.btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.opt-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 15px;
+  cursor: pointer;
+}
+.opt-btn:hover { border-color: var(--accent); }
+.opt-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.opt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .primary-btn {
   width: 100%;
@@ -360,6 +378,7 @@ table.wh-group-table, table.wh-tag-table {
 }
 .badge-in { color: var(--green); border-color: rgba(46,204,113,0.4); }
 .badge-out { color: var(--muted); }
+.badge-partial { color: var(--amber); border-color: rgba(245,166,35,0.4); }
 
 .find-btn {
   background: var(--accent-2);
@@ -430,6 +449,46 @@ table.wh-group-table, table.wh-tag-table {
 
 /* Admin */
 .admin-lock .dev-row { margin-top: 8px; }
+.admin-vendors { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+.admin-vendors h3 { margin: 0 0 4px; font-size: 15px; }
+.vendor-list { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.vendor-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 6px 5px 12px;
+  font-size: 14px;
+}
+.vendor-del {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.vendor-del:hover { color: var(--red); }
+
+/* Sweep & Count detail dropdown */
+.sweep-details { margin-top: 14px; }
+.sweep-details > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 14px;
+  padding: 6px 0;
+}
+.sweep-details table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.sweep-details th, .sweep-details td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sweep-details th { color: var(--muted); font-weight: 600; }
+.sweep-details .epc { font-family: ui-monospace, monospace; }
 .admin-actions {
   display: flex;
   gap: 10px;

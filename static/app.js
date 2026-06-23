@@ -13,8 +13,8 @@ const VIEWS = ["checkin-view", "checkout-view", "inventory-view",
 const EDIT_FIELDS = [
   { key: "item_type", label: "Type", type: "text" },
   { key: "po_number", label: "PO #", type: "text" },
-  { key: "building", label: "Building #", type: "text" },
-  { key: "vendor", label: "Vendor", type: "text" },
+  { key: "building", label: "Building #", type: "building" },
+  { key: "vendor", label: "Vendor", type: "vendor" },
   { key: "sku", label: "SKU", type: "text" },
   { key: "mfc_date", label: "Mfc date", type: "date" },
   { key: "status", label: "Status", type: "status" },
@@ -36,6 +36,7 @@ const state = {
   whGroupBy: "po",     // warehouse grouping dimension
   finder: null,        // {epc, rssiMin, rssiMax, proxEma, samples, found}
   admin: { pin: null, editMode: false },
+  vendors: [],         // dropdown options, managed in Admin
 };
 
 let powerSendTimer = null;
@@ -49,9 +50,17 @@ const $ = (id) => document.getElementById(id);
 async function boot() {
   state.config = await (await fetch("/api/config")).json();
   initPowerBounds();
+  await loadVendors();
   await refreshStatus();
   connectWS();
   wireUI();
+}
+
+async function loadVendors() {
+  try {
+    const data = await (await fetch("/api/vendors")).json();
+    state.vendors = data.vendors || [];
+  } catch (e) { /* keep whatever we have */ }
 }
 
 // -- field helpers -----------------------------------------------------------
@@ -159,6 +168,7 @@ async function openMode(mode) {
 
   if (mode === "checkin") {
     state.shipment = null;
+    await loadVendors();
     renderTypeButtons();
     hide("checkin-form"); hide("arm-btn"); hide("finish-btn");
     await setServerMode("idle");
@@ -234,7 +244,8 @@ function selectType(type, btn) {
 }
 
 function setShipmentFormDisabled(disabled) {
-  $("checkin-form").querySelectorAll("input").forEach((i) => { i.disabled = disabled; });
+  $("checkin-form").querySelectorAll("input, select, .btn-group button")
+    .forEach((i) => { i.disabled = disabled; });
   document.querySelectorAll(".type-btn").forEach((b) => { b.disabled = disabled; });
 }
 
@@ -243,12 +254,48 @@ function buildField(f, idPrefix) {
   field.className = "field";
   const label = document.createElement("label");
   label.textContent = f.label;
-  const input = document.createElement("input");
-  input.type = f.type === "date" ? "date" : "text";
-  input.id = `${idPrefix}${f.key}`;
   field.appendChild(label);
-  field.appendChild(input);
+
+  if (f.type === "buttons") {
+    const group = document.createElement("div");
+    group.className = "btn-group";
+    group.id = `${idPrefix}${f.key}`;
+    group.dataset.value = "";
+    (f.options || []).forEach((opt) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "opt-btn";
+      b.textContent = opt;
+      b.onclick = () => {
+        group.dataset.value = group.dataset.value === String(opt) ? "" : String(opt);
+        group.querySelectorAll(".opt-btn").forEach((x) => x.classList.remove("active"));
+        if (group.dataset.value) b.classList.add("active");
+      };
+      group.appendChild(b);
+    });
+    field.appendChild(group);
+  } else if (f.type === "select") {
+    const select = document.createElement("select");
+    select.id = `${idPrefix}${f.key}`;
+    const opts = f.key === "vendor" ? state.vendors : (f.options || []);
+    select.innerHTML = `<option value=""></option>` +
+      (opts || []).map((o) =>
+        `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
+    field.appendChild(select);
+  } else {
+    const input = document.createElement("input");
+    input.type = f.type === "date" ? "date" : "text";
+    input.id = `${idPrefix}${f.key}`;
+    field.appendChild(input);
+  }
   return field;
+}
+
+function getFieldValue(key, prefix) {
+  const el = $(`${prefix}${key}`);
+  if (!el) return "";
+  if (el.classList && el.classList.contains("btn-group")) return el.dataset.value || "";
+  return (el.value || "").trim();
 }
 
 function renderShipmentForm(type) {
@@ -262,7 +309,8 @@ function renderItemForm(type) {
   form.innerHTML = '<p class="hint">Fill in this unit\'s details, then pull the trigger to tag it.</p>';
   fieldsForScope(type, "item").forEach((f) => {
     const field = buildField(f, "it_");
-    field.querySelector("input").oninput = onItemInput;
+    const inp = field.querySelector("input, select");
+    if (inp) inp.oninput = onItemInput;
     form.appendChild(field);
   });
 }
@@ -270,8 +318,7 @@ function renderItemForm(type) {
 function collectItemFields() {
   const fields = {};
   fieldsForScope(state.selectedType, "item").forEach((f) => {
-    const el = $(`it_${f.key}`);
-    fields[f.key] = el ? (el.value || "").trim() : "";
+    fields[f.key] = getFieldValue(f.key, "it_");
   });
   return fields;
 }
@@ -293,7 +340,13 @@ async function postItemFields() {
 function clearItemInputs() {
   fieldsForScope(state.selectedType, "item").forEach((f) => {
     const el = $(`it_${f.key}`);
-    if (el) el.value = "";
+    if (!el) return;
+    if (el.classList && el.classList.contains("btn-group")) {
+      el.dataset.value = "";
+      el.querySelectorAll(".opt-btn").forEach((x) => x.classList.remove("active"));
+    } else {
+      el.value = "";
+    }
   });
 }
 
@@ -301,7 +354,7 @@ async function armCheckin() {
   if (!state.selectedType) return;
   const fields = {};
   fieldsForScope(state.selectedType, "shipment").forEach((f) => {
-    fields[f.key] = ($(`f_${f.key}`).value || "").trim();
+    fields[f.key] = getFieldValue(f.key, "f_");
   });
   const ok = await setServerMode("checkin", { item_type: state.selectedType, fields });
   if (ok) {
@@ -399,12 +452,37 @@ function onInventoryResult(msg) {
       <strong>&#9888; ${flagged.length} checked-out item(s) detected &mdash; should NOT be in the warehouse:</strong>
       <ul>${items}</ul></div>`;
   }
+  const detailsHtml = sweepDetailsHtml(msg.items || []);
   showResult(flagged.length ? "warn" : "ok", `Counted ${msg.total} tag(s)`,
-    `${flaggedHtml}<table><tr><th>Type</th><th>Qty</th></tr>${rows}</table>${unknownHtml}`);
+    `${flaggedHtml}<table><tr><th>Type</th><th>Qty</th></tr>${rows}</table>` +
+    `${unknownHtml}${detailsHtml}`);
   logActivity(`Inventory sweep: ${msg.total} tag(s)` +
     (flagged.length ? `, ${flagged.length} flagged` : ""),
     flagged.length ? "warn" : "ok");
   showScanner("Hold the trigger to sweep again\u2026");
+}
+
+function sweepDetailsHtml(items) {
+  if (!items || !items.length) return "";
+  const rows = items.map((t) => `<tr>
+      <td class="epc">${escapeHtml(t.epc)}</td>
+      <td>${escapeHtml(t.item_type || "")}</td>
+      <td>${escapeHtml(t.po_number || "")}</td>
+      <td>${escapeHtml(t.building || "")}</td>
+      <td>${escapeHtml(t.vendor || "")}</td>
+      <td>${escapeHtml(t.sku || "")}</td>
+      <td>${escapeHtml(t.mfc_date || "")}</td>
+      <td>${escapeHtml(t.status || "")}</td>
+      <td>${escapeHtml(fmtDateTime(t.received_at))}</td>
+    </tr>`).join("");
+  return `<details class="sweep-details">
+      <summary>View detailed scan (${items.length} item${items.length === 1 ? "" : "s"})</summary>
+      <table>
+        <thead><tr><th>EPC</th><th>Type</th><th>PO</th><th>Building</th>
+          <th>Vendor</th><th>SKU</th><th>Mfc date</th><th>Status</th><th>Checked in</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </details>`;
 }
 
 // -- warehouse browse / drill-down -------------------------------------------
@@ -463,15 +541,24 @@ function renderWarehouse(data) {
   });
 }
 
+const STATUS_BADGE = {
+  "Delivered": "badge-out",
+  "In Warehouse": "badge-in",
+  "Partial": "badge-partial",
+};
+
 function addGroupRows(tbody, itemType, groupBy, g) {
   const row = document.createElement("tr");
   row.className = "wh-group-row";
-  const statusCls = g.status === "Delivered" ? "badge-out" : "badge-in";
+  const statusCls = STATUS_BADGE[g.status] || "badge-in";
+  const statusText = g.status === "Partial"
+    ? `Partial (${g.in_wh}/${g.total})`
+    : g.status;
   row.innerHTML = `
     <td>${g.qty}</td>
     <td><span class="wh-caret">&#9656;</span> ${escapeHtml(g.value || "(blank)")}</td>
-    <td>${escapeHtml(g.received || "")}</td>
-    <td><span class="badge ${statusCls}">${escapeHtml(g.status)}</span></td>
+    <td>${escapeHtml(fmtDateTime(g.received_at) || g.received || "")}</td>
+    <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span></td>
     <td class="wh-count">${g.total} tag(s)</td>`;
 
   const detail = document.createElement("tr");
@@ -507,7 +594,8 @@ async function loadGroupTags(cell, itemType, groupBy, value) {
     const editing = isEditing();
     const rows = data.tags.map((tag) => tagRowHtml(tag, itemType, editing)).join("");
     cell.innerHTML = `<table class="wh-tag-table">
-      <thead><tr><th>EPC</th><th>SKU</th><th>Mfc date</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>EPC</th><th>SKU</th><th>Mfc date</th>
+        <th>Checked in</th><th>Checked out</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
     cell.querySelectorAll(".find-btn").forEach((b) => {
       b.onclick = (ev) => { ev.stopPropagation(); openFinder(b.dataset.epc, b.dataset.label); };
@@ -530,12 +618,15 @@ function tagRowHtml(tag, itemType, editing) {
   let editorRow = "";
   if (editing) {
     editorRow = `<tr class="tag-editor-row hidden" data-editor="${escapeHtml(tag.epc)}">
-      <td colspan="5">${tagEditorHtml(tag)}</td></tr>`;
+      <td colspan="7">${tagEditorHtml(tag)}</td></tr>`;
   }
+  const deliveredAt = tag.status === "Delivered" ? fmtDateTime(tag.delivered_at) : "";
   return `<tr>
       <td class="epc">${escapeHtml(tag.epc)}</td>
       <td>${escapeHtml(tag.sku || "")}</td>
       <td>${escapeHtml(tag.mfc_date || "")}</td>
+      <td>${escapeHtml(fmtDateTime(tag.received_at))}</td>
+      <td>${escapeHtml(deliveredAt)}</td>
       <td><span class="badge ${statusCls}">${escapeHtml(tag.status)}</span> ${flagBadge}</td>
       <td>${findBtn}${editBtn}</td>
     </tr>${editorRow}`;
@@ -549,6 +640,18 @@ function tagEditorHtml(tag) {
       const opts = ["In Warehouse", "Delivered"].map((s) =>
         `<option value="${s}"${s === tag.status ? " selected" : ""}>${s}</option>`).join("");
       input = `<select data-field="status">${opts}</select>`;
+    } else if (f.type === "building" || f.type === "vendor") {
+      const choices = f.type === "building"
+        ? (state.config.building_options || [])
+        : state.vendors;
+      const opts = [`<option value=""${val ? "" : " selected"}></option>`].concat(
+        (choices || []).map((c) =>
+          `<option value="${escapeHtml(c)}"${c === val ? " selected" : ""}>${escapeHtml(c)}</option>`));
+      // Keep an out-of-list value selectable so existing data isn't lost.
+      if (val && !(choices || []).map(String).includes(String(val))) {
+        opts.push(`<option value="${escapeHtml(val)}" selected>${escapeHtml(val)}</option>`);
+      }
+      input = `<select data-field="${f.key}">${opts.join("")}</select>`;
     } else {
       input = `<input type="${f.type === "date" ? "date" : "text"}"
         data-field="${f.key}" value="${escapeHtml(val)}" />`;
@@ -777,6 +880,51 @@ function renderAdmin() {
   $("admin-locked").classList.toggle("hidden", unlocked);
   $("admin-panel").classList.toggle("hidden", !unlocked);
   if (!unlocked) $("admin-pin").value = "";
+  else renderAdminVendors();
+}
+
+function renderAdminVendors() {
+  const list = $("admin-vendor-list");
+  if (!list) return;
+  if (!state.vendors.length) {
+    list.innerHTML = `<p class="hint">No vendors yet. Add one below.</p>`;
+    return;
+  }
+  list.innerHTML = state.vendors.map((v) =>
+    `<span class="vendor-chip">${escapeHtml(v)}
+       <button class="vendor-del" data-vendor="${escapeHtml(v)}" title="Remove">&times;</button>
+     </span>`).join("");
+  list.querySelectorAll(".vendor-del").forEach((b) => {
+    b.onclick = () => adminRemoveVendor(b.dataset.vendor);
+  });
+}
+
+async function adminAddVendor() {
+  if (!state.admin.pin) return;
+  const input = $("admin-vendor-name");
+  const name = (input.value || "").trim();
+  if (!name) return;
+  const data = await adminPost("/api/admin/vendor", { name });
+  if (data && data.ok) {
+    state.vendors = data.vendors || state.vendors;
+    input.value = "";
+    renderAdminVendors();
+    logActivity(data.message || `Added vendor ${name}`, "ok");
+  } else if (data) {
+    logActivity(data.message || "Could not add vendor", "err");
+  }
+}
+
+async function adminRemoveVendor(name) {
+  if (!state.admin.pin) return;
+  const data = await adminPost("/api/admin/vendor/remove", { name });
+  if (data && data.ok) {
+    state.vendors = data.vendors || state.vendors;
+    renderAdminVendors();
+    logActivity(data.message || `Removed vendor ${name}`, "ok");
+  } else if (data) {
+    logActivity(data.message || "Could not remove vendor", "err");
+  }
 }
 
 async function adminPost(url, body) {
@@ -870,6 +1018,15 @@ function logActivity(text, kind = "") {
 }
 function show(id) { $(id).classList.remove("hidden"); }
 function hide(id) { $(id).classList.add("hidden"); }
+function fmtDateTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString([], {
+    year: "numeric", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+}
 function escapeHtml(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -892,6 +1049,8 @@ function wireUI() {
   $("admin-lock-btn").onclick = adminLock;
   $("admin-clear").onclick = adminClearDatabase;
   $("admin-edit-records").onclick = adminEditRecords;
+  $("admin-vendor-add").onclick = adminAddVendor;
+  $("admin-vendor-name").onkeydown = (e) => { if (e.key === "Enter") adminAddVendor(); };
   document.querySelectorAll(".seg-btn").forEach((b) => {
     b.onclick = () => {
       document.querySelectorAll(".seg-btn").forEach((x) => x.classList.remove("active"));

@@ -71,10 +71,17 @@ PORT = 8000
 #   "item"     : entered per unit, just before pulling the trigger on that tag
 #                (SKU, Manufactured Date) -- each tag can differ.
 # Each field: key (stored), label (shown in UI), type (input type), scope.
+# Building # is a fixed set of buttons (edit here to change the choices). Vendor
+# is a dropdown whose options live in the DB and are managed in the Admin view;
+# DEFAULT_VENDORS seeds the list on first run only.
+BUILDING_OPTIONS = ["6", "7", "8"]
+DEFAULT_VENDORS = []
+
 SHIPMENT_FIELDS = [
-    {"key": "building_number", "label": "Building #", "type": "text", "scope": "shipment"},
-    {"key": "po_number",       "label": "PO Number",  "type": "text", "scope": "shipment"},
-    {"key": "vendor",          "label": "Vendor",     "type": "text", "scope": "shipment"},
+    {"key": "building_number", "label": "Building #", "type": "buttons",
+     "options": BUILDING_OPTIONS, "scope": "shipment"},
+    {"key": "po_number",       "label": "PO Number",  "type": "text",   "scope": "shipment"},
+    {"key": "vendor",          "label": "Vendor",     "type": "select", "scope": "shipment"},
 ]
 ITEM_FIELDS = [
     {"key": "sku",      "label": "SKU",               "type": "text", "scope": "item"},

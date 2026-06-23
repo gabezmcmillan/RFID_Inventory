@@ -27,6 +27,7 @@ import config
 
 STATUS_IN = "In Warehouse"
 STATUS_DELIVERED = "Delivered"
+STATUS_PARTIAL = "Partial"
 
 # group_by accepts these UI dimensions, mapped to tag columns.
 GROUP_COLUMNS = {"po": "po_number", "building": "building"}
@@ -44,6 +45,14 @@ def _date_of(iso_ts):
     """Format an ISO timestamp as mm/dd/yyyy for display (best effort)."""
     try:
         return datetime.fromisoformat(iso_ts).strftime("%m/%d/%Y")
+    except (TypeError, ValueError):
+        return iso_ts or ""
+
+
+def _datetime_of(iso_ts):
+    """Format an ISO timestamp as mm/dd/yyyy h:mm AM/PM (best effort)."""
+    try:
+        return datetime.fromisoformat(iso_ts).strftime("%m/%d/%Y %I:%M %p")
     except (TypeError, ValueError):
         return iso_ts or ""
 
@@ -91,13 +100,28 @@ class Database:
                     vendor    TEXT,
                     detail    TEXT
                 );
+                CREATE TABLE IF NOT EXISTS vendors (
+                    name TEXT PRIMARY KEY
+                );
                 CREATE INDEX IF NOT EXISTS idx_tags_group
                     ON tags (item_type, po_number, building);
                 CREATE INDEX IF NOT EXISTS idx_tags_status ON tags (status);
                 """
             )
             self._migrate()
+            self._seed_vendors()
             self._conn.commit()
+
+    def _seed_vendors(self):
+        """Populate the vendor list from config on first run (empty table only)."""
+        have = self._conn.execute("SELECT COUNT(*) AS n FROM vendors").fetchone()["n"]
+        if have:
+            return
+        for name in getattr(config, "DEFAULT_VENDORS", []):
+            name = (name or "").strip()
+            if name:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO vendors (name) VALUES (?)", (name,))
 
     def _migrate(self):
         """Add columns to an existing `tags` table created by an older schema."""
@@ -232,7 +256,7 @@ class Database:
         that is already Delivered but detected here is persistently flagged: it
         should not physically be in the warehouse.
         """
-        counts, unknown, flagged = {}, [], []
+        counts, unknown, flagged, items = {}, [], [], []
         ts = _now()
         with self._lock:
             for epc in sorted(set(e.upper() for e in epcs)):
@@ -242,6 +266,7 @@ class Database:
                     unknown.append(epc)
                     self._log("COUNT", epc, "UNKNOWN")
                     continue
+                items.append(self._tag_dict(row))
                 if row["status"] == STATUS_DELIVERED:
                     flag = (f"Checked out {_date_of(row['delivered_at'])}; "
                             "detected in sweep")
@@ -262,6 +287,7 @@ class Database:
             self._conn.commit()
 
         return {"counts": counts, "unknown": unknown, "flagged": flagged,
+                "items": items,
                 "total": sum(counts.values()) + len(unknown) + len(flagged)}
 
     # -- reads (interactive inventory view) ----------------------------------
@@ -292,13 +318,22 @@ class Database:
             t = types.setdefault(r["item_type"], {"item_type": r["item_type"],
                                                   "qty": 0, "groups": []})
             qty = r["in_wh"] or 0
+            total = r["total"]
             t["qty"] += qty
+            if qty == 0:
+                status = STATUS_DELIVERED
+            elif qty == total:
+                status = STATUS_IN
+            else:
+                status = STATUS_PARTIAL
             t["groups"].append({
                 "value": r["gval"] or "",
                 "qty": qty,
-                "total": r["total"],
+                "in_wh": qty,
+                "total": total,
                 "received": _date_of(r["first_received"]),
-                "status": STATUS_IN if qty > 0 else STATUS_DELIVERED,
+                "received_at": r["first_received"] or "",
+                "status": status,
             })
         return {"group_by": group_by, "types": list(types.values())}
 
@@ -404,6 +439,35 @@ class Database:
             self._conn.commit()
         return {"ok": True, "message": f"Cleared flag on {epc}.",
                 "tag": self._tag_dict(updated)}
+
+    # -- vendors -------------------------------------------------------------
+    def list_vendors(self):
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT name FROM vendors ORDER BY name COLLATE NOCASE").fetchall()
+        return [r["name"] for r in rows]
+
+    def add_vendor(self, name):
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "message": "Vendor name is required.",
+                    "vendors": self.list_vendors()}
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO vendors (name) VALUES (?)", (name,))
+            self._log("VENDOR_ADD", "", detail=name)
+            self._conn.commit()
+        return {"ok": True, "message": f"Added vendor '{name}'.",
+                "vendors": self.list_vendors()}
+
+    def remove_vendor(self, name):
+        name = (name or "").strip()
+        with self._lock:
+            self._conn.execute("DELETE FROM vendors WHERE name=?", (name,))
+            self._log("VENDOR_DEL", "", detail=name)
+            self._conn.commit()
+        return {"ok": True, "message": f"Removed vendor '{name}'.",
+                "vendors": self.list_vendors()}
 
     def close(self):
         with self._lock:

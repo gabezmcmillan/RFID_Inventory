@@ -184,6 +184,7 @@ async def get_config():
     return {
         "item_types": config.ITEM_TYPES,
         "type_fields": config.TYPE_FIELDS,
+        "building_options": config.BUILDING_OPTIONS,
         "power_min": config.READER_POWER_MIN_DBM,
         "power_max": config.READER_POWER_MAX_DBM,
     }
@@ -222,6 +223,16 @@ async def get_inventory(group_by: str = "po"):
     if group_by not in ("po", "building"):
         group_by = "po"
     return await loop.run_in_executor(None, state.db.inventory_tree, group_by)
+
+
+@app.get("/api/vendors")
+async def get_vendors():
+    """Vendor dropdown options (managed in the Admin view)."""
+    if state.db is None:
+        return {"vendors": []}
+    loop = asyncio.get_running_loop()
+    vendors = await loop.run_in_executor(None, state.db.list_vendors)
+    return {"vendors": vendors}
 
 
 @app.get("/api/inventory/group")
@@ -302,6 +313,29 @@ async def admin_clear_flag(req: AdminEpcRequest):
         return bad
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, state.db.clear_flag, req.epc)
+
+
+class AdminVendorRequest(BaseModel):
+    pin: Optional[str] = None
+    name: str
+
+
+@app.post("/api/admin/vendor")
+async def admin_add_vendor(req: AdminVendorRequest):
+    bad = _check_pin(req.pin) or _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, state.db.add_vendor, req.name)
+
+
+@app.post("/api/admin/vendor/remove")
+async def admin_remove_vendor(req: AdminVendorRequest):
+    bad = _check_pin(req.pin) or _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, state.db.remove_vendor, req.name)
 
 
 @app.post("/api/mode")
