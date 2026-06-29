@@ -128,7 +128,8 @@ async def _handle_event(event: dict):
 
     if kind == "finder":
         await broadcast({"type": "finder", "epc": event.get("epc"),
-                         "rssi": event.get("rssi")})
+                         "rssi": event.get("rssi"),
+                         "percent": event.get("percent")})
         return
 
     if kind == "finder_reset":
@@ -157,9 +158,11 @@ async def _handle_event(event: dict):
 
     if kind == "scan" and event.get("mode") == reader_mod.CHECKOUT:
         epc = event["epc"]
+        # Two-step check-out: a trigger pull only looks the box up; the operator
+        # then confirms how many units to draw down (see POST /api/checkout).
         result = await loop.run_in_executor(
-            None, state.db.deliver_to_site, epc)
-        await broadcast({"type": "checkout_result", **result})
+            None, state.db.lookup_for_checkout, epc)
+        await broadcast({"type": "checkout_prompt", **result})
         return
 
     if kind == "inventory":
@@ -223,6 +226,19 @@ async def get_inventory(group_by: str = "po"):
     if group_by not in ("po", "building"):
         group_by = "po"
     return await loop.run_in_executor(None, state.db.inventory_tree, group_by)
+
+
+@app.get("/api/events")
+async def get_events(filter: str = "all", epc: str = ""):
+    """Audit-log feed for the Event Log view, filtered by category and/or EPC."""
+    if state.db is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    if filter not in ("all", "checkin", "checkout", "scan"):
+        filter = "all"
+    loop = asyncio.get_running_loop()
+    events = await loop.run_in_executor(
+        None, state.db.list_events, filter, epc or None)
+    return {"events": events}
 
 
 @app.get("/api/vendors")
@@ -385,6 +401,22 @@ async def set_checkin_item(req: CheckinItemRequest):
         return JSONResponse({"ok": False, "message": "Reader worker not ready"}, 503)
     state.worker.set_checkin_item_fields(req.fields or {})
     return {"ok": True}
+
+
+class CheckoutRequest(BaseModel):
+    epc: str
+    amount: Optional[int] = None
+
+
+@app.post("/api/checkout")
+async def checkout(req: CheckoutRequest):
+    """Commit a check-out: draw `amount` units (None = whole box) out of a box."""
+    if state.db is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, state.db.deliver_units, req.epc, req.amount)
+    return result
 
 
 class SimulateRequest(BaseModel):

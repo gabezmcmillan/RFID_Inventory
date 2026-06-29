@@ -43,6 +43,13 @@ INVENTORY_POWER_DBM = READER_POWER_MAX_DBM      # full power for sweeps
 ALERT_VIBRATE_CMD = ".al -boff -von -dlon"      # fire: long vibrate, no buzzer
 ALERT_RESTORE_CMD = ".al -bon -dsho -von -n"    # restore defaults, no action
 
+# Finder: map the reader's RSSI (dBm) to an absolute 0-100% signal strength so
+# the bar/tone use a stable scale instead of an adaptive one. Tune to taste:
+# raise MAX toward -35 if 100% is too easy to hit, lower MIN if the bar never
+# leaves 0% at a distance.
+FINDER_RSSI_MIN_DBM = -80   # this dBm (or weaker) maps to 0%
+FINDER_RSSI_MAX_DBM = -40   # this dBm (or stronger) maps to 100%
+
 # ---------------------------------------------------------------------------
 # Local database (SQLite)
 # ---------------------------------------------------------------------------
@@ -84,8 +91,10 @@ SHIPMENT_FIELDS = [
     {"key": "vendor",          "label": "Vendor",     "type": "select", "scope": "shipment"},
 ]
 ITEM_FIELDS = [
-    {"key": "sku",      "label": "SKU",               "type": "text", "scope": "item"},
-    {"key": "mfc_date", "label": "Manufactured Date", "type": "date", "scope": "item"},
+    {"key": "sku",      "label": "SKU",               "type": "text",   "scope": "item"},
+    {"key": "mfc_date", "label": "Manufactured Date", "type": "date",   "scope": "item"},
+    {"key": "quantity", "label": "Quantity (units in this box)", "type": "number",
+     "scope": "item"},
 ]
 COMMON_FIELDS = SHIPMENT_FIELDS + ITEM_FIELDS
 

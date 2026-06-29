@@ -38,6 +38,11 @@
         <span class="mode-title">Warehouse</span>
         <span class="mode-sub">Browse &amp; find items</span>
       </button>
+      <button class="mode-card" data-mode="eventlog">
+        <span class="mode-icon">&#x1F4DC;</span>
+        <span class="mode-title">Event Log</span>
+        <span class="mode-sub">Browse &amp; filter activity</span>
+      </button>
       <button class="mode-card" data-mode="admin">
         <span class="mode-icon">&#x1F510;</span>
         <span class="mode-title">Admin</span>
@@ -123,17 +128,36 @@
         <div id="warehouse-tree" class="wh-tree"></div>
       </div>
 
+      <!-- Event Log -->
+      <div id="eventlog-view" class="view hidden">
+        <div class="wh-controls">
+          <span class="wh-controls-label">Filter</span>
+          <div class="seg" id="event-filter">
+            <button class="seg-btn active" data-filter="all">All events</button>
+            <button class="seg-btn" data-filter="checkin">Check-In</button>
+            <button class="seg-btn" data-filter="checkout">Check-Out</button>
+            <button class="seg-btn" data-filter="scan">Scans</button>
+          </div>
+          <button id="event-refresh" class="back-btn">Refresh</button>
+        </div>
+        <div class="dev-row event-search">
+          <input id="event-epc" type="text" placeholder="Search by EPC (full or partial)" />
+          <button id="event-epc-clear" class="back-btn">Clear</button>
+        </div>
+        <div id="event-log-list" class="event-log"></div>
+      </div>
+
       <!-- Finder -->
       <div id="finder-view" class="view hidden">
         <div id="finder-target" class="finder-target"></div>
         <div class="finder-stage">
-          <div id="finder-pulse" class="finder-pulse"></div>
+          <div class="finder-bar"><div class="finder-bar-fill" id="finder-bar-fill"></div></div>
         </div>
         <div class="finder-readout">
           <span id="finder-strength">No signal yet</span>
           <span id="finder-rssi" class="hint"></span>
         </div>
-        <p class="hint">Hold the trigger and sweep slowly. The pulse speeds up as you get closer.</p>
+        <p class="hint">Hold the trigger and sweep slowly. The bar rises and the tone climbs as you home in.</p>
         <button id="finder-stop" class="back-btn">Stop finding</button>
       </div>
 

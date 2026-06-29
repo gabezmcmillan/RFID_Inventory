@@ -62,7 +62,7 @@ body {
 .pill-off::before { background: var(--red); }
 
 main {
-  max-width: 880px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 28px 20px 60px;
 }
@@ -241,6 +241,8 @@ main {
 .result.warn { border-color: rgba(245,166,35,0.5); }
 .result h4 { margin: 0 0 10px; font-size: 17px; }
 .result .epc { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); }
+.result { overflow-x: auto; }
+.qty-cell { white-space: nowrap; }
 .result table { width: 100%; border-collapse: collapse; margin-top: 8px; }
 .result th, .result td {
   text-align: left;
@@ -250,6 +252,19 @@ main {
 }
 .result th { color: var(--muted); font-weight: 600; }
 .unknown-list { margin: 8px 0 0; padding-left: 18px; color: var(--amber); font-size: 13px; font-family: ui-monospace, monospace; }
+
+/* Check-out confirm (two-step partial draw-down) */
+.checkout-confirm { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.checkout-confirm label { color: var(--muted); font-size: 14px; }
+.checkout-confirm input {
+  width: 100px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 15px;
+}
 
 /* Activity log */
 .log-section { margin-top: 30px; }
@@ -348,7 +363,7 @@ main {
 .wh-type-name { font-weight: 600; }
 .wh-qty { margin-left: auto; color: var(--muted); font-size: 14px; }
 .wh-caret { color: var(--accent); font-size: 12px; width: 12px; display: inline-block; }
-.wh-type-body { padding: 6px 10px 12px; }
+.wh-type-body { padding: 6px 10px 12px; overflow-x: auto; }
 
 table.wh-group-table, table.wh-tag-table {
   width: 100%;
@@ -368,6 +383,29 @@ table.wh-group-table, table.wh-tag-table {
 .wh-count { color: var(--muted); text-align: right; }
 .wh-detail-row td { padding: 6px 8px 14px; background: var(--bg); }
 .wh-tag-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); }
+
+/* Event Log */
+.event-search { margin-top: 12px; }
+.event-log { margin-top: 14px; overflow-x: auto; }
+table.event-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.event-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.event-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.event-table td:first-child { white-space: nowrap; color: var(--muted); }
+.event-epc-link { cursor: pointer; text-decoration: underline dotted; }
+.event-epc-link:hover { color: var(--accent); }
+.epc-link { cursor: pointer; text-decoration: underline dotted; }
+.epc-link:hover { color: var(--accent); }
 
 .badge {
   display: inline-block;
@@ -400,29 +438,33 @@ table.wh-group-table, table.wh-tag-table {
   align-items: center;
   height: 220px;
 }
-.finder-pulse {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--accent), var(--accent-2));
-  /* --prox (0..1) is set from JS based on signal strength */
-  opacity: calc(0.35 + 0.65 * var(--prox, 0));
-  animation: finder-ping 1.6s ease-out infinite;
+/* Vertical signal bar: fills from the bottom; height set from JS via --fill. */
+.finder-bar {
+  width: 64px;
+  height: 220px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  box-shadow: inset 0 0 12px rgba(0,0,0,0.4);
 }
-@keyframes finder-ping {
-  0%   { transform: scale(0.6); box-shadow: 0 0 0 0 rgba(76,154,255,0.5); }
-  70%  { transform: scale(1.0); box-shadow: 0 0 0 40px rgba(76,154,255,0); }
-  100% { transform: scale(0.6); box-shadow: 0 0 0 0 rgba(76,154,255,0); }
+.finder-bar-fill {
+  width: 100%;
+  height: calc(var(--fill, 0) * 1%);
+  background: linear-gradient(to top, var(--green), #5bd98a);
+  border-radius: 0 0 11px 11px;
+  transition: height 0.08s linear;
+}
+.finder-bar-fill.red {
+  background: linear-gradient(to top, var(--red), #ff8a8a);
 }
 .finder-readout { text-align: center; margin-top: 8px; }
 #finder-strength { display: block; font-size: 22px; font-weight: 700; }
 
-/* Tag locked: green glow + emphasized strength text */
-.finder-found .finder-pulse {
-  background: radial-gradient(circle, var(--green), #1e9e57);
-  animation-duration: 0.5s;
-}
-.finder-found #finder-strength { color: var(--green); }
+/* Tag locked: emphasized strength text */
+.finder-found #finder-strength { color: var(--red); }
 
 /* Reader power slider */
 .power-control {

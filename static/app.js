@@ -4,10 +4,10 @@
 const MODE_TITLES = {
   checkin: "Check In", checkout: "Check Out",
   inventory: "Sweep & Count", warehouse: "Warehouse", finder: "Find a Tag",
-  admin: "Admin",
+  eventlog: "Event Log", admin: "Admin",
 };
 const VIEWS = ["checkin-view", "checkout-view", "inventory-view",
-               "warehouse-view", "finder-view", "admin-view"];
+               "warehouse-view", "finder-view", "eventlog-view", "admin-view"];
 
 // Tag fields an admin may edit (key, label, input type).
 const EDIT_FIELDS = [
@@ -17,16 +17,21 @@ const EDIT_FIELDS = [
   { key: "vendor", label: "Vendor", type: "vendor" },
   { key: "sku", label: "SKU", type: "text" },
   { key: "mfc_date", label: "Mfc date", type: "date" },
+  { key: "quantity", label: "Quantity (box size)", type: "number" },
+  { key: "remaining", label: "Units remaining", type: "number" },
   { key: "status", label: "Status", type: "status" },
 ];
 
-// Finder audio/alert tuning.
-const FINDER_BEEP_MIN_MS = 70;     // fastest cadence (right on the tag)
-const FINDER_BEEP_MAX_MS = 1000;   // slowest cadence (far / no signal)
-const FINDER_PROX_ALPHA = 0.35;    // EMA smoothing for proximity
-const FINDER_FOUND_PROX = 0.9;     // enter "found" above this smoothed prox
+// Finder audio/visual tuning.
+const FINDER_TONE_MIN_HZ = 300;    // tone pitch when a signal first appears
+const FINDER_TONE_MAX_HZ = 1600;   // tone pitch right on the tag
+const FINDER_PROX_ALPHA = 0.5;     // EMA smoothing for proximity (higher = snappier)
+const FINDER_BAR_SHOW = 0.45;      // bar appears once smoothed prox passes this
+const FINDER_BAR_RED = 0.85;       // bar turns red (and lock fires) at/above this
+const FINDER_FOUND_PROX = 0.85;    // enter "found" above this smoothed prox
 const FINDER_REARM_PROX = 0.6;     // re-arm (allow another buzz) below this
-const FINDER_MIN_SAMPLES = 8;      // readings required before "found" can fire
+const FINDER_MIN_SAMPLES = 5;      // readings required before "found" can fire
+const FINDER_SIGNAL_STALE_MS = 350; // mute tone if no reads for this long
 
 const state = {
   config: { item_types: [], type_fields: {}, power_min: 10, power_max: 29 },
@@ -34,6 +39,7 @@ const state = {
   selectedType: null,
   shipment: null,
   whGroupBy: "po",     // warehouse grouping dimension
+  eventFilter: "all",  // event-log filter category
   finder: null,        // {epc, rssiMin, rssiMax, proxEma, samples, found}
   admin: { pin: null, editMode: false },
   vendors: [],         // dropdown options, managed in Admin
@@ -42,7 +48,10 @@ const state = {
 let powerSendTimer = null;
 let itemSendTimer = null;
 let finderAudioCtx = null;
-let finderBeepTimer = null;
+let finderOsc = null;          // persistent oscillator for the sweeping tone
+let finderGain = null;         // its gain (0 = silent)
+let finderStaleTimer = null;   // mutes the tone when reads stop
+let finderLastSignal = 0;      // performance.now() of the last finder event
 
 const $ = (id) => document.getElementById(id);
 
@@ -125,6 +134,7 @@ function handleMessage(msg) {
       $("scanner-title").textContent = "Reading\u2026";
       break;
     case "checkin_result": onCheckinResult(msg); break;
+    case "checkout_prompt": onCheckoutPrompt(msg); break;
     case "checkout_result": onCheckoutResult(msg); break;
     case "inventory_result": onInventoryResult(msg); break;
     case "finder": onFinder(msg); break;
@@ -153,7 +163,7 @@ function setDbPill(on, err) {
 function showView(id) { VIEWS.forEach((v) => hide(v)); show(id); }
 
 // -- mode navigation ---------------------------------------------------------
-async function openMode(mode) {
+async function openMode(mode, opts = {}) {
   state.mode = mode;
   state.selectedType = null;
   $("mode-picker").classList.add("hidden");
@@ -182,6 +192,13 @@ async function openMode(mode) {
     await setServerMode("idle");
     $("wh-edit-banner").classList.toggle("hidden", !isEditing());
     await loadWarehouse();
+  } else if (mode === "eventlog") {
+    await setServerMode("idle");
+    state.eventFilter = "all";
+    $("event-epc").value = opts.epc || "";
+    document.querySelectorAll("#event-filter .seg-btn").forEach((b) =>
+      b.classList.toggle("active", b.dataset.filter === "all"));
+    await loadEvents();
   } else if (mode === "admin") {
     await setServerMode("idle");
     renderAdmin();
@@ -190,7 +207,7 @@ async function openMode(mode) {
 
 async function backToModes() {
   await setServerMode("idle");
-  stopFinderBeep();
+  stopFinderTone();
   state.mode = null;
   state.finder = null;
   state.admin.editMode = false;
@@ -282,6 +299,14 @@ function buildField(f, idPrefix) {
       (opts || []).map((o) =>
         `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
     field.appendChild(select);
+  } else if (f.type === "number") {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.step = "1";
+    input.value = "1";
+    input.id = `${idPrefix}${f.key}`;
+    field.appendChild(input);
   } else {
     const input = document.createElement("input");
     input.type = f.type === "date" ? "date" : "text";
@@ -344,7 +369,9 @@ function clearItemInputs() {
     if (el.classList && el.classList.contains("btn-group")) {
       el.dataset.value = "";
       el.querySelectorAll(".opt-btn").forEach((x) => x.classList.remove("active"));
-    } else {
+    } else if (f.type !== "number") {
+      // Number fields (quantity) persist across boxes in a shipment since they
+      // usually match; they reset to the default only when re-arming a shipment.
       el.value = "";
     }
   });
@@ -387,17 +414,18 @@ function onCheckinResult(msg) {
     ? `<p class="hint">${msg.duplicates.length} tag(s) were already on file (not re-counted).</p>` : "";
   const sku = msg.sku ? `<tr><th>SKU</th><td>${escapeHtml(msg.sku)}</td></tr>` : "";
   const mfc = msg.mfc_date ? `<tr><th>Mfc date</th><td>${escapeHtml(msg.mfc_date)}</td></tr>` : "";
-  showResult("ok", `Shipment: ${escapeHtml(msg.item_type)} \u00b7 Qty ${msg.qty}`,
+  const boxUnits = msg.quantity != null ? msg.quantity : msg.added_units;
+  showResult("ok", `Shipment: ${escapeHtml(msg.item_type)} \u00b7 Qty ${msg.qty} units`,
     `<table>
        <tr><th>PO Number</th><td>${escapeHtml(po)}</td></tr>
        <tr><th>Building</th><td>${escapeHtml(bldg)}</td></tr>
        <tr><th>Vendor</th><td>${escapeHtml(msg.vendor || "")}</td></tr>
        ${sku}${mfc}
-       <tr><th>Just added</th><td>${msg.added}</td></tr>
-       <tr><th>Total in this group</th><td>${msg.qty}</td></tr>
+       <tr><th>This box</th><td>${boxUnits} unit(s)</td></tr>
+       <tr><th>Total in this group</th><td>${msg.qty} unit(s)</td></tr>
      </table>${dupNote}
-     <p class="hint">Enter the next unit's details and pull the trigger, or "Finish / change shipment".</p>`);
-  logActivity(`Received ${msg.added} ${msg.item_type} (PO ${po}) \u2014 qty now ${msg.qty}`, "ok");
+     <p class="hint">Enter the next box's details and pull the trigger, or "Finish / change shipment".</p>`);
+  logActivity(`Received a box of ${boxUnits} ${msg.item_type} (PO ${po}) \u2014 qty now ${msg.qty} units`, "ok");
   // Per-unit fields are unique; clear them for the next unit.
   clearItemInputs();
   postItemFields();
@@ -405,20 +433,81 @@ function onCheckinResult(msg) {
 }
 
 // -- check out ---------------------------------------------------------------
+// A trigger pull only looks the box up; the operator confirms how many units to
+// draw down here (full box by default), then we commit via POST /api/checkout.
+function onCheckoutPrompt(msg) {
+  if (!msg.ok) {
+    showResult("warn", "Cannot deliver",
+      `<p class="epc">${escapeHtml(msg.epc || "")}</p>
+       <p>${escapeHtml(msg.message)}</p>`);
+    logActivity(msg.message, "warn");
+    showScanner("Ready \u2014 pull the trigger to deliver to site");
+    return;
+  }
+  const remaining = msg.remaining;
+  const quantity = msg.quantity;
+  showResult("ok", "How many units leave?",
+    `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
+       <span class="epc">${escapeHtml(msg.epc)}</span></p>
+     <table>
+       <tr><th>PO Number</th><td>${escapeHtml(msg.po_number || "n/a")}</td></tr>
+       <tr><th>Building</th><td>${escapeHtml(msg.building || "n/a")}</td></tr>
+       <tr><th>SKU</th><td>${escapeHtml(msg.sku || "")}</td></tr>
+       <tr><th>Units in this box</th><td>${remaining} of ${quantity}</td></tr>
+     </table>
+     <div class="checkout-confirm">
+       <label for="checkout-amount">Units to deliver</label>
+       <input id="checkout-amount" type="number" min="1" max="${remaining}"
+              step="1" value="${remaining}" />
+       <button id="checkout-confirm-btn" class="primary-btn">Confirm delivery</button>
+     </div>
+     <p class="hint">Defaults to the whole box. Lower it to deliver part of the box.</p>`);
+  const input = $("checkout-amount");
+  const commit = () => confirmCheckout(msg.epc, remaining);
+  $("checkout-confirm-btn").onclick = commit;
+  if (input) {
+    input.focus();
+    input.select();
+    input.onkeydown = (e) => { if (e.key === "Enter") commit(); };
+  }
+}
+
+async function confirmCheckout(epc, remaining) {
+  const input = $("checkout-amount");
+  let amount = input ? parseInt(input.value, 10) : remaining;
+  if (!Number.isFinite(amount) || amount < 1) amount = 1;
+  if (amount > remaining) amount = remaining;
+  try {
+    const res = await fetch("/api/checkout", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ epc, amount }),
+    });
+    onCheckoutResult(await res.json());
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+}
+
 function onCheckoutResult(msg) {
   if (msg.ok) {
-    const remaining = (msg.qty_remaining == null) ? "" :
-      `<tr><th>Qty left (this group)</th><td>${msg.qty_remaining}</td></tr>`;
+    const groupLeft = (msg.qty_remaining == null) ? "" :
+      `<tr><th>Units left (this group)</th><td>${msg.qty_remaining}</td></tr>`;
+    const boxLeft = (msg.box_remaining == null) ? "" :
+      `<tr><th>Units left in this box</th><td>${msg.box_remaining}</td></tr>`;
+    const delivered = (msg.delivered == null) ? "" :
+      `<tr><th>Units delivered</th><td>${msg.delivered}</td></tr>`;
     showResult("ok", "Delivered to site",
       `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
          <span class="epc">${escapeHtml(msg.epc)}</span></p>
        <table>
          <tr><th>PO Number</th><td>${escapeHtml(msg.po_number || "n/a")}</td></tr>
          <tr><th>Building</th><td>${escapeHtml(msg.building || "n/a")}</td></tr>
+         ${delivered}${boxLeft}
          <tr><th>Delivered</th><td>${escapeHtml(msg.delivered_at || "")}</td></tr>
-         ${remaining}
+         ${groupLeft}
        </table>`);
-    logActivity(`Delivered ${msg.item_type} (${msg.epc}) to site`, "ok");
+    logActivity(`Delivered ${msg.delivered != null ? msg.delivered + " unit(s) of " : ""}` +
+      `${msg.item_type} (${msg.epc}) to site`, "ok");
   } else {
     showResult("warn", "Cannot deliver", `<p class="epc">${escapeHtml(msg.epc || "")}</p>
        <p>${escapeHtml(msg.message)}</p>`);
@@ -444,7 +533,8 @@ function onInventoryResult(msg) {
   let flaggedHtml = "";
   if (flagged.length) {
     const items = flagged.map((f) =>
-      `<li><span class="epc">${escapeHtml(f.epc)}</span> &mdash;
+      `<li><span class="epc epc-link" data-epc="${escapeHtml(f.epc)}"
+        title="View this tag's event history">${escapeHtml(f.epc)}</span> &mdash;
         ${escapeHtml(f.item_type)} (PO ${escapeHtml(f.po_number || "n/a")},
         Bldg ${escapeHtml(f.building || "n/a")}), checked out ${escapeHtml(f.delivered_at || "")}</li>`
     ).join("");
@@ -453,33 +543,47 @@ function onInventoryResult(msg) {
       <ul>${items}</ul></div>`;
   }
   const detailsHtml = sweepDetailsHtml(msg.items || []);
-  showResult(flagged.length ? "warn" : "ok", `Counted ${msg.total} tag(s)`,
-    `${flaggedHtml}<table><tr><th>Type</th><th>Qty</th></tr>${rows}</table>` +
+  showResult(flagged.length ? "warn" : "ok", `Counted ${msg.total} unit(s)`,
+    `${flaggedHtml}<table><tr><th>Type</th><th>Units</th></tr>${rows}</table>` +
     `${unknownHtml}${detailsHtml}`);
-  logActivity(`Inventory sweep: ${msg.total} tag(s)` +
+  logActivity(`Inventory sweep: ${msg.total} unit(s)` +
     (flagged.length ? `, ${flagged.length} flagged` : ""),
     flagged.length ? "warn" : "ok");
+  // EPCs in the flagged list and detailed scan jump to that tag's event history.
+  $("result").querySelectorAll(".epc-link").forEach((el) => {
+    el.onclick = (ev) => { ev.stopPropagation(); openMode("eventlog", { epc: el.dataset.epc }); };
+  });
   showScanner("Hold the trigger to sweep again\u2026");
 }
 
 function sweepDetailsHtml(items) {
   if (!items || !items.length) return "";
-  const rows = items.map((t) => `<tr>
-      <td class="epc">${escapeHtml(t.epc)}</td>
+  const rows = items.map((t) => {
+    const qty = `${t.remaining != null ? t.remaining : ""}` +
+      (t.quantity != null ? ` / ${t.quantity}` : "");
+    const statusCls = STATUS_BADGE[t.status] || "badge-in";
+    const checkedOut = t.delivered_at ? fmtDateTime(t.delivered_at) : "";
+    return `<tr>
+      <td class="epc epc-link" data-epc="${escapeHtml(t.epc)}"
+          title="View this tag's event history">${escapeHtml(t.epc)}</td>
       <td>${escapeHtml(t.item_type || "")}</td>
+      <td class="qty-cell">${escapeHtml(qty)}</td>
       <td>${escapeHtml(t.po_number || "")}</td>
       <td>${escapeHtml(t.building || "")}</td>
       <td>${escapeHtml(t.vendor || "")}</td>
       <td>${escapeHtml(t.sku || "")}</td>
       <td>${escapeHtml(t.mfc_date || "")}</td>
-      <td>${escapeHtml(t.status || "")}</td>
       <td>${escapeHtml(fmtDateTime(t.received_at))}</td>
-    </tr>`).join("");
+      <td>${escapeHtml(checkedOut)}</td>
+      <td><span class="badge ${statusCls}">${escapeHtml(t.status || "")}</span></td>
+    </tr>`;
+  }).join("");
   return `<details class="sweep-details">
-      <summary>View detailed scan (${items.length} item${items.length === 1 ? "" : "s"})</summary>
+      <summary>View detailed scan (${items.length} box${items.length === 1 ? "" : "es"})</summary>
       <table>
-        <thead><tr><th>EPC</th><th>Type</th><th>PO</th><th>Building</th>
-          <th>Vendor</th><th>SKU</th><th>Mfc date</th><th>Status</th><th>Checked in</th></tr></thead>
+        <thead><tr><th>EPC</th><th>Type</th><th>Qty</th><th>PO</th><th>Building</th>
+          <th>Vendor</th><th>SKU</th><th>Mfc date</th><th>Checked in</th>
+          <th>Checked out</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </details>`;
@@ -513,7 +617,7 @@ function renderWarehouse(data) {
     head.className = "wh-type-head";
     head.innerHTML = `<span class="wh-caret">&#9656;</span>
       <span class="wh-type-name">${escapeHtml(t.item_type)}</span>
-      <span class="wh-qty">${t.qty} in warehouse</span>`;
+      <span class="wh-qty">${t.qty} unit(s) in warehouse</span>`;
 
     const body = document.createElement("div");
     body.className = "wh-type-body hidden";
@@ -521,7 +625,7 @@ function renderWarehouse(data) {
     const table = document.createElement("table");
     table.className = "wh-group-table";
     table.innerHTML = `<thead><tr>
-        <th>Qty</th><th>${escapeHtml(groupLabel)}</th>
+        <th>Units</th><th>${escapeHtml(groupLabel)}</th>
         <th>Date Checked In</th><th>Status</th><th></th>
       </tr></thead>`;
     const tbody = document.createElement("tbody");
@@ -551,15 +655,17 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   const row = document.createElement("tr");
   row.className = "wh-group-row";
   const statusCls = STATUS_BADGE[g.status] || "badge-in";
+  const capacity = g.capacity != null ? g.capacity : g.total;
   const statusText = g.status === "Partial"
-    ? `Partial (${g.in_wh}/${g.total})`
+    ? `Partial (${g.in_wh}/${capacity})`
     : g.status;
+  const boxes = g.boxes != null ? g.boxes : g.total;
   row.innerHTML = `
     <td>${g.qty}</td>
     <td><span class="wh-caret">&#9656;</span> ${escapeHtml(g.value || "(blank)")}</td>
     <td>${escapeHtml(fmtDateTime(g.received_at) || g.received || "")}</td>
     <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span></td>
-    <td class="wh-count">${g.total} tag(s)</td>`;
+    <td class="wh-count">${boxes} box(es)</td>`;
 
   const detail = document.createElement("tr");
   detail.className = "wh-detail-row hidden";
@@ -594,11 +700,14 @@ async function loadGroupTags(cell, itemType, groupBy, value) {
     const editing = isEditing();
     const rows = data.tags.map((tag) => tagRowHtml(tag, itemType, editing)).join("");
     cell.innerHTML = `<table class="wh-tag-table">
-      <thead><tr><th>EPC</th><th>SKU</th><th>Mfc date</th>
+      <thead><tr><th>EPC</th><th>SKU</th><th>Qty</th><th>Mfc date</th>
         <th>Checked in</th><th>Checked out</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
     cell.querySelectorAll(".find-btn").forEach((b) => {
       b.onclick = (ev) => { ev.stopPropagation(); openFinder(b.dataset.epc, b.dataset.label); };
+    });
+    cell.querySelectorAll(".epc-link").forEach((el) => {
+      el.onclick = (ev) => { ev.stopPropagation(); openMode("eventlog", { epc: el.dataset.epc }); };
     });
     if (editing) wireTagEditors(cell);
   } catch (e) {
@@ -607,7 +716,7 @@ async function loadGroupTags(cell, itemType, groupBy, value) {
 }
 
 function tagRowHtml(tag, itemType, editing) {
-  const statusCls = tag.status === "Delivered" ? "badge-out" : "badge-in";
+  const statusCls = STATUS_BADGE[tag.status] || "badge-in";
   const flagBadge = tag.flag
     ? `<span class="badge badge-flag" title="${escapeHtml(tag.flag)}">&#9888; Flagged</span>`
     : "";
@@ -618,12 +727,16 @@ function tagRowHtml(tag, itemType, editing) {
   let editorRow = "";
   if (editing) {
     editorRow = `<tr class="tag-editor-row hidden" data-editor="${escapeHtml(tag.epc)}">
-      <td colspan="7">${tagEditorHtml(tag)}</td></tr>`;
+      <td colspan="8">${tagEditorHtml(tag)}</td></tr>`;
   }
-  const deliveredAt = tag.status === "Delivered" ? fmtDateTime(tag.delivered_at) : "";
+  const deliveredAt = tag.delivered_at ? fmtDateTime(tag.delivered_at) : "";
+  const qty = `${tag.remaining != null ? tag.remaining : ""}` +
+    (tag.quantity != null ? ` / ${tag.quantity}` : "");
   return `<tr>
-      <td class="epc">${escapeHtml(tag.epc)}</td>
+      <td class="epc epc-link" data-epc="${escapeHtml(tag.epc)}"
+          title="View this tag's event history">${escapeHtml(tag.epc)}</td>
       <td>${escapeHtml(tag.sku || "")}</td>
+      <td class="qty-cell">${escapeHtml(qty)}</td>
       <td>${escapeHtml(tag.mfc_date || "")}</td>
       <td>${escapeHtml(fmtDateTime(tag.received_at))}</td>
       <td>${escapeHtml(deliveredAt)}</td>
@@ -637,9 +750,12 @@ function tagEditorHtml(tag) {
     const val = tag[f.key] || "";
     let input;
     if (f.type === "status") {
-      const opts = ["In Warehouse", "Delivered"].map((s) =>
+      const opts = ["In Warehouse", "Partial", "Delivered"].map((s) =>
         `<option value="${s}"${s === tag.status ? " selected" : ""}>${s}</option>`).join("");
       input = `<select data-field="status">${opts}</select>`;
+    } else if (f.type === "number") {
+      input = `<input type="number" min="0" step="1" data-field="${f.key}"
+        value="${escapeHtml(val)}" />`;
     } else if (f.type === "building" || f.type === "vendor") {
       const choices = f.type === "building"
         ? (state.config.building_options || [])
@@ -714,6 +830,71 @@ async function clearTagFlag(epc) {
   }
 }
 
+// -- event log ---------------------------------------------------------------
+// Raw audit actions -> friendly label + badge class for the log table.
+const EVENT_LABELS = {
+  IN: { label: "Check-In", cls: "badge-in" },
+  OUT: { label: "Check-Out", cls: "badge-out" },
+  COUNT: { label: "Scan", cls: "badge-in" },
+  FLAG: { label: "Flagged", cls: "badge-flag" },
+  UNFLAG: { label: "Flag cleared", cls: "badge-in" },
+  EDIT: { label: "Edited", cls: "badge-partial" },
+  CLEAR: { label: "DB cleared", cls: "badge-out" },
+  VENDOR_ADD: { label: "Vendor added", cls: "badge-in" },
+  VENDOR_DEL: { label: "Vendor removed", cls: "badge-out" },
+};
+
+let eventSearchTimer = null;
+
+async function loadEvents() {
+  const list = $("event-log-list");
+  list.innerHTML = `<p class="hint">Loading\u2026</p>`;
+  const epc = ($("event-epc").value || "").trim();
+  const q = new URLSearchParams({ filter: state.eventFilter });
+  if (epc) q.set("epc", epc);
+  try {
+    const data = await (await fetch(`/api/events?${q.toString()}`)).json();
+    renderEvents(data.events || []);
+  } catch (e) {
+    list.innerHTML = `<p class="hint">Could not load events.</p>`;
+  }
+}
+
+function renderEvents(events) {
+  const list = $("event-log-list");
+  if (!events.length) {
+    list.innerHTML = `<p class="hint">No events match this filter.</p>`;
+    return;
+  }
+  const rows = events.map((e) => {
+    const meta = EVENT_LABELS[e.action] || { label: e.action, cls: "badge-in" };
+    const epcCell = e.epc
+      ? `<span class="epc event-epc-link" data-epc="${escapeHtml(e.epc)}"
+           title="Show events for this tag">${escapeHtml(e.epc)}</span>`
+      : "";
+    return `<tr>
+      <td>${escapeHtml(fmtDateTime(e.ts))}</td>
+      <td><span class="badge ${meta.cls}">${escapeHtml(meta.label)}</span></td>
+      <td>${epcCell}</td>
+      <td>${escapeHtml(e.item_type)}</td>
+      <td>${escapeHtml(e.po_number)}</td>
+      <td>${escapeHtml(e.building)}</td>
+      <td>${escapeHtml(e.detail)}</td>
+    </tr>`;
+  }).join("");
+  list.innerHTML = `<table class="event-table">
+    <thead><tr><th>Time</th><th>Action</th><th>EPC</th><th>Type</th>
+      <th>PO</th><th>Building</th><th>Detail</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <p class="hint">${events.length} event(s) shown (most recent first).</p>`;
+  list.querySelectorAll(".event-epc-link").forEach((el) => {
+    el.onclick = () => {
+      $("event-epc").value = el.dataset.epc;
+      loadEvents();
+    };
+  });
+}
+
 // -- finder ------------------------------------------------------------------
 async function openFinder(epc, label) {
   state.mode = "finder";
@@ -727,18 +908,21 @@ async function openFinder(epc, label) {
      <div class="epc">${escapeHtml(epc)}</div>`;
   resetFinderPulse();
   ensureFinderAudio();   // the Find click unlocks the AudioContext
-  startFinderBeep();
+  startFinderTone();
   await setServerMode("finder", { target_epc: epc });
   logActivity(`Finding ${epc}\u2026`, "ok");
 }
 
 function resetFinderPulse() {
-  const p = $("finder-pulse");
-  p.style.animationDuration = "1.6s";
-  p.style.setProperty("--prox", 0);
+  const fill = $("finder-bar-fill");
+  if (fill) {
+    fill.style.setProperty("--fill", 0);
+    fill.classList.remove("red");
+  }
   $("finder-strength").textContent = "No signal yet";
   $("finder-rssi").textContent = "Hold the trigger and move the reader around.";
   $("finder-view").classList.remove("finder-found");
+  muteFinderTone();
   if (state.finder) {
     state.finder.rssiMin = null;
     state.finder.rssiMax = null;
@@ -751,26 +935,48 @@ function resetFinderPulse() {
 function onFinder(msg) {
   if (!state.finder || msg.epc !== state.finder.epc) return;
   const f = state.finder;
-  const rssi = msg.rssi;
-  if (rssi == null) return;
-  // Adaptive scale: we don't assume the reader's RSSI units, just track the
-  // observed range and map the current reading into it.
-  if (f.rssiMin == null) { f.rssiMin = rssi - 1; f.rssiMax = rssi + 1; }
-  if (rssi < f.rssiMin) f.rssiMin = rssi;
-  if (rssi > f.rssiMax) f.rssiMax = rssi;
-  const span = f.rssiMax - f.rssiMin;
-  const prox = span > 0 ? (rssi - f.rssiMin) / span : 0.5;
 
-  // Smooth proximity so the beep tempo and threshold don't jitter.
+  // Preferred: the reader's FindTag RP: proximity percentage (already scaled
+  // 0-100 across the min/max it has seen), streamed continuously.
+  let prox, readout;
+  if (msg.percent != null) {
+    prox = Math.max(0, Math.min(1, msg.percent / 100));
+    // TEMP range-tuning: show raw dBm next to the percent.
+    readout = `Signal: ${msg.percent}%` +
+      (msg.rssi != null ? ` (${msg.rssi} dBm)` : "");
+  } else if (msg.rssi != null) {
+    // Fallback: adaptive scale from raw RSSI (we don't assume the units).
+    const rssi = msg.rssi;
+    if (f.rssiMin == null) { f.rssiMin = rssi - 1; f.rssiMax = rssi + 1; }
+    if (rssi < f.rssiMin) f.rssiMin = rssi;
+    if (rssi > f.rssiMax) f.rssiMax = rssi;
+    const span = f.rssiMax - f.rssiMin;
+    prox = span > 0 ? (rssi - f.rssiMin) / span : 0.5;
+    readout = `Signal: ${rssi}`;
+  } else {
+    return;
+  }
+
+  // Light smoothing so the bar/tone track quickly but don't jitter.
   f.proxEma = f.proxEma == null
     ? prox
     : FINDER_PROX_ALPHA * prox + (1 - FINDER_PROX_ALPHA) * f.proxEma;
   f.samples += 1;
   const proxEma = f.proxEma;
 
-  const p = $("finder-pulse");
-  p.style.animationDuration = `${(1.6 - proxEma * 1.4).toFixed(2)}s`;
-  p.style.setProperty("--prox", proxEma.toFixed(2));
+  // Vertical bar: only appears past the show threshold, red near the top.
+  const fill = $("finder-bar-fill");
+  if (fill) {
+    const pct = proxEma >= FINDER_BAR_SHOW ? Math.round(proxEma * 100) : 0;
+    fill.style.setProperty("--fill", pct);
+    fill.classList.toggle("red", proxEma >= FINDER_BAR_RED);
+  }
+
+  // Tone: only sounds at/above the show threshold (matches the bar), pitch
+  // climbing with proximity; silent below so it isn't a constant drone.
+  finderLastSignal = performance.now();
+  if (proxEma >= FINDER_BAR_SHOW) updateFinderTone(proxEma);
+  else muteFinderTone();
 
   let word = "Far";
   if (proxEma > 0.85) word = "Right here!";
@@ -778,7 +984,7 @@ function onFinder(msg) {
   else if (proxEma > 0.35) word = "Getting warmer";
   else if (proxEma > 0.15) word = "Cold";
   $("finder-strength").textContent = word;
-  $("finder-rssi").textContent = `Signal: ${rssi}`;
+  $("finder-rssi").textContent = readout;
 
   // Hybrid confidence gate with hysteresis: fire once on entering "found",
   // re-arm only after backing away below the lower threshold.
@@ -808,7 +1014,7 @@ function onFinderLock() {
 }
 
 async function stopFinder() {
-  stopFinderBeep();
+  stopFinderTone();
   state.finder = null;
   await setServerMode("idle");
   state.mode = "warehouse";
@@ -850,28 +1056,54 @@ function playTick(freq = 880, durMs = 40) {
   osc.stop(now + dur + 0.02);
 }
 
-function beepIntervalFor(prox) {
+// Continuous "sweeping" tone: one oscillator that glides in pitch with the
+// signal strength. It self-mutes when reads stop (trigger released / tag lost).
+function startFinderTone() {
+  const ctx = ensureFinderAudio();
+  if (!ctx) return;
+  stopFinderTone();
+  finderOsc = ctx.createOscillator();
+  finderGain = ctx.createGain();
+  finderOsc.type = "sine";
+  finderOsc.frequency.value = FINDER_TONE_MIN_HZ;
+  finderGain.gain.value = 0.0001;
+  finderOsc.connect(finderGain).connect(ctx.destination);
+  finderOsc.start();
+  finderLastSignal = 0;
+  finderStaleTimer = setInterval(() => {
+    if (!finderGain) return;
+    if (performance.now() - finderLastSignal > FINDER_SIGNAL_STALE_MS) {
+      muteFinderTone();
+    }
+  }, 120);
+}
+
+function updateFinderTone(prox) {
+  const ctx = finderAudioCtx;
+  if (!ctx || !finderOsc || !finderGain) return;
   const p = Math.max(0, Math.min(1, prox));
-  return FINDER_BEEP_MAX_MS - p * (FINDER_BEEP_MAX_MS - FINDER_BEEP_MIN_MS);
+  const freq = FINDER_TONE_MIN_HZ + p * (FINDER_TONE_MAX_HZ - FINDER_TONE_MIN_HZ);
+  const now = ctx.currentTime;
+  // Glide pitch (the "sweep") and bring the tone up to an audible level.
+  finderOsc.frequency.setTargetAtTime(freq, now, 0.04);
+  finderGain.gain.setTargetAtTime(0.18, now, 0.05);
 }
 
-function startFinderBeep() {
-  stopFinderBeep();
-  const tick = () => {
-    if (!state.finder) return;
-    const ema = state.finder.proxEma;
-    if (ema != null) playTick();  // silent until the first signal arrives
-    const interval = ema == null ? FINDER_BEEP_MAX_MS : beepIntervalFor(ema);
-    finderBeepTimer = setTimeout(tick, interval);
-  };
-  finderBeepTimer = setTimeout(tick, FINDER_BEEP_MAX_MS);
+function muteFinderTone() {
+  if (!finderAudioCtx || !finderGain) return;
+  finderGain.gain.setTargetAtTime(0.0001, finderAudioCtx.currentTime, 0.05);
 }
 
-function stopFinderBeep() {
-  if (finderBeepTimer) {
-    clearTimeout(finderBeepTimer);
-    finderBeepTimer = null;
+function stopFinderTone() {
+  if (finderStaleTimer) { clearInterval(finderStaleTimer); finderStaleTimer = null; }
+  if (finderOsc) {
+    try {
+      muteFinderTone();
+      finderOsc.stop(finderAudioCtx ? finderAudioCtx.currentTime + 0.1 : 0);
+    } catch (e) { /* already stopped */ }
+    finderOsc = null;
   }
+  finderGain = null;
 }
 
 // -- admin -------------------------------------------------------------------
@@ -1051,14 +1283,33 @@ function wireUI() {
   $("admin-edit-records").onclick = adminEditRecords;
   $("admin-vendor-add").onclick = adminAddVendor;
   $("admin-vendor-name").onkeydown = (e) => { if (e.key === "Enter") adminAddVendor(); };
-  document.querySelectorAll(".seg-btn").forEach((b) => {
+  document.querySelectorAll("#warehouse-view .seg-btn").forEach((b) => {
     b.onclick = () => {
-      document.querySelectorAll(".seg-btn").forEach((x) => x.classList.remove("active"));
+      document.querySelectorAll("#warehouse-view .seg-btn")
+        .forEach((x) => x.classList.remove("active"));
       b.classList.add("active");
       state.whGroupBy = b.dataset.group;
       loadWarehouse();
     };
   });
+  document.querySelectorAll("#event-filter .seg-btn").forEach((b) => {
+    b.onclick = () => {
+      document.querySelectorAll("#event-filter .seg-btn")
+        .forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      state.eventFilter = b.dataset.filter;
+      loadEvents();
+    };
+  });
+  $("event-refresh").onclick = loadEvents;
+  $("event-epc").oninput = () => {
+    clearTimeout(eventSearchTimer);
+    eventSearchTimer = setTimeout(loadEvents, 250);
+  };
+  $("event-epc").onkeydown = (e) => {
+    if (e.key === "Enter") { clearTimeout(eventSearchTimer); loadEvents(); }
+  };
+  $("event-epc-clear").onclick = () => { $("event-epc").value = ""; loadEvents(); };
   $("sim-btn").onclick = () => {
     const raw = $("sim-epc").value.trim();
     if (!raw) return;

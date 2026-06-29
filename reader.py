@@ -12,13 +12,14 @@ QUIET_GAP_SECONDS (the trigger has been released):
                            strongest peak RSSI (the closest tag); if no RSSI was
                            captured, fall back to the most-frequently-read EPC.
   - inventory            : take every distinct EPC seen across the whole hold.
-  - finder               : no burst; while the trigger is held, RSSI (`RI:`) for
-                           one target EPC is streamed live to gauge proximity.
-                           Releasing the trigger (`SW: off`) emits a finder_reset
-                           so the UI drops its adaptive scale for the next aim.
+  - finder               : constrains the trigger `.iv` to a single tag using a
+                           Gen2 Select mask for the target EPC (-ql sl -io off),
+                           so RI: lines for just that tag stream rapidly while
+                           the trigger is held. Releasing the trigger (`SW: off`)
+                           emits a finder_reset so the UI resets for the next aim.
 
 RSSI (`RI:`) output is enabled for check-in/check-out (to pick the closest tag)
-and the finder; it is left off for inventory to keep that stream clean.
+and the finder (live proximity); it is left off for inventory.
 
 Output power is set per mode with `.iv -o<nn> -n` (set parameter, take no
 action), which persists for subsequent trigger-initiated inventories:
@@ -97,8 +98,12 @@ class ReaderWorker:
         # One-shot handheld alert (buzz/vibrate) request; flushed by the worker.
         self._pending_alert = False
 
-        # Finder mode: stream RSSI for one specific tag.
+        # Finder mode: TSL FindTag (`.ft`) streams a continuous RP: proximity
+        # percentage for one target tag. We arm it on entering finder and disarm
+        # it on leaving; _applied_finder tracks what is currently armed.
         self._finder_target = None
+        self._pending_finder = False
+        self._applied_finder = None
         self._last_epc = None
 
         # Accumulator for the current burst.
@@ -168,12 +173,14 @@ class ReaderWorker:
             power = _power_for_mode(mode, self._check_power)
             if power is not None:
                 self._pending_power = power
-            # RSSI output: the finder streams it live; check-in/check-out use it
-            # to pick the closest tag. Off elsewhere to keep inventory clean.
+            # RSSI (`.iv -r`) is streamed for check-in/check-out (closest tag)
+            # and the finder (live proximity); off elsewhere.
             self._pending_rssi = mode in (CHECKIN, CHECKOUT, FINDER)
             # Mute the reader's read-success beep in finder mode so it doesn't
             # compete with the browser's proximity beep; on in every other mode.
             self._pending_beep = (mode != FINDER)
+            # Reconcile the finder select-mask (single-tag .iv) for the new mode.
+            self._pending_finder = True
 
     def set_checkin_item_fields(self, fields):
         """Set the per-unit fields (SKU, mfc date) attached to the next tag."""
@@ -201,17 +208,19 @@ class ReaderWorker:
                 time.sleep(0.1)
                 self._ser.reset_input_buffer()
                 self._connected = True
-                # Reader resets parameters on power-up, so re-apply power, RSSI
-                # and the beep toggle for whatever mode we're currently in.
+                # Reader resets parameters on power-up, so re-apply power, RSSI,
+                # the beep toggle, and the FindTag state for the current mode.
                 self._applied_power = None
                 self._applied_rssi = None
                 self._applied_beep = None
+                self._applied_finder = None
                 with self._lock:
                     power = _power_for_mode(self._mode, self._check_power)
                     if power is not None:
                         self._pending_power = power
                     self._pending_rssi = self._mode in (CHECKIN, CHECKOUT, FINDER)
                     self._pending_beep = (self._mode != FINDER)
+                    self._pending_finder = True
                 self._emit({"event": "status", "connected": True,
                             "message": f"Reader connected on {self.port}"})
                 self._read_loop()
@@ -237,6 +246,7 @@ class ReaderWorker:
             self._apply_pending_power()
             self._apply_pending_rssi()
             self._apply_pending_beep()
+            self._apply_pending_finder()
             self._apply_pending_alert()
             raw = self._ser.readline()
             if raw:
@@ -303,6 +313,45 @@ class ReaderWorker:
                 if self._pending_beep is None:
                     self._pending_beep = want
 
+    def _apply_pending_finder(self):
+        """Constrain the trigger `.iv` to a single target tag for finder mode.
+
+        This reader's firmware does not support the FindTag (`.ft`) command, so
+        instead we set a Gen2 Select mask on the inventory: matching only the
+        target EPC asserts its SL flag, and `-ql sl` then inventories only
+        SL-asserted tags. `-io off` is required so the reader actually performs
+        the select before each round. The result is a fast, frequent RI: stream
+        for just the target (instead of it appearing once per all-tag round).
+        Leaving finder restores the normal all-tag inventory.
+        """
+        with self._lock:
+            pending = self._pending_finder
+            self._pending_finder = False
+            want = self._finder_target if self._mode == FINDER else None
+        if not pending or want == self._applied_finder:
+            return
+        try:
+            if want:
+                # EPC memory bank: bits 0x00-0x1F are CRC+PC, so the EPC select
+                # mask starts at bit offset 0x20. Length is the EPC's bit count.
+                # Session 0 (-qs s0) re-reads the tag on nearly every round (its
+                # inventoried flag reverts immediately) and a fixed Q of 0
+                # (-qa fix -qv 0) keeps each single-tag round minimal, so RI:
+                # streams continuously instead of one-read-then-silent.
+                bits = len(want) * 4
+                cmd = (f".iv -io off -ql sl -sa 0 -st sl -sb epc "
+                       f"-so 0020 -sd {want} -sl {bits:02X} -ie on "
+                       f"-qs s0 -qa fix -qv 0 -n\r\n")
+            else:
+                # Restore default all-tag inventory (no select, dynamic Q, S1).
+                cmd = (".iv -io on -ql all -st s1 -sl 00 -so 0000 "
+                       "-qs s1 -qa dyn -qv 4 -n\r\n")
+            self._ser.write(cmd.encode())
+            self._applied_finder = want
+        except Exception:
+            with self._lock:
+                self._pending_finder = True
+
     def _apply_pending_alert(self):
         """Fire a one-shot handheld alert, then restore the default alert params
         so the read-success beep used by other modes is left intact."""
@@ -351,7 +400,14 @@ class ReaderWorker:
                 if prev is None or rssi > prev:
                     self._rssi_peak[self._last_epc] = rssi
             elif mode == FINDER and self._last_epc and self._last_epc == target:
-                self._emit({"event": "finder", "epc": self._last_epc, "rssi": rssi})
+                # Select-masked inventory returns only the target, so RI: lines
+                # arrive frequently. Map the raw dBm to an absolute 0-100%
+                # signal strength on a fixed scale (stable, unlike adaptive).
+                lo, hi = config.FINDER_RSSI_MIN_DBM, config.FINDER_RSSI_MAX_DBM
+                percent = round((rssi - lo) / (hi - lo) * 100)
+                percent = max(0, min(100, percent))
+                self._emit({"event": "finder", "epc": self._last_epc,
+                            "rssi": rssi, "percent": percent})
         elif line.startswith("SW:"):
             # Asynchronous switch (trigger) state from `.sa -aon`: single/off.
             state = line[3:].strip().lower()
