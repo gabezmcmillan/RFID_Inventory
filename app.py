@@ -12,12 +12,15 @@ Then open http://127.0.0.1:8000
 """
 
 import asyncio
+import csv
+import io
 import queue
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -147,11 +150,11 @@ async def _handle_event(event: dict):
         fields = event.get("fields", {})
         item_fields = event.get("item_fields", {})
         building = fields.get("building_number", "")
-        po_number = fields.get("po_number", "")
+        bol_number = fields.get("bol_number", "")
         vendor = fields.get("vendor", "")
         result = await loop.run_in_executor(
             None, state.db.receive_shipment,
-            epcs, item_type, building, po_number, vendor, item_fields)
+            epcs, item_type, building, bol_number, vendor, item_fields)
         # Stay armed on this shipment so more units can be tagged in.
         await broadcast({"type": "checkin_result", **result})
         return
@@ -168,7 +171,9 @@ async def _handle_event(event: dict):
     if kind == "inventory":
         epcs = event.get("epcs", [])
         result = await loop.run_in_executor(None, state.db.record_inventory, epcs)
-        await broadcast({"type": "inventory_result", **result})
+        # Include the burst's raw EPCs so the browser can accumulate a sweep
+        # session across trigger pulls for the reconciliation view.
+        await broadcast({"type": "inventory_result", "epcs": epcs, **result})
         return
 
 
@@ -217,15 +222,33 @@ async def set_power(req: PowerRequest):
     return {"ok": True, "check_power": applied}
 
 
+def _wh_filters(bol="", building="", received_from="", received_to="",
+                checked_out_from="", checked_out_to=""):
+    """Assemble the warehouse filter dict shared by the view and exports."""
+    return {
+        "bol": bol.strip(),
+        "building": building.strip(),
+        "received_from": received_from.strip(),
+        "received_to": received_to.strip(),
+        "checked_out_from": checked_out_from.strip(),
+        "checked_out_to": checked_out_to.strip(),
+    }
+
+
 @app.get("/api/inventory")
-async def get_inventory(group_by: str = "po"):
-    """Nested warehouse view: item type -> groups (by PO# or Building#)."""
+async def get_inventory(group_by: str = "bol", bol: str = "", building: str = "",
+                        received_from: str = "", received_to: str = "",
+                        checked_out_from: str = "", checked_out_to: str = ""):
+    """Nested warehouse view: item type -> groups (by BOL# or Building#)."""
     if state.db is None:
         return JSONResponse({"ok": False, "message": "Database not available"}, 503)
     loop = asyncio.get_running_loop()
-    if group_by not in ("po", "building"):
-        group_by = "po"
-    return await loop.run_in_executor(None, state.db.inventory_tree, group_by)
+    if group_by not in ("bol", "building"):
+        group_by = "bol"
+    filters = _wh_filters(bol, building, received_from, received_to,
+                          checked_out_from, checked_out_to)
+    return await loop.run_in_executor(
+        None, state.db.inventory_tree, group_by, filters)
 
 
 @app.get("/api/events")
@@ -252,15 +275,79 @@ async def get_vendors():
 
 
 @app.get("/api/inventory/group")
-async def get_inventory_group(item_type: str, value: str = "", group_by: str = "po"):
+async def get_inventory_group(item_type: str, value: str = "", group_by: str = "bol",
+                              bol: str = "", building: str = "",
+                              received_from: str = "", received_to: str = "",
+                              checked_out_from: str = "", checked_out_to: str = ""):
     """Individual tags within one (item_type, group) cell for drill-down."""
     if state.db is None:
         return JSONResponse({"ok": False, "message": "Database not available"}, 503)
     loop = asyncio.get_running_loop()
-    if group_by not in ("po", "building"):
-        group_by = "po"
+    if group_by not in ("bol", "building"):
+        group_by = "bol"
+    filters = _wh_filters(bol, building, received_from, received_to,
+                          checked_out_from, checked_out_to)
     return await loop.run_in_executor(
-        None, state.db.group_tags, item_type, group_by, value)
+        None, state.db.group_tags, item_type, group_by, value, filters)
+
+
+# Columns for the warehouse export (CSV + print/PDF): (header, tag-dict key).
+EXPORT_COLUMNS = [
+    ("EPC", "epc"),
+    ("Item Type", "item_type"),
+    ("BOL #", "bol_number"),
+    ("Building #", "building"),
+    ("Checked Out To", "checkout_building"),
+    ("Vendor", "vendor"),
+    ("SKU", "sku"),
+    ("Mfc Date", "mfc_date"),
+    ("Units Remaining", "remaining"),
+    ("Units Total", "quantity"),
+    ("Status", "status"),
+    ("Received", "received_at"),
+    ("Checked Out", "delivered_at"),
+    ("Flag", "flag"),
+]
+
+
+@app.get("/api/inventory/export")
+async def export_inventory(bol: str = "", building: str = "",
+                           received_from: str = "", received_to: str = "",
+                           checked_out_from: str = "", checked_out_to: str = ""):
+    """Flat per-box rows for the print/PDF export, honoring the view filters."""
+    if state.db is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    filters = _wh_filters(bol, building, received_from, received_to,
+                          checked_out_from, checked_out_to)
+    loop = asyncio.get_running_loop()
+    rows = await loop.run_in_executor(None, state.db.export_rows, filters)
+    return {"rows": rows, "columns": [c[0] for c in EXPORT_COLUMNS],
+            "keys": [c[1] for c in EXPORT_COLUMNS]}
+
+
+@app.get("/api/inventory/export.csv")
+async def export_inventory_csv(bol: str = "", building: str = "",
+                               received_from: str = "", received_to: str = "",
+                               checked_out_from: str = "", checked_out_to: str = ""):
+    """CSV download of the (filtered) warehouse inventory, one row per box."""
+    if state.db is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    filters = _wh_filters(bol, building, received_from, received_to,
+                          checked_out_from, checked_out_to)
+    loop = asyncio.get_running_loop()
+    rows = await loop.run_in_executor(None, state.db.export_rows, filters)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([c[0] for c in EXPORT_COLUMNS])
+    for tag in rows:
+        writer.writerow([tag.get(key, "") for _, key in EXPORT_COLUMNS])
+    filename = f"inventory_{datetime.now().strftime('%Y-%m-%d_%H%M')}.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +416,25 @@ async def admin_clear_flag(req: AdminEpcRequest):
         return bad
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, state.db.clear_flag, req.epc)
+
+
+class AdminGroupDeleteRequest(BaseModel):
+    pin: Optional[str] = None
+    item_type: str
+    group_by: str = "bol"
+    value: str = ""
+
+
+@app.post("/api/admin/group/delete")
+async def admin_delete_group(req: AdminGroupDeleteRequest):
+    """Delete every tag in one (item_type, group) warehouse cell."""
+    bad = _check_pin(req.pin) or _require_db()
+    if bad:
+        return bad
+    group_by = req.group_by if req.group_by in ("bol", "building") else "bol"
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, state.db.delete_group, req.item_type, group_by, req.value)
 
 
 class AdminVendorRequest(BaseModel):
@@ -403,9 +509,54 @@ async def set_checkin_item(req: CheckinItemRequest):
     return {"ok": True}
 
 
+class CheckinAmendRequest(BaseModel):
+    epc: str
+    fields: Optional[Dict[str, str]] = None
+
+
+@app.post("/api/checkin/amend")
+async def checkin_amend(req: CheckinAmendRequest):
+    """Operator fix of the tag that was just checked in (SKU / mfc date / qty).
+
+    Not PIN-gated: it only touches the per-unit fields and is meant for
+    correcting a typo immediately after the trigger pull.
+    """
+    if state.db is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    allowed = {k: v for k, v in (req.fields or {}).items()
+               if k in ("sku", "mfc_date", "quantity")}
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, state.db.amend_checkin, req.epc, allowed)
+
+
 class CheckoutRequest(BaseModel):
     epc: str
     amount: Optional[int] = None
+    building: Optional[str] = None
+
+
+class CompareRequest(BaseModel):
+    epcs: List[str]
+
+
+@app.post("/api/inventory/compare")
+async def compare_inventory(req: CompareRequest):
+    """Reconcile the accumulated sweep-session EPCs against expected inventory."""
+    if state.db is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, state.db.compare_inventory, req.epcs)
+
+
+@app.get("/api/checkout/lookup")
+async def checkout_lookup(epc: str):
+    """Look a box up for the checkout confirm card (used by the warehouse
+    view's Check Out button, which skips the trigger-pull lookup)."""
+    if state.db is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, state.db.lookup_for_checkout, epc)
 
 
 @app.post("/api/checkout")
@@ -415,7 +566,7 @@ async def checkout(req: CheckoutRequest):
         return JSONResponse({"ok": False, "message": "Database not available"}, 503)
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
-        None, state.db.deliver_units, req.epc, req.amount)
+        None, state.db.deliver_units, req.epc, req.amount, req.building)
     return result
 
 

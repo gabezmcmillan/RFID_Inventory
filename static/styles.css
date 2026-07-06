@@ -253,6 +253,15 @@ main {
 .result th { color: var(--muted); font-weight: 600; }
 .unknown-list { margin: 8px 0 0; padding-left: 18px; color: var(--amber); font-size: 13px; font-family: ui-monospace, monospace; }
 
+/* Check-out destination building buttons */
+.checkout-bldg { margin-top: 12px; }
+.checkout-bldg > label {
+  display: block;
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
 /* Check-out confirm (two-step partial draw-down) */
 .checkout-confirm { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .checkout-confirm label { color: var(--muted); font-size: 14px; }
@@ -325,6 +334,7 @@ main {
   flex-wrap: wrap;
 }
 .wh-controls-label { color: var(--muted); font-size: 14px; }
+.wh-controls-spacer { flex: 1; }
 .seg {
   display: inline-flex;
   border: 1px solid var(--border);
@@ -340,6 +350,40 @@ main {
   font-size: 14px;
 }
 .seg-btn.active { background: var(--accent-2); color: #fff; }
+
+/* Warehouse filter bar */
+.wh-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+.wh-filter { display: flex; flex-direction: column; gap: 4px; }
+.wh-filter > label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.wh-filter input, .wh-filter select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 14px;
+}
+.wh-filter input:focus, .wh-filter select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.wh-date-range { display: flex; align-items: center; gap: 6px; }
+.wh-date-range span { color: var(--muted); }
 
 .wh-tree { display: flex; flex-direction: column; gap: 10px; }
 .wh-type {
@@ -430,6 +474,19 @@ table.event-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 }
 .find-btn:hover { background: var(--accent); }
 
+.checkout-btn {
+  background: transparent;
+  border: 1px solid var(--green);
+  color: var(--green);
+  border-radius: 7px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-left: 6px;
+}
+.checkout-btn:hover { background: rgba(46,204,113,0.12); }
+.wh-actions { white-space: nowrap; }
+
 /* Finder */
 .finder-target { text-align: center; margin-bottom: 8px; }
 .finder-label { font-size: 18px; font-weight: 600; }
@@ -516,6 +573,38 @@ table.event-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 }
 .vendor-del:hover { color: var(--red); }
 
+/* Sweep session bar + reconciliation */
+.sweep-session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-top: 10px;
+}
+.sweep-session-bar .hint { margin: 0; }
+.sweep-all-found {
+  color: var(--green);
+  font-weight: 600;
+  margin: 4px 0 10px;
+}
+.sweep-missing table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.sweep-missing th, .sweep-missing td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sweep-missing th { color: var(--muted); font-weight: 600; }
+.sweep-missing .hint { margin: 8px 0 0; font-size: 13px; }
+
 /* Sweep & Count detail dropdown */
 .sweep-details { margin-top: 14px; }
 .sweep-details > summary {
@@ -548,6 +637,12 @@ table.event-table { width: 100%; border-collapse: collapse; font-size: 14px; }
   font-size: 14px;
 }
 .danger-btn:hover { filter: brightness(1.1); }
+.group-delete-btn {
+  padding: 5px 12px;
+  font-size: 13px;
+  border-radius: 7px;
+  margin-left: 10px;
+}
 .warn-btn {
   background: transparent;
   border: 1px solid var(--amber);
@@ -596,6 +691,22 @@ table.event-table { width: 100%; border-collapse: collapse; font-size: 14px; }
   margin-left: 4px;
 }
 
+/* Check-in quick-edit (fix the box that was just scanned) */
+.checkin-amend-btn { margin-top: 12px; }
+.checkin-amend-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.checkin-amend-form input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+
 /* Inline tag editor */
 .tag-editor {
   background: var(--surface);
@@ -618,3 +729,58 @@ table.event-table { width: 100%; border-collapse: collapse; font-size: 14px; }
   padding: 7px 9px;
 }
 .edit-actions { display: flex; gap: 10px; margin-top: 12px; }
+
+/* Modal confirmation dialog */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+  max-width: 480px;
+  width: 100%;
+}
+.modal h3 { margin: 0 0 10px; font-size: 18px; }
+.modal p { margin: 8px 0; font-size: 15px; line-height: 1.5; }
+.modal table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.modal th, .modal td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.modal th { color: var(--muted); font-weight: 600; }
+.modal .epc { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); }
+.modal-actions { display: flex; gap: 10px; margin-top: 16px; }
+.modal-actions .primary-btn { width: auto; flex: 1; }
+.modal-actions .back-btn { flex: 1; padding: 12px; font-size: 15px; }
+
+/* Print-to-PDF export: hidden on screen, the only thing visible when printing */
+.print-area { display: none; }
+
+@media print {
+  body > *:not(.print-area) { display: none !important; }
+  body { background: #fff; color: #000; }
+  .print-area { display: block; padding: 0; }
+  .print-area h1 { font-size: 18pt; margin: 0 0 4pt; }
+  .print-area p { font-size: 9pt; color: #444; margin: 0 0 10pt; }
+  .print-area table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+  .print-area th, .print-area td {
+    border: 1px solid #999;
+    padding: 3pt 4pt;
+    text-align: left;
+    word-break: break-word;
+  }
+  .print-area th { background: #eee; }
+  .print-area tr { page-break-inside: avoid; }
+}

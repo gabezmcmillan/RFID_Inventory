@@ -74,7 +74,7 @@ PORT = 8000
 # A check-in registers a shipment of an item type and tags each physical unit.
 # Fields carry a `scope`:
 #   "shipment" : entered once when arming the shipment, applied to every tag
-#                in it (Building #, PO Number, Vendor).
+#                in it (Building #, BOL Number, Vendor).
 #   "item"     : entered per unit, just before pulling the trigger on that tag
 #                (SKU, Manufactured Date) -- each tag can differ.
 # Each field: key (stored), label (shown in UI), type (input type), scope.
@@ -87,7 +87,7 @@ DEFAULT_VENDORS = []
 SHIPMENT_FIELDS = [
     {"key": "building_number", "label": "Building #", "type": "buttons",
      "options": BUILDING_OPTIONS, "scope": "shipment"},
-    {"key": "po_number",       "label": "PO Number",  "type": "text",   "scope": "shipment"},
+    {"key": "bol_number",      "label": "BOL Number", "type": "text",   "scope": "shipment"},
     {"key": "vendor",          "label": "Vendor",     "type": "select", "scope": "shipment"},
 ]
 ITEM_FIELDS = [

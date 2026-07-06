@@ -7,7 +7,7 @@ everything written to a local SQLite database (`inventory.db`).
 ## Modes
 
 - **Check In** — pick an item type (TSC / CDU / W.I.F.) and enter the shipment
-  fields once (Building #, PO Number, Vendor). Then for each physical unit, enter
+  fields once (Building #, BOL Number, Vendor). Then for each physical unit, enter
   its per-unit fields (SKU, Manufactured Date) and pull the trigger to tag it.
   Each tag becomes a row; the shipment's quantity is the count of its tags.
 - **Check Out** — pull the trigger on a tag to deliver it to site. The app looks
@@ -16,7 +16,7 @@ everything written to a local SQLite database (`inventory.db`).
 - **Sweep & Count** — hold the trigger and sweep; release to count. Unique EPCs
   are resolved to types and reported (read-only; does not change quantities).
 - **Warehouse** — browse stored inventory. Each item type expands into groups
-  (by PO # or Building #), and each group expands into the individual units.
+  (by BOL # or Building #), and each group expands into the individual units.
   Every unit has a **Find** button.
 - **Find a Tag** — launched from the Warehouse drill-down. Hold the trigger and
   sweep; a pulse speeds up as you get closer to the chosen tag (uses the reader's
@@ -45,7 +45,7 @@ Then open http://127.0.0.1:8000
 
 ## Database tables (auto-created)
 
-- `tags`: one row per physical EPC — item_type, PO #, Building #, Vendor, SKU,
+- `tags`: one row per physical EPC — item_type, BOL #, Building #, Vendor, SKU,
   mfc date, status, received/delivered timestamps. This is the source of truth;
   warehouse quantities are derived as a `COUNT` of in-warehouse tags.
 - `events`: append-only audit log of IN / OUT / COUNT actions.

@@ -12,7 +12,7 @@ const VIEWS = ["checkin-view", "checkout-view", "inventory-view",
 // Tag fields an admin may edit (key, label, input type).
 const EDIT_FIELDS = [
   { key: "item_type", label: "Type", type: "text" },
-  { key: "po_number", label: "PO #", type: "text" },
+  { key: "bol_number", label: "BOL #", type: "text" },
   { key: "building", label: "Building #", type: "building" },
   { key: "vendor", label: "Vendor", type: "vendor" },
   { key: "sku", label: "SKU", type: "text" },
@@ -38,7 +38,11 @@ const state = {
   mode: null,          // active UI mode
   selectedType: null,
   shipment: null,
-  whGroupBy: "po",     // warehouse grouping dimension
+  whGroupBy: "bol",    // warehouse grouping dimension
+  whFilters: { bol: "", building: "", received_from: "", received_to: "",
+               checked_out_from: "", checked_out_to: "" },
+  sweep: null,         // sweep session accumulator (see newSweepSession)
+  pendingCheckout: null, // checkout_prompt currently awaiting confirmation
   eventFilter: "all",  // event-log filter category
   finder: null,        // {epc, rssiMin, rssiMax, proxEma, samples, found}
   admin: { pin: null, editMode: false },
@@ -151,7 +155,7 @@ function handleMessage(msg) {
       $("scanner-title").textContent = "Reading\u2026";
       break;
     case "checkin_result": onCheckinResult(msg); break;
-    case "checkout_prompt": onCheckoutPrompt(msg); break;
+    case "checkout_prompt": handleCheckoutScan(msg); break;
     case "checkout_result": onCheckoutResult(msg); break;
     case "inventory_result": onInventoryResult(msg); break;
     case "finder": onFinder(msg); break;
@@ -183,6 +187,8 @@ function showView(id) { VIEWS.forEach((v) => hide(v)); show(id); }
 async function openMode(mode, opts = {}) {
   state.mode = mode;
   state.selectedType = null;
+  state.pendingCheckout = null;
+  hideModal();
   $("mode-picker").classList.add("hidden");
   $("panel").classList.remove("hidden");
   $("panel-title").textContent = MODE_TITLES[mode];
@@ -203,6 +209,7 @@ async function openMode(mode, opts = {}) {
     await setServerMode("checkout");
     showScanner("Ready \u2014 pull the trigger to deliver to site");
   } else if (mode === "inventory") {
+    resetSweepSession();
     await setServerMode("inventory");
     showScanner("Hold the trigger to sweep\u2026");
   } else if (mode === "warehouse") {
@@ -227,6 +234,9 @@ async function backToModes() {
   stopFinderTone();
   state.mode = null;
   state.finder = null;
+  state.sweep = null;
+  state.pendingCheckout = null;
+  hideModal();
   state.admin.editMode = false;
   $("wh-edit-banner").classList.add("hidden");
   $("panel").classList.add("hidden");
@@ -425,35 +435,144 @@ function onCheckinResult(msg) {
     showScanner(`Receiving ${msg.item_type || ""} \u2014 pull the trigger on the next unit`);
     return;
   }
-  const po = msg.po_number || "n/a";
-  const bldg = msg.building || "n/a";
-  const dupNote = msg.duplicates && msg.duplicates.length
-    ? `<p class="hint">${msg.duplicates.length} tag(s) were already on file (not re-counted).</p>` : "";
-  const sku = msg.sku ? `<tr><th>SKU</th><td>${escapeHtml(msg.sku)}</td></tr>` : "";
-  const mfc = msg.mfc_date ? `<tr><th>Mfc date</th><td>${escapeHtml(msg.mfc_date)}</td></tr>` : "";
   const boxUnits = msg.quantity != null ? msg.quantity : msg.added_units;
-  showResult("ok", `Shipment: ${escapeHtml(msg.item_type)} \u00b7 Qty ${msg.qty} units`,
-    `<table>
-       <tr><th>PO Number</th><td>${escapeHtml(po)}</td></tr>
-       <tr><th>Building</th><td>${escapeHtml(bldg)}</td></tr>
-       <tr><th>Vendor</th><td>${escapeHtml(msg.vendor || "")}</td></tr>
-       ${sku}${mfc}
-       <tr><th>This box</th><td>${boxUnits} unit(s)</td></tr>
-       <tr><th>Total in this group</th><td>${msg.qty} unit(s)</td></tr>
-     </table>${dupNote}
-     <p class="hint">Enter the next box's details and pull the trigger, or "Finish / change shipment".</p>`);
-  logActivity(`Received a box of ${boxUnits} ${msg.item_type} (PO ${po}) \u2014 qty now ${msg.qty} units`, "ok");
+  renderCheckinSummary(msg);
+  logActivity(`Received a box of ${boxUnits} ${msg.item_type} (BOL ${msg.bol_number || "n/a"}) \u2014 qty now ${msg.qty} units`, "ok");
   // Per-unit fields are unique; clear them for the next unit.
   clearItemInputs();
   postItemFields();
   showScanner(`Receiving ${msg.item_type} \u2014 enter the next unit, then pull the trigger`);
 }
 
+function renderCheckinSummary(msg) {
+  const bol = msg.bol_number || "n/a";
+  const bldg = msg.building || "n/a";
+  const dupNote = msg.duplicates && msg.duplicates.length
+    ? `<p class="hint">${msg.duplicates.length} tag(s) were already on file (not re-counted).</p>` : "";
+  const sku = msg.sku ? `<tr><th>SKU</th><td>${escapeHtml(msg.sku)}</td></tr>` : "";
+  const mfc = msg.mfc_date ? `<tr><th>Mfc date</th><td>${escapeHtml(msg.mfc_date)}</td></tr>` : "";
+  const boxUnits = msg.quantity != null ? msg.quantity : msg.added_units;
+  const epcRow = msg.epc
+    ? `<tr><th>EPC</th><td><span class="epc">${escapeHtml(msg.epc)}</span></td></tr>` : "";
+  const editBtn = msg.epc
+    ? `<button id="checkin-amend-btn" class="edit-btn checkin-amend-btn">Edit this box</button>` : "";
+  showResult("ok", `Shipment: ${escapeHtml(msg.item_type)} \u00b7 Qty ${msg.qty} units`,
+    `<table>
+       ${epcRow}
+       <tr><th>BOL Number</th><td>${escapeHtml(bol)}</td></tr>
+       <tr><th>Building</th><td>${escapeHtml(bldg)}</td></tr>
+       <tr><th>Vendor</th><td>${escapeHtml(msg.vendor || "")}</td></tr>
+       ${sku}${mfc}
+       <tr><th>This box</th><td>${boxUnits} unit(s)</td></tr>
+       <tr><th>Total in this group</th><td>${msg.qty} unit(s)</td></tr>
+     </table>${dupNote}${editBtn}
+     <p class="hint">Enter the next box's details and pull the trigger, or "Finish / change shipment".</p>`);
+  const btn = $("checkin-amend-btn");
+  if (btn) btn.onclick = () => renderCheckinAmend(msg);
+}
+
+// Quick fix of the box that was just scanned (typo in qty / SKU / mfc date).
+// Scanning stays armed the whole time, so the flow isn't interrupted.
+function renderCheckinAmend(msg) {
+  const qty = msg.quantity != null ? msg.quantity : 1;
+  showResult("ok", `Edit box ${msg.epc}`,
+    `<div class="checkin-amend-form">
+       <label class="edit-field"><span>SKU</span>
+         <input id="amend-sku" type="text" value="${escapeHtml(msg.sku || "")}" /></label>
+       <label class="edit-field"><span>Manufactured Date</span>
+         <input id="amend-mfc" type="date" value="${escapeHtml(msg.mfc_date || "")}" /></label>
+       <label class="edit-field"><span>Quantity (units in this box)</span>
+         <input id="amend-qty" type="number" min="1" step="1" value="${escapeHtml(String(qty))}" /></label>
+     </div>
+     <div class="edit-actions">
+       <button id="amend-save" class="primary-btn">Save</button>
+       <button id="amend-cancel" class="back-btn">Cancel</button>
+     </div>`);
+  $("amend-cancel").onclick = () => renderCheckinSummary(msg);
+  $("amend-save").onclick = async () => {
+    const fields = {
+      sku: $("amend-sku").value.trim(),
+      mfc_date: $("amend-mfc").value.trim(),
+      quantity: $("amend-qty").value.trim(),
+    };
+    try {
+      const res = await fetch("/api/checkin/amend", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ epc: msg.epc, fields }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        const tag = data.tag || {};
+        msg.sku = tag.sku;
+        msg.mfc_date = tag.mfc_date;
+        msg.quantity = tag.quantity;
+        if (data.qty != null) msg.qty = data.qty;
+        logActivity(data.message || `Updated ${msg.epc}`, "ok");
+        renderCheckinSummary(msg);
+      } else {
+        logActivity(data.message || "Edit failed", "err");
+      }
+    } catch (e) {
+      logActivity("Cannot reach server", "err");
+    }
+  };
+}
+
 // -- check out ---------------------------------------------------------------
 // A trigger pull only looks the box up; the operator confirms how many units to
 // draw down here (full box by default), then we commit via POST /api/checkout.
+// While a confirm card is showing, a second scan of the SAME tag also commits
+// (after a warning if the destination building differs from the tag's own);
+// scanning a DIFFERENT tag prompts the operator to switch or re-scan.
+function handleCheckoutScan(msg) {
+  hideModal(); // a fresh scan supersedes any dialog still on screen
+  const pending = state.pendingCheckout;
+  const sameTag = pending && msg.epc &&
+    String(msg.epc).toUpperCase() === String(pending.epc).toUpperCase();
+
+  // No card pending (or the pending box's state changed underneath us):
+  // fall through to the normal lookup card.
+  if (!pending || (sameTag && !msg.ok)) {
+    onCheckoutPrompt(msg);
+    return;
+  }
+
+  if (!sameTag) {
+    // Case a: the confirming scan hit a different tag.
+    showModal("Tag mismatch",
+      `<p>The tag scanned does not match the tag selected for check-out.</p>
+       <table>
+         <tr><th>Selected</th><td><span class="epc">${escapeHtml(pending.epc)}</span></td></tr>
+         <tr><th>Scanned</th><td><span class="epc">${escapeHtml(msg.epc || "")}</span></td></tr>
+       </table>`,
+      [{ label: "Switch to scanned tag", cls: "primary-btn",
+         onClick: () => onCheckoutPrompt(msg) },
+       { label: "Scan correct tag again", cls: "back-btn" }]);
+    logActivity(`Checkout scan mismatch: expected ${pending.epc}, got ${msg.epc}`, "warn");
+    return;
+  }
+
+  // Same tag scanned again: this is the confirmation.
+  const group = $("checkout-bldg-group");
+  const dest = group ? (group.dataset.value || "") : "";
+  const home = String(pending.building || "");
+  if (dest && home && dest !== home) {
+    // Case b: destination differs from the building the box is assigned to.
+    showModal("Different building",
+      `<p>This box is assigned to Building <b>${escapeHtml(home)}</b> but is being
+         delivered to Building <b>${escapeHtml(dest)}</b>.</p>
+       <p>Are you sure you want to deliver it there?</p>`,
+      [{ label: "Yes, deliver", cls: "primary-btn",
+         onClick: () => confirmCheckout(pending.epc, pending.remaining) },
+       { label: "Cancel", cls: "back-btn" }]);
+    return;
+  }
+  confirmCheckout(pending.epc, pending.remaining);
+}
+
 function onCheckoutPrompt(msg) {
   if (!msg.ok) {
+    state.pendingCheckout = null;
     showResult("warn", "Cannot deliver",
       `<p class="epc">${escapeHtml(msg.epc || "")}</p>
        <p>${escapeHtml(msg.message)}</p>`);
@@ -461,24 +580,46 @@ function onCheckoutPrompt(msg) {
     showScanner("Ready \u2014 pull the trigger to deliver to site");
     return;
   }
+  state.pendingCheckout = msg;
   const remaining = msg.remaining;
   const quantity = msg.quantity;
+  const buildings = state.config.building_options || [];
+  const defaultBldg = String(msg.building || "");
+  const bldgBtns = buildings.map((b) =>
+    `<button type="button" class="opt-btn checkout-bldg-btn${String(b) === defaultBldg ? " active" : ""}"
+       data-building="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join("");
   showResult("ok", "How many units leave?",
     `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
        <span class="epc">${escapeHtml(msg.epc)}</span></p>
      <table>
-       <tr><th>PO Number</th><td>${escapeHtml(msg.po_number || "n/a")}</td></tr>
+       <tr><th>BOL Number</th><td>${escapeHtml(msg.bol_number || "n/a")}</td></tr>
        <tr><th>Building</th><td>${escapeHtml(msg.building || "n/a")}</td></tr>
        <tr><th>SKU</th><td>${escapeHtml(msg.sku || "")}</td></tr>
        <tr><th>Units in this box</th><td>${remaining} of ${quantity}</td></tr>
      </table>
+     <div class="checkout-bldg">
+       <label>Deliver to building</label>
+       <div id="checkout-bldg-group" class="btn-group"
+            data-value="${escapeHtml(defaultBldg)}">${bldgBtns}</div>
+     </div>
      <div class="checkout-confirm">
        <label for="checkout-amount">Units to deliver</label>
        <input id="checkout-amount" type="number" min="1" max="${remaining}"
               step="1" value="${remaining}" />
        <button id="checkout-confirm-btn" class="primary-btn">Confirm delivery</button>
      </div>
-     <p class="hint">Defaults to the whole box. Lower it to deliver part of the box.</p>`);
+     <p class="hint">Defaults to the whole box. Lower it to deliver part of the box.
+       Scan this tag again or press Confirm delivery to finish.</p>`);
+  showScanner("Scan the same tag again to confirm delivery");
+  const group = $("checkout-bldg-group");
+  group.querySelectorAll(".checkout-bldg-btn").forEach((b) => {
+    b.onclick = () => {
+      const val = b.dataset.building;
+      group.dataset.value = group.dataset.value === val ? "" : val;
+      group.querySelectorAll(".checkout-bldg-btn").forEach((x) =>
+        x.classList.toggle("active", x.dataset.building === group.dataset.value));
+    };
+  });
   const input = $("checkout-amount");
   const commit = () => confirmCheckout(msg.epc, remaining);
   $("checkout-confirm-btn").onclick = commit;
@@ -494,10 +635,12 @@ async function confirmCheckout(epc, remaining) {
   let amount = input ? parseInt(input.value, 10) : remaining;
   if (!Number.isFinite(amount) || amount < 1) amount = 1;
   if (amount > remaining) amount = remaining;
+  const group = $("checkout-bldg-group");
+  const building = group ? (group.dataset.value || "") : "";
   try {
     const res = await fetch("/api/checkout", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ epc, amount }),
+      body: JSON.stringify({ epc, amount, building }),
     });
     onCheckoutResult(await res.json());
   } catch (e) {
@@ -506,6 +649,7 @@ async function confirmCheckout(epc, remaining) {
 }
 
 function onCheckoutResult(msg) {
+  state.pendingCheckout = null;
   if (msg.ok) {
     const groupLeft = (msg.qty_remaining == null) ? "" :
       `<tr><th>Units left (this group)</th><td>${msg.qty_remaining}</td></tr>`;
@@ -513,18 +657,24 @@ function onCheckoutResult(msg) {
       `<tr><th>Units left in this box</th><td>${msg.box_remaining}</td></tr>`;
     const delivered = (msg.delivered == null) ? "" :
       `<tr><th>Units delivered</th><td>${msg.delivered}</td></tr>`;
-    showResult("ok", "Delivered to site",
-      `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
+    const checkedOutTo = msg.checkout_building
+      ? `<tr><th>Checked out to</th><td>Building ${escapeHtml(msg.checkout_building)}</td></tr>` : "";
+    const mismatch = msg.flag
+      ? `<div class="flag-warning"><strong>&#9888; ${escapeHtml(msg.flag)}</strong></div>` : "";
+    showResult(msg.flag ? "warn" : "ok", "Delivered to site",
+      `${mismatch}<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
          <span class="epc">${escapeHtml(msg.epc)}</span></p>
        <table>
-         <tr><th>PO Number</th><td>${escapeHtml(msg.po_number || "n/a")}</td></tr>
+         <tr><th>BOL Number</th><td>${escapeHtml(msg.bol_number || "n/a")}</td></tr>
          <tr><th>Building</th><td>${escapeHtml(msg.building || "n/a")}</td></tr>
-         ${delivered}${boxLeft}
+         ${checkedOutTo}${delivered}${boxLeft}
          <tr><th>Delivered</th><td>${escapeHtml(msg.delivered_at || "")}</td></tr>
          ${groupLeft}
        </table>`);
+    const dest = msg.checkout_building ? ` (Bldg ${msg.checkout_building})` : "";
     logActivity(`Delivered ${msg.delivered != null ? msg.delivered + " unit(s) of " : ""}` +
-      `${msg.item_type} (${msg.epc}) to site`, "ok");
+      `${msg.item_type} (${msg.epc}) to site${dest}`, msg.flag ? "warn" : "ok");
+    if (msg.flag) logActivity(msg.flag, "warn");
   } else {
     showResult("warn", "Cannot deliver", `<p class="epc">${escapeHtml(msg.epc || "")}</p>
        <p>${escapeHtml(msg.message)}</p>`);
@@ -534,43 +684,145 @@ function onCheckoutResult(msg) {
 }
 
 // -- inventory sweep ---------------------------------------------------------
-function onInventoryResult(msg) {
-  const counts = msg.counts || {};
+// A sweep "session" accumulates every EPC seen across trigger pulls so the
+// missing list shrinks as more of the warehouse is covered.
+function newSweepSession() {
+  return { epcs: new Set(), unknown: new Set(),
+           flagged: new Map(), items: new Map() };
+}
+
+function resetSweepSession() {
+  state.sweep = newSweepSession();
+  updateSweepStatus();
+  hide("result");
+}
+
+function updateSweepStatus() {
+  const el = $("sweep-session-status");
+  if (!el) return;
+  const n = state.sweep ? state.sweep.epcs.size : 0;
+  el.textContent = n
+    ? `Session: ${n} distinct tag(s) scanned so far.`
+    : "No tags scanned yet this session.";
+}
+
+async function onInventoryResult(msg) {
+  if (!state.sweep) state.sweep = newSweepSession();
+  const s = state.sweep;
+  (msg.epcs || []).forEach((e) => s.epcs.add(String(e).toUpperCase()));
+  (msg.unknown || []).forEach((e) => s.unknown.add(e));
+  (msg.flagged || []).forEach((f) => s.flagged.set(f.epc, f));
+  (msg.items || []).forEach((t) => s.items.set(t.epc, t));
+  updateSweepStatus();
+
+  // Reconcile the whole session against what should be in the warehouse.
+  let cmp = null;
+  try {
+    const res = await fetch("/api/inventory/compare", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ epcs: [...s.epcs] }),
+    });
+    cmp = await res.json();
+  } catch (e) {
+    logActivity("Could not compare sweep against inventory", "err");
+  }
+  renderSweepResult(cmp);
+  showScanner("Hold the trigger to sweep again\u2026");
+}
+
+function renderSweepResult(cmp) {
+  const s = state.sweep || newSweepSession();
+  const items = [...s.items.values()];
+  const unknown = [...s.unknown];
+  const flagged = [...s.flagged.values()];
+
+  // Per-type unit counts across the whole session (in-warehouse tags only).
+  const counts = {};
+  items.forEach((t) => {
+    if (t.remaining > 0) counts[t.item_type] = (counts[t.item_type] || 0) + t.remaining;
+  });
   let rows = "";
   Object.keys(counts).sort().forEach((t) => {
     rows += `<tr><td>${escapeHtml(t)}</td><td>${counts[t]}</td></tr>`;
   });
   if (!rows) rows = `<tr><td colspan="2" class="hint">No registered tags found.</td></tr>`;
-  let unknownHtml = "";
-  if (msg.unknown && msg.unknown.length) {
-    unknownHtml = `<p class="hint">${msg.unknown.length} unregistered tag(s):</p>
-      <ul class="unknown-list">${msg.unknown.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`;
+
+  // Reconciliation: expected boxes that were NOT detected in this session.
+  let missingHtml = "";
+  let title, kind;
+  if (cmp) {
+    title = `Found ${cmp.found_count} of ${cmp.expected} expected box(es)`;
+    kind = cmp.missing_count || flagged.length ? "warn" : "ok";
+    if (cmp.missing_count) {
+      const mrows = cmp.missing.map((t) => {
+        const qty = `${t.remaining != null ? t.remaining : ""}` +
+          (t.quantity != null ? ` / ${t.quantity}` : "");
+        return `<tr>
+          <td class="epc epc-link" data-epc="${escapeHtml(t.epc)}"
+              title="View this tag's event history">${escapeHtml(t.epc)}</td>
+          <td>${escapeHtml(t.item_type || "")}</td>
+          <td>${escapeHtml(t.bol_number || "")}</td>
+          <td>${escapeHtml(t.building || "")}</td>
+          <td>${escapeHtml(t.sku || "")}</td>
+          <td class="qty-cell">${escapeHtml(qty)}</td>
+          <td><button class="find-btn" data-epc="${escapeHtml(t.epc)}"
+            data-label="${escapeHtml((t.item_type || "") + " \u00b7 " + (t.sku || t.epc))}">Find</button></td>
+        </tr>`;
+      }).join("");
+      missingHtml = `<div class="flag-warning sweep-missing">
+        <strong>&#9888; ${cmp.missing_count} box(es) expected in the warehouse but NOT detected:</strong>
+        <table>
+          <thead><tr><th>EPC</th><th>Type</th><th>BOL</th><th>Building</th>
+            <th>SKU</th><th>Qty</th><th></th></tr></thead>
+          <tbody>${mrows}</tbody>
+        </table>
+        <p class="hint">Keep sweeping to pick up more tags, or use Find to hunt one down.</p>
+      </div>`;
+    } else {
+      missingHtml = `<p class="sweep-all-found">&#10003; All expected boxes accounted for.</p>`;
+    }
+  } else {
+    // Comparison unavailable (e.g. server hiccup): fall back to plain counts.
+    const total = Object.values(counts).reduce((a, b) => a + b, 0)
+      + unknown.length + flagged.length;
+    title = `Counted ${total} unit(s)`;
+    kind = flagged.length ? "warn" : "ok";
   }
-  const flagged = msg.flagged || [];
+
+  let unknownHtml = "";
+  if (unknown.length) {
+    unknownHtml = `<p class="hint">${unknown.length} unregistered tag(s):</p>
+      <ul class="unknown-list">${unknown.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`;
+  }
   let flaggedHtml = "";
   if (flagged.length) {
-    const items = flagged.map((f) =>
+    const fitems = flagged.map((f) =>
       `<li><span class="epc epc-link" data-epc="${escapeHtml(f.epc)}"
         title="View this tag's event history">${escapeHtml(f.epc)}</span> &mdash;
-        ${escapeHtml(f.item_type)} (PO ${escapeHtml(f.po_number || "n/a")},
+        ${escapeHtml(f.item_type)} (BOL ${escapeHtml(f.bol_number || "n/a")},
         Bldg ${escapeHtml(f.building || "n/a")}), checked out ${escapeHtml(f.delivered_at || "")}</li>`
     ).join("");
     flaggedHtml = `<div class="flag-warning">
       <strong>&#9888; ${flagged.length} checked-out item(s) detected &mdash; should NOT be in the warehouse:</strong>
-      <ul>${items}</ul></div>`;
+      <ul>${fitems}</ul></div>`;
   }
-  const detailsHtml = sweepDetailsHtml(msg.items || []);
-  showResult(flagged.length ? "warn" : "ok", `Counted ${msg.total} unit(s)`,
-    `${flaggedHtml}<table><tr><th>Type</th><th>Units</th></tr>${rows}</table>` +
-    `${unknownHtml}${detailsHtml}`);
-  logActivity(`Inventory sweep: ${msg.total} unit(s)` +
-    (flagged.length ? `, ${flagged.length} flagged` : ""),
-    flagged.length ? "warn" : "ok");
-  // EPCs in the flagged list and detailed scan jump to that tag's event history.
+  const detailsHtml = sweepDetailsHtml(items);
+
+  showResult(kind, title,
+    `${missingHtml}${flaggedHtml}
+     <table><tr><th>Type</th><th>Units</th></tr>${rows}</table>
+     ${unknownHtml}${detailsHtml}`);
+  logActivity(`Sweep: ${title.toLowerCase()}` +
+    (cmp && cmp.missing_count ? `, ${cmp.missing_count} missing` : "") +
+    (flagged.length ? `, ${flagged.length} flagged` : ""), kind);
+
+  // EPC links jump to that tag's event history; Find buttons open the finder.
   $("result").querySelectorAll(".epc-link").forEach((el) => {
     el.onclick = (ev) => { ev.stopPropagation(); openMode("eventlog", { epc: el.dataset.epc }); };
   });
-  showScanner("Hold the trigger to sweep again\u2026");
+  $("result").querySelectorAll(".find-btn").forEach((b) => {
+    b.onclick = (ev) => { ev.stopPropagation(); openFinder(b.dataset.epc, b.dataset.label); };
+  });
 }
 
 function sweepDetailsHtml(items) {
@@ -585,7 +837,7 @@ function sweepDetailsHtml(items) {
           title="View this tag's event history">${escapeHtml(t.epc)}</td>
       <td>${escapeHtml(t.item_type || "")}</td>
       <td class="qty-cell">${escapeHtml(qty)}</td>
-      <td>${escapeHtml(t.po_number || "")}</td>
+      <td>${escapeHtml(t.bol_number || "")}</td>
       <td>${escapeHtml(t.building || "")}</td>
       <td>${escapeHtml(t.vendor || "")}</td>
       <td>${escapeHtml(t.sku || "")}</td>
@@ -598,7 +850,7 @@ function sweepDetailsHtml(items) {
   return `<details class="sweep-details">
       <summary>View detailed scan (${items.length} box${items.length === 1 ? "" : "es"})</summary>
       <table>
-        <thead><tr><th>EPC</th><th>Type</th><th>Qty</th><th>PO</th><th>Building</th>
+        <thead><tr><th>EPC</th><th>Type</th><th>Qty</th><th>BOL</th><th>Building</th>
           <th>Vendor</th><th>SKU</th><th>Mfc date</th><th>Checked in</th>
           <th>Checked out</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -607,11 +859,21 @@ function sweepDetailsHtml(items) {
 }
 
 // -- warehouse browse / drill-down -------------------------------------------
+// Active filter values as URLSearchParams entries (blank values skipped) so the
+// tree, drill-down, and exports all narrow to the same set of tags.
+function whFilterParams(params) {
+  Object.entries(state.whFilters).forEach(([k, v]) => {
+    if (v) params.set(k, v);
+  });
+  return params;
+}
+
 async function loadWarehouse() {
   const tree = $("warehouse-tree");
   tree.innerHTML = `<p class="hint">Loading\u2026</p>`;
+  const q = whFilterParams(new URLSearchParams({ group_by: state.whGroupBy }));
   try {
-    const data = await (await fetch(`/api/inventory?group_by=${state.whGroupBy}`)).json();
+    const data = await (await fetch(`/api/inventory?${q.toString()}`)).json();
     renderWarehouse(data);
   } catch (e) {
     tree.innerHTML = `<p class="hint">Could not load inventory.</p>`;
@@ -621,9 +883,12 @@ async function loadWarehouse() {
 function renderWarehouse(data) {
   const tree = $("warehouse-tree");
   tree.innerHTML = "";
-  const groupLabel = data.group_by === "building" ? "Building #" : "PO #";
+  const groupLabel = data.group_by === "building" ? "Building #" : "BOL #";
   if (!data.types || !data.types.length) {
-    tree.innerHTML = `<p class="hint">Nothing in the warehouse yet. Check in a shipment to get started.</p>`;
+    const filtered = Object.values(state.whFilters).some(Boolean);
+    tree.innerHTML = filtered
+      ? `<p class="hint">Nothing matches these filters.</p>`
+      : `<p class="hint">Nothing in the warehouse yet. Check in a shipment to get started.</p>`;
     return;
   }
   data.types.forEach((t) => {
@@ -677,12 +942,22 @@ function addGroupRows(tbody, itemType, groupBy, g) {
     ? `Partial (${g.in_wh}/${capacity})`
     : g.status;
   const boxes = g.boxes != null ? g.boxes : g.total;
+  const deleteBtn = isEditing()
+    ? ` <button class="danger-btn group-delete-btn" title="Delete every box in this group">Delete</button>`
+    : "";
   row.innerHTML = `
     <td>${g.qty}</td>
     <td><span class="wh-caret">&#9656;</span> ${escapeHtml(g.value || "(blank)")}</td>
     <td>${escapeHtml(fmtDateTime(g.received_at) || g.received || "")}</td>
     <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span></td>
-    <td class="wh-count">${boxes} box(es)</td>`;
+    <td class="wh-count">${boxes} box(es)${deleteBtn}</td>`;
+  const delBtn = row.querySelector(".group-delete-btn");
+  if (delBtn) {
+    delBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      deleteGroup(itemType, groupBy, g, boxes);
+    };
+  }
 
   const detail = document.createElement("tr");
   detail.className = "wh-detail-row hidden";
@@ -706,9 +981,28 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   tbody.appendChild(detail);
 }
 
+// Admin edit mode: delete every tag in one (item_type, group) cell.
+async function deleteGroup(itemType, groupBy, g, boxes) {
+  const groupLabel = groupBy === "building" ? "Building" : "BOL";
+  const ok = window.confirm(
+    `Delete ALL ${itemType} under ${groupLabel} '${g.value || "(blank)"}'? ` +
+    `This permanently removes ${boxes} box(es) (${g.qty} unit(s) in warehouse). ` +
+    "This cannot be undone.");
+  if (!ok) return;
+  const data = await adminPost("/api/admin/group/delete",
+    { item_type: itemType, group_by: groupBy, value: g.value || "" });
+  if (data && data.ok) {
+    logActivity(data.message || "Group deleted", "warn");
+    await loadWarehouse();
+  } else if (data) {
+    logActivity(data.message || "Delete failed", "err");
+  }
+}
+
 async function loadGroupTags(cell, itemType, groupBy, value) {
   try {
-    const q = new URLSearchParams({ item_type: itemType, group_by: groupBy, value: value || "" });
+    const q = whFilterParams(new URLSearchParams(
+      { item_type: itemType, group_by: groupBy, value: value || "" }));
     const data = await (await fetch(`/api/inventory/group?${q.toString()}`)).json();
     if (!data.tags || !data.tags.length) {
       cell.innerHTML = `<p class="hint">No units.</p>`;
@@ -718,10 +1012,14 @@ async function loadGroupTags(cell, itemType, groupBy, value) {
     const rows = data.tags.map((tag) => tagRowHtml(tag, itemType, editing)).join("");
     cell.innerHTML = `<table class="wh-tag-table">
       <thead><tr><th>EPC</th><th>SKU</th><th>Qty</th><th>Mfc date</th>
-        <th>Checked in</th><th>Checked out</th><th>Status</th><th></th></tr></thead>
+        <th>Checked in</th><th>Checked out</th><th>Checked out to</th>
+        <th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
     cell.querySelectorAll(".find-btn").forEach((b) => {
       b.onclick = (ev) => { ev.stopPropagation(); openFinder(b.dataset.epc, b.dataset.label); };
+    });
+    cell.querySelectorAll(".checkout-btn").forEach((b) => {
+      b.onclick = (ev) => { ev.stopPropagation(); checkoutFromWarehouse(b.dataset.epc); };
     });
     cell.querySelectorAll(".epc-link").forEach((el) => {
       el.onclick = (ev) => { ev.stopPropagation(); openMode("eventlog", { epc: el.dataset.epc }); };
@@ -739,14 +1037,18 @@ function tagRowHtml(tag, itemType, editing) {
     : "";
   const findBtn = `<button class="find-btn" data-epc="${escapeHtml(tag.epc)}"
     data-label="${escapeHtml(itemType + " \u00b7 " + (tag.sku || tag.epc))}">Find</button>`;
+  const checkoutBtn = tag.remaining > 0
+    ? ` <button class="checkout-btn" data-epc="${escapeHtml(tag.epc)}"
+        title="Check this box out">Check Out</button>` : "";
   const editBtn = editing
     ? ` <button class="edit-btn" data-epc="${escapeHtml(tag.epc)}">Edit</button>` : "";
   let editorRow = "";
   if (editing) {
     editorRow = `<tr class="tag-editor-row hidden" data-editor="${escapeHtml(tag.epc)}">
-      <td colspan="8">${tagEditorHtml(tag)}</td></tr>`;
+      <td colspan="9">${tagEditorHtml(tag)}</td></tr>`;
   }
   const deliveredAt = tag.delivered_at ? fmtDateTime(tag.delivered_at) : "";
+  const checkedOutTo = tag.checkout_building ? `Bldg ${tag.checkout_building}` : "";
   const qty = `${tag.remaining != null ? tag.remaining : ""}` +
     (tag.quantity != null ? ` / ${tag.quantity}` : "");
   return `<tr>
@@ -757,8 +1059,9 @@ function tagRowHtml(tag, itemType, editing) {
       <td>${escapeHtml(tag.mfc_date || "")}</td>
       <td>${escapeHtml(fmtDateTime(tag.received_at))}</td>
       <td>${escapeHtml(deliveredAt)}</td>
+      <td>${escapeHtml(checkedOutTo)}</td>
       <td><span class="badge ${statusCls}">${escapeHtml(tag.status)}</span> ${flagBadge}</td>
-      <td>${findBtn}${editBtn}</td>
+      <td class="wh-actions">${findBtn}${checkoutBtn}${editBtn}</td>
     </tr>${editorRow}`;
 }
 
@@ -847,6 +1150,64 @@ async function clearTagFlag(epc) {
   }
 }
 
+// Warehouse "Check Out" button: jump straight to the checkout confirm card for
+// a specific box (no trigger pull needed). The reader is still armed for
+// checkout, and the building buttons default to the box's check-in building.
+async function checkoutFromWarehouse(epc) {
+  await openMode("checkout");
+  try {
+    const res = await fetch(`/api/checkout/lookup?epc=${encodeURIComponent(epc)}`);
+    onCheckoutPrompt(await res.json());
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+}
+
+// -- warehouse export (CSV download / print-to-PDF) ---------------------------
+function exportWarehouseCsv() {
+  const q = whFilterParams(new URLSearchParams());
+  window.location.href = `/api/inventory/export.csv?${q.toString()}`;
+}
+
+async function exportWarehousePdf() {
+  const q = whFilterParams(new URLSearchParams());
+  let data;
+  try {
+    data = await (await fetch(`/api/inventory/export?${q.toString()}`)).json();
+  } catch (e) {
+    logActivity("Could not load export data", "err");
+    return;
+  }
+  const rows = data.rows || [];
+  if (!rows.length) {
+    logActivity("Nothing to export with these filters", "warn");
+    return;
+  }
+  const cols = data.columns || [];
+  const keys = data.keys || [];
+  const dateKeys = new Set(["received_at", "delivered_at"]);
+  const header = cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+  const body = rows.map((tag) =>
+    `<tr>${keys.map((k) => {
+      let v = tag[k];
+      if (dateKeys.has(k)) v = v ? fmtDateTime(v) : "";
+      return `<td>${escapeHtml(v == null ? "" : v)}</td>`;
+    }).join("")}</tr>`).join("");
+  const filters = Object.entries(state.whFilters)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
+    .join(" \u00b7 ");
+  $("print-area").innerHTML =
+    `<h1>Warehouse Inventory</h1>
+     <p>Exported ${new Date().toLocaleString()}${filters ? ` \u00b7 Filters \u2014 ${escapeHtml(filters)}` : ""}
+       \u00b7 ${rows.length} box(es)</p>
+     <table>
+       <thead><tr>${header}</tr></thead>
+       <tbody>${body}</tbody>
+     </table>`;
+  window.print();
+}
+
 // -- event log ---------------------------------------------------------------
 // Raw audit actions -> friendly label + badge class for the log table.
 const EVENT_LABELS = {
@@ -856,6 +1217,7 @@ const EVENT_LABELS = {
   FLAG: { label: "Flagged", cls: "badge-flag" },
   UNFLAG: { label: "Flag cleared", cls: "badge-in" },
   EDIT: { label: "Edited", cls: "badge-partial" },
+  DELETE: { label: "Group deleted", cls: "badge-out" },
   CLEAR: { label: "DB cleared", cls: "badge-out" },
   VENDOR_ADD: { label: "Vendor added", cls: "badge-in" },
   VENDOR_DEL: { label: "Vendor removed", cls: "badge-out" },
@@ -894,14 +1256,14 @@ function renderEvents(events) {
       <td><span class="badge ${meta.cls}">${escapeHtml(meta.label)}</span></td>
       <td>${epcCell}</td>
       <td>${escapeHtml(e.item_type)}</td>
-      <td>${escapeHtml(e.po_number)}</td>
+      <td>${escapeHtml(e.bol_number)}</td>
       <td>${escapeHtml(e.building)}</td>
       <td>${escapeHtml(e.detail)}</td>
     </tr>`;
   }).join("");
   list.innerHTML = `<table class="event-table">
     <thead><tr><th>Time</th><th>Action</th><th>EPC</th><th>Type</th>
-      <th>PO</th><th>Building</th><th>Detail</th></tr></thead>
+      <th>BOL</th><th>Building</th><th>Detail</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <p class="hint">${events.length} event(s) shown (most recent first).</p>`;
   list.querySelectorAll(".event-epc-link").forEach((el) => {
@@ -1244,6 +1606,26 @@ async function adminEditRecords() {
   await openMode("warehouse");
 }
 
+// -- modal dialog --------------------------------------------------------------
+// Small confirmation overlay. `buttons` is a list of {label, cls, onClick};
+// every button closes the modal first, then runs its onClick (if any).
+function showModal(title, html, buttons) {
+  $("modal-title").textContent = title;
+  $("modal-body").innerHTML = html;
+  const row = $("modal-actions");
+  row.innerHTML = "";
+  (buttons || []).forEach((b) => {
+    const btn = document.createElement("button");
+    btn.className = b.cls || "back-btn";
+    btn.textContent = b.label;
+    btn.onclick = () => { hideModal(); if (b.onClick) b.onClick(); };
+    row.appendChild(btn);
+  });
+  show("modal-overlay");
+}
+
+function hideModal() { hide("modal-overlay"); }
+
 // -- ui helpers --------------------------------------------------------------
 function showScanner(title) {
   $("scanner-title").textContent = title;
@@ -1289,6 +1671,50 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+// Filter input id -> state.whFilters key.
+const WH_FILTER_INPUTS = {
+  "whf-bol": "bol",
+  "whf-building": "building",
+  "whf-recv-from": "received_from",
+  "whf-recv-to": "received_to",
+  "whf-out-from": "checked_out_from",
+  "whf-out-to": "checked_out_to",
+};
+let whFilterTimer = null;
+
+function wireWarehouseFilters() {
+  const bldgSelect = $("whf-building");
+  (state.config.building_options || []).forEach((b) => {
+    const opt = document.createElement("option");
+    opt.value = b;
+    opt.textContent = b;
+    bldgSelect.appendChild(opt);
+  });
+  Object.entries(WH_FILTER_INPUTS).forEach(([id, key]) => {
+    const el = $(id);
+    const apply = () => {
+      state.whFilters[key] = (el.value || "").trim();
+      loadWarehouse();
+    };
+    if (el.tagName === "INPUT" && el.type === "text") {
+      // Debounce free-text typing; dates/selects apply immediately.
+      el.oninput = () => {
+        clearTimeout(whFilterTimer);
+        whFilterTimer = setTimeout(apply, 300);
+      };
+    } else {
+      el.onchange = apply;
+    }
+  });
+  $("whf-clear").onclick = () => {
+    Object.entries(WH_FILTER_INPUTS).forEach(([id, key]) => {
+      $(id).value = "";
+      state.whFilters[key] = "";
+    });
+    loadWarehouse();
+  };
+}
+
 // -- wiring ------------------------------------------------------------------
 function wireUI() {
   document.querySelectorAll(".mode-card").forEach((c) => {
@@ -1299,6 +1725,14 @@ function wireUI() {
   $("finish-btn").onclick = finishCheckin;
   $("power-slider").oninput = onPowerInput;
   $("wh-refresh").onclick = loadWarehouse;
+  $("sweep-reset").onclick = () => {
+    resetSweepSession();
+    logActivity("Sweep session reset", "ok");
+    if (state.mode === "inventory") showScanner("Hold the trigger to sweep\u2026");
+  };
+  $("wh-export-csv").onclick = exportWarehouseCsv;
+  $("wh-export-pdf").onclick = exportWarehousePdf;
+  wireWarehouseFilters();
   $("finder-stop").onclick = stopFinder;
   $("admin-unlock").onclick = adminUnlock;
   $("admin-pin").onkeydown = (e) => { if (e.key === "Enter") adminUnlock(); };
