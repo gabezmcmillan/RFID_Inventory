@@ -43,6 +43,9 @@ const state = {
   finder: null,        // {epc, rssiMin, rssiMax, proxEma, samples, found}
   admin: { pin: null, editMode: false },
   vendors: [],         // dropdown options, managed in Admin
+  readerConnected: null,          // last known connection state
+  readerLastConnectedAt: null,    // Date of most recent connect
+  readerLastDisconnectedAt: null, // Date of most recent disconnect
 };
 
 let powerSendTimer = null;
@@ -125,10 +128,24 @@ function connectWS() {
 
 function handleMessage(msg) {
   switch (msg.type) {
-    case "reader_status":
+    case "reader_status": {
+      const now = new Date();
+      const changed = state.readerConnected !== msg.connected;
+      if (changed) {
+        if (msg.connected) state.readerLastConnectedAt = now;
+        else state.readerLastDisconnectedAt = now;
+      }
+      state.readerConnected = msg.connected;
       setReaderPill(msg.connected);
-      if (msg.message) logActivity(msg.message, msg.connected ? "ok" : "err");
+      updateReaderStatusDisplay();
+      if (msg.server_greeting) {
+        // Confirms the browser-to-server link, not the reader state.
+        logActivity(msg.message, "ok");
+      } else if (changed && msg.message) {
+        logActivity(msg.message, msg.connected ? "ok" : "err");
+      }
       break;
+    }
     case "live":
       $("live-count").textContent = msg.distinct;
       $("scanner-title").textContent = "Reading\u2026";
@@ -615,12 +632,12 @@ function renderWarehouse(data) {
 
     const head = document.createElement("button");
     head.className = "wh-type-head";
-    head.innerHTML = `<span class="wh-caret">&#9656;</span>
+    head.innerHTML = `<span class="wh-caret">&#9662;</span>
       <span class="wh-type-name">${escapeHtml(t.item_type)}</span>
       <span class="wh-qty">${t.qty} unit(s) in warehouse</span>`;
 
     const body = document.createElement("div");
-    body.className = "wh-type-body hidden";
+    body.className = "wh-type-body";
 
     const table = document.createElement("table");
     table.className = "wh-group-table";
@@ -1238,6 +1255,13 @@ function showResult(kind, title, html) {
   r.className = `result ${kind}`;
   r.innerHTML = `<h4>${escapeHtml(title)}</h4>${html}`;
   show("result");
+}
+function updateReaderStatusDisplay() {
+  const el = $("reader-status-detail");
+  if (!el) return;
+  const fmt = (t) => (t ? t.toLocaleString() : "\u2014");
+  el.textContent = `Reader last connected: ${fmt(state.readerLastConnectedAt)}`
+    + ` \u00b7 last disconnected: ${fmt(state.readerLastDisconnectedAt)}`;
 }
 function logActivity(text, kind = "") {
   const li = document.createElement("li");

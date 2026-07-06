@@ -269,6 +269,7 @@ main {
 /* Activity log */
 .log-section { margin-top: 30px; }
 .log-section h3 { font-size: 15px; color: var(--muted); margin-bottom: 10px; }
+.reader-status-detail { font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 8px; }
 .activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .activity li {
   font-size: 13px;

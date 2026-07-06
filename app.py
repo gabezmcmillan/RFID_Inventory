@@ -441,6 +441,7 @@ async def websocket_endpoint(ws: WebSocket):
             "type": "reader_status",
             "connected": bool(state.worker and state.worker.connected),
             "message": "Connected to server",
+            "server_greeting": True,
         })
         while True:
             await ws.receive_text()  # keep the connection open; ignore content
