@@ -544,52 +544,73 @@ class Database:
         """Nested view: item type -> groups (by BOL# or Building#) with qty/status.
 
         Only counts tags still in the warehouse; a group whose tags are all
-        delivered drops to qty 0 and status Delivered. `filters` narrows the
-        tags considered (see _filter_where).
+        delivered drops to qty 0 and status Delivered. Each group also carries
+        the distinct values of the OTHER dimension (`other_values`) so grouping
+        by building still shows which BOLs are involved, and vice versa.
+        `filters` narrows the tags considered (see _filter_where).
         """
         gcol = GROUP_COLUMNS.get(group_by, "bol_number")
+        ocol = "building" if gcol == "bol_number" else "bol_number"
         clause, params = self._filter_where(filters)
         with self._lock:
             rows = self._conn.execute(
                 f"""
                 SELECT item_type,
                        {gcol}                              AS gval,
+                       {ocol}                              AS oval,
                        COALESCE(SUM(remaining), 0)         AS in_wh,
                        COALESCE(SUM(quantity), 0)          AS capacity,
                        COUNT(*)                            AS boxes,
                        MIN(received_at)                    AS first_received
                 FROM tags
                 {clause}
-                GROUP BY item_type, {gcol}
-                ORDER BY item_type, gval
+                GROUP BY item_type, {gcol}, {ocol}
+                ORDER BY item_type, gval, oval
                 """,
                 params,
             ).fetchall()
 
+        # SQL groups by (type, group, other) so the sub-rows are merged here,
+        # accumulating the distinct other-dimension values along the way.
         types = {}
+        groups = {}
         for r in rows:
             t = types.setdefault(r["item_type"], {"item_type": r["item_type"],
                                                   "qty": 0, "groups": []})
-            qty = r["in_wh"] or 0
-            capacity = r["capacity"] or 0
-            t["qty"] += qty
-            if qty == 0:
-                status = STATUS_DELIVERED
-            elif qty == capacity:
-                status = STATUS_IN
-            else:
-                status = STATUS_PARTIAL
-            t["groups"].append({
-                "value": r["gval"] or "",
-                "qty": qty,
-                "in_wh": qty,
-                "capacity": capacity,
-                "total": capacity,
-                "boxes": r["boxes"],
-                "received": _date_of(r["first_received"]),
-                "received_at": r["first_received"] or "",
-                "status": status,
-            })
+            key = (r["item_type"], r["gval"] or "")
+            g = groups.get(key)
+            if g is None:
+                g = {"value": r["gval"] or "", "in_wh": 0, "capacity": 0,
+                     "boxes": 0, "received_at": "", "_others": set()}
+                groups[key] = g
+                t["groups"].append(g)
+            g["in_wh"] += r["in_wh"] or 0
+            g["capacity"] += r["capacity"] or 0
+            g["boxes"] += r["boxes"]
+            first = r["first_received"] or ""
+            # ISO timestamps compare lexicographically.
+            if first and (not g["received_at"] or first < g["received_at"]):
+                g["received_at"] = first
+            if r["oval"]:
+                g["_others"].add(str(r["oval"]))
+
+        for t in types.values():
+            for g in t["groups"]:
+                qty = g["in_wh"]
+                t["qty"] += qty
+                if qty == 0:
+                    status = STATUS_DELIVERED
+                elif qty == g["capacity"]:
+                    status = STATUS_IN
+                else:
+                    status = STATUS_PARTIAL
+                g.update({
+                    "qty": qty,
+                    "total": g["capacity"],
+                    "received": _date_of(g["received_at"]),
+                    "status": status,
+                    "other_values": sorted(g.pop("_others")),
+                })
         return {"group_by": group_by, "types": list(types.values())}
 
     def group_tags(self, item_type, group_by, value, filters=None):

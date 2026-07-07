@@ -32,7 +32,7 @@ def power_from_percent(pct):
     return round(READER_POWER_MIN_DBM + (pct / 100.0) * span)
 
 
-CHECK_POWER_DBM = power_from_percent(30)        # ~30% strength -> close-range only
+CHECK_POWER_DBM = READER_POWER_MIN_DBM          # lowest power -> tag at reader only
 INVENTORY_POWER_DBM = READER_POWER_MAX_DBM      # full power for sweeps
 
 # TSL Alert command (`.al`) used by the finder to buzz/vibrate the handheld once

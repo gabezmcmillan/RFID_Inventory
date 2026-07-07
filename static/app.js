@@ -195,9 +195,9 @@ async function openMode(mode, opts = {}) {
   hide("result"); hide("scanner"); hide("item-form");
   showView(`${mode}-view`);
 
-  // The power slider tunes check-in/check-out range; inventory runs at full power.
-  if (mode === "checkin" || mode === "checkout") show("power-control");
-  else hide("power-control");
+  // Check-in/check-out run at the reader's minimum power (tag at the reader
+  // only); inventory runs at full power. The slider stays hidden everywhere.
+  hide("power-control");
 
   if (mode === "checkin") {
     state.shipment = null;
@@ -884,6 +884,7 @@ function renderWarehouse(data) {
   const tree = $("warehouse-tree");
   tree.innerHTML = "";
   const groupLabel = data.group_by === "building" ? "Building #" : "BOL #";
+  const otherLabel = data.group_by === "building" ? "BOL #" : "Building #";
   if (!data.types || !data.types.length) {
     const filtered = Object.values(state.whFilters).some(Boolean);
     tree.innerHTML = filtered
@@ -908,6 +909,7 @@ function renderWarehouse(data) {
     table.className = "wh-group-table";
     table.innerHTML = `<thead><tr>
         <th>Units</th><th>${escapeHtml(groupLabel)}</th>
+        <th>${escapeHtml(otherLabel)}</th>
         <th>Date Checked In</th><th>Status</th><th></th>
       </tr></thead>`;
     const tbody = document.createElement("tbody");
@@ -933,6 +935,17 @@ const STATUS_BADGE = {
   "Partial": "badge-partial",
 };
 
+// The distinct values of the non-grouped dimension (e.g. the BOLs inside a
+// building group). Long lists are truncated; hover shows the full set.
+function otherValuesHtml(g) {
+  const vals = g.other_values || [];
+  if (!vals.length) return "";
+  const shown = vals.slice(0, 3).map(escapeHtml).join(", ");
+  const extra = vals.length > 3
+    ? ` <span class="hint">+${vals.length - 3} more</span>` : "";
+  return `<span title="${escapeHtml(vals.join(", "))}">${shown}${extra}</span>`;
+}
+
 function addGroupRows(tbody, itemType, groupBy, g) {
   const row = document.createElement("tr");
   row.className = "wh-group-row";
@@ -948,6 +961,7 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   row.innerHTML = `
     <td>${g.qty}</td>
     <td><span class="wh-caret">&#9656;</span> ${escapeHtml(g.value || "(blank)")}</td>
+    <td>${otherValuesHtml(g)}</td>
     <td>${escapeHtml(fmtDateTime(g.received_at) || g.received || "")}</td>
     <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span></td>
     <td class="wh-count">${boxes} box(es)${deleteBtn}</td>`;
@@ -962,7 +976,7 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   const detail = document.createElement("tr");
   detail.className = "wh-detail-row hidden";
   const cell = document.createElement("td");
-  cell.colSpan = 5;
+  cell.colSpan = 6;
   cell.innerHTML = `<p class="hint">Loading units\u2026</p>`;
   detail.appendChild(cell);
 
@@ -1009,9 +1023,12 @@ async function loadGroupTags(cell, itemType, groupBy, value) {
       return;
     }
     const editing = isEditing();
-    const rows = data.tags.map((tag) => tagRowHtml(tag, itemType, editing)).join("");
+    const otherLabel = groupBy === "building" ? "BOL #" : "Building #";
+    const rows = data.tags.map((tag) =>
+      tagRowHtml(tag, itemType, editing, groupBy)).join("");
     cell.innerHTML = `<table class="wh-tag-table">
-      <thead><tr><th>EPC</th><th>SKU</th><th>Qty</th><th>Mfc date</th>
+      <thead><tr><th>EPC</th><th>${escapeHtml(otherLabel)}</th><th>SKU</th>
+        <th>Qty</th><th>Mfc date</th>
         <th>Checked in</th><th>Checked out</th><th>Checked out to</th>
         <th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
@@ -1030,7 +1047,8 @@ async function loadGroupTags(cell, itemType, groupBy, value) {
   }
 }
 
-function tagRowHtml(tag, itemType, editing) {
+function tagRowHtml(tag, itemType, editing, groupBy) {
+  const otherValue = groupBy === "building" ? tag.bol_number : tag.building;
   const statusCls = STATUS_BADGE[tag.status] || "badge-in";
   const flagBadge = tag.flag
     ? `<span class="badge badge-flag" title="${escapeHtml(tag.flag)}">&#9888; Flagged</span>`
@@ -1045,7 +1063,7 @@ function tagRowHtml(tag, itemType, editing) {
   let editorRow = "";
   if (editing) {
     editorRow = `<tr class="tag-editor-row hidden" data-editor="${escapeHtml(tag.epc)}">
-      <td colspan="9">${tagEditorHtml(tag)}</td></tr>`;
+      <td colspan="10">${tagEditorHtml(tag)}</td></tr>`;
   }
   const deliveredAt = tag.delivered_at ? fmtDateTime(tag.delivered_at) : "";
   const checkedOutTo = tag.checkout_building ? `Bldg ${tag.checkout_building}` : "";
@@ -1054,6 +1072,7 @@ function tagRowHtml(tag, itemType, editing) {
   return `<tr>
       <td class="epc epc-link" data-epc="${escapeHtml(tag.epc)}"
           title="View this tag's event history">${escapeHtml(tag.epc)}</td>
+      <td>${escapeHtml(otherValue || "")}</td>
       <td>${escapeHtml(tag.sku || "")}</td>
       <td class="qty-cell">${escapeHtml(qty)}</td>
       <td>${escapeHtml(tag.mfc_date || "")}</td>
