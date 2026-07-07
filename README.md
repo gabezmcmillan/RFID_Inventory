@@ -6,10 +6,14 @@ everything written to a local SQLite database (`inventory.db`).
 
 ## Modes
 
-- **Check In** — pick an item type (TSC / CDU / W.I.F.) and enter the shipment
-  fields once (Building #, BOL Number, Vendor). Then for each physical unit, enter
-  its per-unit fields (SKU, Manufactured Date) and pull the trigger to tag it.
-  Each tag becomes a row; the shipment's quantity is the count of its tags.
+- **Check In** — a truckload starts by scanning its bill of lading on the
+  document scanner (Epson ES-50); the PDF is stored in `scans/` and becomes the
+  truckload's record. Then pick an item type (TSC / CDU / W.I.F.), enter the
+  remaining shipment fields (Building #, Vendor — the BOL # comes from the
+  scanned document), and for each physical unit enter its per-unit fields
+  (SKU, Manufactured Date) and pull the trigger to tag it. Every tag is linked
+  to the BOL PDF (viewable from the Warehouse). Uploading a PDF or typing the
+  BOL # manually are available as fallbacks.
 - **Check Out** — pull the trigger on a tag to deliver it to site. The app looks
   up its shipment, stamps the delivered date, and decrements the group quantity
   (marking the group Delivered when it reaches zero).
@@ -32,6 +36,10 @@ pip install -r requirements.txt
 
 - Plug in the reader over USB and confirm the port in `config.py`
   (`SERIAL_PORT`). Adjust item types / fields in `config.py` as needed.
+- For BOL scanning, install [NAPS2](https://www.naps2.com) (`brew install
+  --cask naps2`) and plug in the Epson ES-50 over USB. Check
+  `/api/scanner/status` (or just try a scan) to confirm the app can see it;
+  scanner settings live in `config.py` (`NAPS2_BINARY`, `SCANNER_DEVICE`, ...).
 - The database is created automatically at `config.DB_PATH` (`inventory.db`) on
   first run. It is gitignored, so each machine starts fresh.
 
@@ -46,9 +54,12 @@ Then open http://127.0.0.1:8000
 ## Database tables (auto-created)
 
 - `tags`: one row per physical EPC — item_type, BOL #, Building #, Vendor, SKU,
-  mfc date, status, received/delivered timestamps. This is the source of truth;
-  warehouse quantities are derived as a `COUNT` of in-warehouse tags.
-- `events`: append-only audit log of IN / OUT / COUNT actions.
+  mfc date, status, received/delivered timestamps, and a `bol_doc_id` link to
+  the scanned BOL document. This is the source of truth; warehouse quantities
+  are derived as a `COUNT` of in-warehouse tags.
+- `bol_docs`: one row per scanned/uploaded bill of lading (the PDF itself lives
+  in `scans/`).
+- `events`: append-only audit log of IN / OUT / COUNT / BOL_SCAN actions.
 
 ## Configuration notes
 

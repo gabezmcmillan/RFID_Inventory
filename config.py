@@ -51,6 +51,29 @@ FINDER_RSSI_MIN_DBM = -80   # this dBm (or weaker) maps to 0%
 FINDER_RSSI_MAX_DBM = -40   # this dBm (or stronger) maps to 100%
 
 # ---------------------------------------------------------------------------
+# Document scanner (Epson ES-50 via the NAPS2 CLI)
+# ---------------------------------------------------------------------------
+# Bill-of-lading scans are driven through NAPS2 (install: brew install --cask
+# naps2), which talks to the scanner via Apple's ImageCaptureCore driver.
+# The app may live in the system or the per-user Applications folder.
+import os as _os
+
+_NAPS2_CANDIDATES = [
+    "/Applications/NAPS2.app/Contents/MacOS/NAPS2",
+    _os.path.expanduser("~/Applications/NAPS2.app/Contents/MacOS/NAPS2"),
+]
+NAPS2_BINARY = next((p for p in _NAPS2_CANDIDATES if _os.path.exists(p)),
+                    _NAPS2_CANDIDATES[0])
+# NAPS2's bundled SANE backend (epsonds) drives the ES-50 over USB with no
+# extra Epson driver install; "apple" (ImageCaptureCore) would need Epson's
+# ICA driver package.
+SCANNER_DRIVER = "sane"
+SCANNER_DEVICE = "ES-50"     # partial, case-insensitive device-name match
+SCAN_DPI = 300
+SCAN_TIMEOUT_SECONDS = 120   # give up on a scan after this long
+SCANS_DIR = "scans"          # BOL PDFs are stored here (path kept in the DB)
+
+# ---------------------------------------------------------------------------
 # Local database (SQLite)
 # ---------------------------------------------------------------------------
 DB_PATH = "inventory.db"

@@ -38,6 +38,8 @@ const state = {
   mode: null,          // active UI mode
   selectedType: null,
   shipment: null,
+  bolDoc: null,        // active truckload's BOL document {id, bol_number, ...}
+  bolManual: false,    // no document: operator types the BOL # (legacy flow)
   whGroupBy: "bol",    // warehouse grouping dimension
   whFilters: { bol: "", building: "", received_from: "", received_to: "",
                checked_out_from: "", checked_out_to: "" },
@@ -204,6 +206,7 @@ async function openMode(mode, opts = {}) {
     await loadVendors();
     renderTypeButtons();
     hide("checkin-form"); hide("arm-btn"); hide("finish-btn");
+    renderBolStage();
     await setServerMode("idle");
   } else if (mode === "checkout") {
     await setServerMode("checkout");
@@ -261,6 +264,260 @@ async function setServerMode(mode, extra = {}) {
     logActivity("Cannot reach server", "err");
     return false;
   }
+}
+
+// -- bill of lading (check-in step 1) ------------------------------------------
+// A truckload starts by capturing its bill of lading: scan it on the document
+// scanner (or upload a PDF), and every box received while it is active is
+// filed under that document. Manual BOL # entry remains as a fallback.
+function renderBolStage() {
+  const active = Boolean(state.bolDoc || state.bolManual);
+  $("bol-gate").classList.toggle("hidden", active);
+  $("bol-banner").classList.toggle("hidden", !active);
+  $("checkin-main").classList.toggle("hidden", !active);
+  if (active) renderBolBanner();
+  else loadRecentBols();
+}
+
+function renderBolBanner() {
+  const el = $("bol-banner");
+  const d = state.bolDoc;
+  if (d) {
+    const pages = d.pages === 1 ? "1 page" : `${d.pages} pages`;
+    const how = d.source === "upload" ? "Uploaded" : "Scanned";
+    el.innerHTML = `
+      <div class="bol-banner-main">
+        <span class="bol-banner-label">Truckload BOL</span>
+        <strong>${escapeHtml(d.bol_number)}</strong>
+        <span class="hint">${how} ${escapeHtml(fmtDateTime(d.created_at))} \u00b7 ${pages}</span>
+      </div>
+      <div class="bol-banner-actions">
+        <a class="back-btn bol-view-link" href="/api/bol/${d.id}/file" target="_blank">View PDF</a>
+        <button id="bol-rename-btn" class="back-btn">Rename</button>
+        <button id="bol-addpage-btn" class="back-btn">Add page</button>
+        <button id="bol-done-btn" class="back-btn">Done with truckload</button>
+      </div>`;
+    $("bol-rename-btn").onclick = renderBolRename;
+    $("bol-addpage-btn").onclick = addBolPage;
+  } else {
+    el.innerHTML = `
+      <div class="bol-banner-main">
+        <span class="bol-banner-label">No BOL document</span>
+        <strong>Manual entry</strong>
+        <span class="hint">Type the BOL number into the shipment form below.</span>
+      </div>
+      <div class="bol-banner-actions">
+        <button id="bol-done-btn" class="back-btn">Done with truckload</button>
+      </div>`;
+  }
+  $("bol-done-btn").onclick = endTruckload;
+}
+
+// Inline rename: swap the banner for an input; saving also updates any boxes
+// already checked in under this document (server side).
+function renderBolRename() {
+  const d = state.bolDoc;
+  if (!d) return;
+  const el = $("bol-banner");
+  el.innerHTML = `
+    <div class="bol-banner-main bol-rename-row">
+      <span class="bol-banner-label">BOL number (as printed on the document)</span>
+      <input id="bol-rename-input" type="text" value="${escapeHtml(d.bol_number)}" />
+    </div>
+    <div class="bol-banner-actions">
+      <button id="bol-rename-save" class="primary-btn bol-rename-save">Save</button>
+      <button id="bol-rename-cancel" class="back-btn">Cancel</button>
+    </div>`;
+  const input = $("bol-rename-input");
+  input.focus();
+  input.select();
+  const save = async () => {
+    const name = input.value.trim();
+    if (!name || name === d.bol_number) { renderBolBanner(); return; }
+    try {
+      const res = await fetch("/api/bol/rename", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: d.id, bol_number: name }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        state.bolDoc = data.doc;
+        logActivity(data.message +
+          (data.tags_updated ? ` ${data.tags_updated} box(es) updated.` : ""), "ok");
+        syncBolIntoCheckin();
+      } else {
+        logActivity(data.message || "Rename failed", "err");
+      }
+    } catch (e) {
+      logActivity("Cannot reach server", "err");
+    }
+    renderBolBanner();
+  };
+  $("bol-rename-save").onclick = save;
+  $("bol-rename-cancel").onclick = renderBolBanner;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") save();
+    if (e.key === "Escape") renderBolBanner();
+  };
+}
+
+// Push the (renamed) BOL number into the shipment form and, if a shipment is
+// already armed, re-arm it so the reader files subsequent tags correctly.
+async function syncBolIntoCheckin() {
+  applyBolToForm();
+  if (state.shipment && state.bolDoc) {
+    state.shipment.fields.bol_number = state.bolDoc.bol_number;
+    state.shipment.fields.bol_doc_id = String(state.bolDoc.id);
+    await setServerMode("checkin",
+      { item_type: state.shipment.type, fields: state.shipment.fields });
+    // Re-arming clears the reader's per-unit fields; restore what's typed in.
+    await postItemFields();
+  }
+}
+
+async function scanBolNew() {
+  const btn = $("bol-scan-btn");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "Scanning\u2026 feed the document into the scanner";
+  logActivity("Scanning bill of lading\u2026", "ok");
+  try {
+    const res = await fetch("/api/bol/scan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const data = await res.json();
+    if (data.ok) {
+      state.bolDoc = data.doc;
+      state.bolManual = false;
+      hide("result");
+      logActivity(`BOL scanned: ${data.doc.bol_number}`, "ok");
+      renderBolStage();
+    } else {
+      logActivity(data.message || "Scan failed", "err");
+      await showScanFailure(data.message);
+    }
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
+}
+
+// Scan failed: show the error plus a scanner health check to point at the fix.
+async function showScanFailure(message) {
+  let extra = "";
+  try {
+    const s = await (await fetch("/api/scanner/status")).json();
+    if (s && s.message && s.message !== message) {
+      extra += `<p class="hint">${escapeHtml(s.message)}</p>`;
+    }
+    if (s && s.devices && s.devices.length) {
+      extra += `<p class="hint">Scanners visible: ${escapeHtml(s.devices.join(", "))}</p>`;
+    }
+  } catch (e) { /* health check is best effort */ }
+  showResult("err", "Could not scan the bill of lading",
+    `<p>${escapeHtml(message || "Scan failed.")}</p>${extra}
+     <p class="hint">You can also upload the BOL as a PDF, or enter its number manually.</p>`);
+}
+
+async function addBolPage() {
+  const d = state.bolDoc;
+  if (!d) return;
+  const btn = $("bol-addpage-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Scanning\u2026"; }
+  logActivity("Scanning another BOL page\u2026", "ok");
+  try {
+    const res = await fetch("/api/bol/scan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ append_to: d.id }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      state.bolDoc = data.doc;
+      logActivity(`Added a page to ${data.doc.bol_number} (now ${data.doc.pages} pages)`, "ok");
+    } else {
+      logActivity(data.message || "Scan failed", "err");
+      await showScanFailure(data.message);
+    }
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+  renderBolBanner();
+}
+
+async function onBolUploadChange() {
+  const input = $("bol-upload-input");
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  logActivity(`Uploading ${file.name}\u2026`, "ok");
+  try {
+    const res = await fetch("/api/bol/upload", { method: "POST", body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      state.bolDoc = data.doc;
+      state.bolManual = false;
+      hide("result");
+      logActivity(`BOL uploaded: ${data.doc.bol_number}`, "ok");
+      renderBolStage();
+    } else {
+      logActivity(data.message || "Upload failed", "err");
+      showResult("err", "Upload failed", `<p>${escapeHtml(data.message || "")}</p>`);
+    }
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+}
+
+function startManualBol() {
+  state.bolDoc = null;
+  state.bolManual = true;
+  hide("result");
+  renderBolStage();
+}
+
+// Recent documents shown on the gate, so a truckload survives a page refresh.
+async function loadRecentBols() {
+  const wrap = $("bol-recent");
+  wrap.innerHTML = "";
+  let docs = [];
+  try {
+    docs = (await (await fetch("/api/bol/docs")).json()).docs || [];
+  } catch (e) { return; }
+  if (!docs.length) return;
+  const items = docs.slice(0, 6).map((d) =>
+    `<button class="bol-recent-item" data-id="${d.id}">
+       <strong>${escapeHtml(d.bol_number)}</strong>
+       <span>${escapeHtml(fmtDateTime(d.created_at))} \u00b7 ${d.pages} page(s)
+         \u00b7 ${d.boxes} box(es) checked in</span>
+     </button>`).join("");
+  wrap.innerHTML = `
+    <div class="bol-recent-head">Recent truckloads \u2014 tap one to resume</div>
+    <div class="bol-recent-list">${items}</div>`;
+  const byId = new Map(docs.map((d) => [String(d.id), d]));
+  wrap.querySelectorAll(".bol-recent-item").forEach((b) => {
+    b.onclick = () => {
+      const doc = byId.get(b.dataset.id);
+      if (!doc) return;
+      state.bolDoc = doc;
+      state.bolManual = false;
+      renderBolStage();
+    };
+  });
+}
+
+// Finish the whole truckload: disarm, clear the active document, back to gate.
+async function endTruckload() {
+  await finishCheckin();
+  state.bolDoc = null;
+  state.bolManual = false;
+  state.selectedType = null;
+  document.querySelectorAll(".type-btn").forEach((b) => b.classList.remove("active"));
+  hide("checkin-form"); hide("arm-btn"); hide("result");
+  renderBolStage();
 }
 
 // -- check in ----------------------------------------------------------------
@@ -354,6 +611,24 @@ function renderShipmentForm(type) {
   const form = $("checkin-form");
   form.innerHTML = "";
   fieldsForScope(type, "shipment").forEach((f) => form.appendChild(buildField(f, "f_")));
+  applyBolToForm();
+}
+
+// With a scanned BOL active, the form's BOL Number is filled from the document
+// and locked (rename it from the banner instead so the doc and tags agree).
+function applyBolToForm() {
+  const input = $("f_bol_number");
+  if (!input) return;
+  if (state.bolDoc) {
+    input.value = state.bolDoc.bol_number;
+    input.readOnly = true;
+    input.classList.add("locked");
+    input.title = "Taken from the scanned BOL document. Use Rename in the banner above to change it.";
+  } else {
+    input.readOnly = false;
+    input.classList.remove("locked");
+    input.title = "";
+  }
 }
 
 function renderItemForm(type) {
@@ -410,6 +685,11 @@ async function armCheckin() {
   fieldsForScope(state.selectedType, "shipment").forEach((f) => {
     fields[f.key] = getFieldValue(f.key, "f_");
   });
+  if (state.bolDoc) {
+    // File every tag in this shipment under the scanned BOL document.
+    fields.bol_number = state.bolDoc.bol_number;
+    fields.bol_doc_id = String(state.bolDoc.id);
+  }
   const ok = await setServerMode("checkin", { item_type: state.selectedType, fields });
   if (ok) {
     state.shipment = { type: state.selectedType, fields, qty: 0 };
@@ -958,13 +1238,23 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   const deleteBtn = isEditing()
     ? ` <button class="danger-btn group-delete-btn" title="Delete every box in this group">Delete</button>`
     : "";
+  const pdfBtn = groupBy === "bol" && g.bol_doc_id
+    ? ` <button class="bol-pdf-btn" title="View the scanned bill of lading">BOL PDF</button>`
+    : "";
   row.innerHTML = `
     <td>${g.qty}</td>
     <td><span class="wh-caret">&#9656;</span> ${escapeHtml(g.value || "(blank)")}</td>
     <td>${otherValuesHtml(g)}</td>
     <td>${escapeHtml(fmtDateTime(g.received_at) || g.received || "")}</td>
     <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span></td>
-    <td class="wh-count">${boxes} box(es)${deleteBtn}</td>`;
+    <td class="wh-count">${boxes} box(es)${pdfBtn}${deleteBtn}</td>`;
+  const pdfLink = row.querySelector(".bol-pdf-btn");
+  if (pdfLink) {
+    pdfLink.onclick = (ev) => {
+      ev.stopPropagation();
+      window.open(`/api/bol/${g.bol_doc_id}/file`, "_blank");
+    };
+  }
   const delBtn = row.querySelector(".group-delete-btn");
   if (delBtn) {
     delBtn.onclick = (ev) => {
@@ -1240,6 +1530,8 @@ const EVENT_LABELS = {
   CLEAR: { label: "DB cleared", cls: "badge-out" },
   VENDOR_ADD: { label: "Vendor added", cls: "badge-in" },
   VENDOR_DEL: { label: "Vendor removed", cls: "badge-out" },
+  BOL_SCAN: { label: "BOL scanned", cls: "badge-in" },
+  BOL_RENAME: { label: "BOL renamed", cls: "badge-partial" },
 };
 
 let eventSearchTimer = null;
@@ -1742,6 +2034,10 @@ function wireUI() {
   $("back-btn").onclick = backToModes;
   $("arm-btn").onclick = armCheckin;
   $("finish-btn").onclick = finishCheckin;
+  $("bol-scan-btn").onclick = scanBolNew;
+  $("bol-upload-btn").onclick = () => $("bol-upload-input").click();
+  $("bol-upload-input").onchange = onBolUploadChange;
+  $("bol-manual-btn").onclick = startManualBol;
   $("power-slider").oninput = onPowerInput;
   $("wh-refresh").onclick = loadWarehouse;
   $("sweep-reset").onclick = () => {

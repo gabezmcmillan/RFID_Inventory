@@ -325,6 +325,86 @@ main {
   border-radius: 10px;
 }
 
+/* Bill-of-lading gate (check-in step 1) */
+.bol-scan-btn { font-size: 18px; padding: 18px; margin-top: 8px; }
+.bol-alt-row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.bol-recent { margin-top: 24px; }
+.bol-recent-head {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 8px;
+}
+.bol-recent-list { display: flex; flex-direction: column; gap: 8px; }
+.bol-recent-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 15px;
+}
+.bol-recent-item:hover { border-color: var(--accent); }
+.bol-recent-item span { color: var(--muted); font-size: 13px; }
+
+/* Active truckload banner */
+.bol-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: rgba(76, 154, 255, 0.1);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.bol-banner-main { display: flex; flex-direction: column; gap: 2px; }
+.bol-banner-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+}
+.bol-banner-main strong { font-size: 17px; }
+.bol-banner-main .hint { font-size: 13px; margin: 0; }
+.bol-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.bol-view-link { text-decoration: none; display: inline-flex; align-items: center; }
+.bol-rename-save { width: auto; padding: 9px 20px; font-size: 14px; }
+.bol-rename-row input {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 15px;
+  min-width: 240px;
+}
+
+/* Shipment-form BOL field driven by the scanned document */
+.form input.locked { opacity: 0.75; border-style: dashed; cursor: not-allowed; }
+
+/* Warehouse: view the scanned BOL behind a group */
+.bol-pdf-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 7px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-left: 10px;
+}
+.bol-pdf-btn:hover { background: rgba(76, 154, 255, 0.12); }
+
 /* Warehouse browse / drill-down */
 .wh-controls {
   display: flex;

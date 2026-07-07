@@ -24,6 +24,7 @@ Plus read helpers for the interactive inventory view and finder:
   inventory_tree(group_by), group_tags(item_type, group_by, value), find_tag(epc)
 """
 
+import os
 import sqlite3
 import threading
 from datetime import datetime
@@ -120,6 +121,14 @@ class Database:
                 CREATE TABLE IF NOT EXISTS vendors (
                     name TEXT PRIMARY KEY
                 );
+                CREATE TABLE IF NOT EXISTS bol_docs (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bol_number TEXT NOT NULL,
+                    filename   TEXT NOT NULL,
+                    source     TEXT NOT NULL DEFAULT 'scan',
+                    pages      INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_tags_group
                     ON tags (item_type, bol_number, building);
                 CREATE INDEX IF NOT EXISTS idx_tags_status ON tags (status);
@@ -158,6 +167,10 @@ class Database:
             if col not in have:
                 self._conn.execute(
                     f"ALTER TABLE tags ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        # Link to the scanned bill-of-lading document (bol_docs row). Nullable:
+        # legacy rows and manual check-ins have no document.
+        if "bol_doc_id" not in have:
+            self._conn.execute("ALTER TABLE tags ADD COLUMN bol_doc_id INTEGER")
         # Multi-unit columns: a tag (box) can represent N units. Older rows were
         # one-unit-per-tag, so they default to quantity = remaining = 1, except
         # already-delivered boxes which have nothing left (remaining = 0).
@@ -213,6 +226,7 @@ class Database:
             "epc": row["epc"],
             "item_type": row["item_type"],
             "bol_number": row["bol_number"],
+            "bol_doc_id": row["bol_doc_id"],
             "building": row["building"],
             "vendor": row["vendor"],
             "sku": row["sku"],
@@ -229,7 +243,7 @@ class Database:
 
     # -- writes --------------------------------------------------------------
     def receive_shipment(self, epcs, item_type, building, bol_number, vendor,
-                         item_fields=None):
+                         item_fields=None, bol_doc_id=None):
         """Check In: record a shipment's tags and report the group's quantity."""
         item_fields = item_fields or {}
         sku = (item_fields.get("sku") or "").strip()
@@ -253,12 +267,12 @@ class Database:
                     duplicates.append(epc)
                     continue
                 self._conn.execute(
-                    "INSERT INTO tags (epc, item_type, bol_number, building, "
-                    "vendor, sku, mfc_date, quantity, remaining, status, "
-                    "received_at, delivered_at, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (epc, item_type, bol_number, building, vendor, sku, mfc_date,
-                     units, units, STATUS_IN, ts, "", ts, ts),
+                    "INSERT INTO tags (epc, item_type, bol_number, bol_doc_id, "
+                    "building, vendor, sku, mfc_date, quantity, remaining, "
+                    "status, received_at, delivered_at, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (epc, item_type, bol_number, bol_doc_id, building, vendor,
+                     sku, mfc_date, units, units, STATUS_IN, ts, "", ts, ts),
                 )
                 self._log("IN", epc, item_type, bol_number, building, vendor,
                           detail=f"qty {units}")
@@ -279,7 +293,8 @@ class Database:
                 "duplicates": duplicates, "epcs": added_epcs,
                 "epc": added_epcs[0] if added_epcs else "",
                 "qty": qty, "item_type": item_type,
-                "bol_number": bol_number, "building": building, "vendor": vendor,
+                "bol_number": bol_number, "bol_doc_id": bol_doc_id,
+                "building": building, "vendor": vendor,
                 "sku": sku, "mfc_date": mfc_date}
 
     def amend_checkin(self, epc, fields):
@@ -332,6 +347,84 @@ class Database:
         return {"ok": True,
                 "message": ("Updated " + epc + ".") if sets else "No changes.",
                 "tag": self._tag_dict(updated), "qty": qty}
+
+    # -- bill-of-lading documents ---------------------------------------------
+    @staticmethod
+    def _bol_doc_dict(row):
+        return {"id": row["id"], "bol_number": row["bol_number"],
+                "filename": row["filename"], "source": row["source"],
+                "pages": row["pages"], "created_at": row["created_at"]}
+
+    def create_bol_doc(self, bol_number, filename, source="scan", pages=1):
+        """Register a scanned/uploaded BOL PDF and log a BOL_SCAN event."""
+        ts = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO bol_docs (bol_number, filename, source, pages, "
+                "created_at) VALUES (?,?,?,?,?)",
+                (bol_number, filename, source, pages, ts))
+            doc_id = cur.lastrowid
+            self._log("BOL_SCAN", "", bol_number=bol_number,
+                      detail=f"{source}: {filename} ({pages} page(s))")
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM bol_docs WHERE id=?", (doc_id,)).fetchone()
+        return self._bol_doc_dict(row)
+
+    def get_bol_doc(self, doc_id):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM bol_docs WHERE id=?", (doc_id,)).fetchone()
+        return self._bol_doc_dict(row) if row else None
+
+    def list_bol_docs(self, limit=15):
+        """Recent BOL documents (newest first), each with its linked box count."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT d.*, (SELECT COUNT(*) FROM tags t "
+                "WHERE t.bol_doc_id = d.id) AS boxes "
+                "FROM bol_docs d ORDER BY d.id DESC LIMIT ?",
+                (limit,)).fetchall()
+        docs = []
+        for r in rows:
+            d = self._bol_doc_dict(r)
+            d["boxes"] = r["boxes"]
+            docs.append(d)
+        return docs
+
+    def rename_bol_doc(self, doc_id, new_number):
+        """Set a document's BOL number; tags already filed under it follow."""
+        new_number = (new_number or "").strip()
+        if not new_number:
+            return {"ok": False, "message": "BOL number cannot be empty."}
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM bol_docs WHERE id=?", (doc_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"BOL document {doc_id} not found."}
+            old = row["bol_number"]
+            self._conn.execute(
+                "UPDATE bol_docs SET bol_number=? WHERE id=?",
+                (new_number, doc_id))
+            cur = self._conn.execute(
+                "UPDATE tags SET bol_number=?, updated_at=? WHERE bol_doc_id=?",
+                (new_number, ts, doc_id))
+            updated = cur.rowcount
+            self._log("BOL_RENAME", "", bol_number=new_number,
+                      detail=f"was '{old}'; {updated} box(es) updated")
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM bol_docs WHERE id=?", (doc_id,)).fetchone()
+        return {"ok": True, "message": f"BOL renamed to '{new_number}'.",
+                "doc": self._bol_doc_dict(row), "tags_updated": updated}
+
+    def set_bol_doc_pages(self, doc_id, pages):
+        """Update the stored page count (after an Add-page rescan)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE bol_docs SET pages=? WHERE id=?", (pages, doc_id))
+            self._conn.commit()
 
     def lookup_for_checkout(self, epc):
         """Check Out step 1: look up a box for the two-step confirm UI.
@@ -561,7 +654,8 @@ class Database:
                        COALESCE(SUM(remaining), 0)         AS in_wh,
                        COALESCE(SUM(quantity), 0)          AS capacity,
                        COUNT(*)                            AS boxes,
-                       MIN(received_at)                    AS first_received
+                       MIN(received_at)                    AS first_received,
+                       MAX(bol_doc_id)                     AS doc_id
                 FROM tags
                 {clause}
                 GROUP BY item_type, {gcol}, {ocol}
@@ -581,12 +675,15 @@ class Database:
             g = groups.get(key)
             if g is None:
                 g = {"value": r["gval"] or "", "in_wh": 0, "capacity": 0,
-                     "boxes": 0, "received_at": "", "_others": set()}
+                     "boxes": 0, "received_at": "", "bol_doc_id": None,
+                     "_others": set()}
                 groups[key] = g
                 t["groups"].append(g)
             g["in_wh"] += r["in_wh"] or 0
             g["capacity"] += r["capacity"] or 0
             g["boxes"] += r["boxes"]
+            if r["doc_id"] and not g["bol_doc_id"]:
+                g["bol_doc_id"] = r["doc_id"]
             first = r["first_received"] or ""
             # ISO timestamps compare lexicographically.
             if first and (not g["received_at"] or first < g["received_at"]):
@@ -687,13 +784,25 @@ class Database:
 
     # -- admin ---------------------------------------------------------------
     def clear_all(self):
-        """Delete every tag. Events are kept as an audit trail (plus a CLEAR)."""
+        """Delete every tag and BOL document (PDF files included).
+
+        Events are kept as an audit trail (plus a CLEAR).
+        """
         with self._lock:
             removed = self._conn.execute(
                 "SELECT COUNT(*) AS n FROM tags").fetchone()["n"]
+            doc_files = [r["filename"] for r in self._conn.execute(
+                "SELECT filename FROM bol_docs").fetchall()]
             self._conn.execute("DELETE FROM tags")
-            self._log("CLEAR", "", detail=f"cleared {removed} tag(s)")
+            self._conn.execute("DELETE FROM bol_docs")
+            self._log("CLEAR", "", detail=(f"cleared {removed} tag(s), "
+                                           f"{len(doc_files)} BOL document(s)"))
             self._conn.commit()
+        for filename in doc_files:
+            try:
+                os.remove(os.path.join(config.SCANS_DIR, filename))
+            except OSError:
+                pass
         return {"ok": True, "removed": removed,
                 "message": f"Cleared {removed} tag(s) from the database."}
 

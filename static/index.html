@@ -59,18 +59,38 @@
 
       <!-- Check In (receive shipment) -->
       <div id="checkin-view" class="view hidden">
-        <div class="field">
-          <label>Item type</label>
-          <div id="type-buttons" class="type-buttons"></div>
+        <!-- Step 1: capture the truckload's bill of lading -->
+        <div id="bol-gate">
+          <p class="hint">Truck arrived? Insert the bill of lading into the
+            scanner, then press Scan. Every box received will be filed under
+            that document.</p>
+          <button id="bol-scan-btn" class="primary-btn bol-scan-btn">Scan Bill of Lading</button>
+          <div class="bol-alt-row">
+            <button id="bol-upload-btn" class="back-btn">Upload a PDF instead</button>
+            <button id="bol-manual-btn" class="back-btn">No document &mdash; enter BOL # manually</button>
+          </div>
+          <input id="bol-upload-input" type="file" accept=".pdf,application/pdf" class="hidden" />
+          <div id="bol-recent" class="bol-recent"></div>
         </div>
-        <form id="checkin-form" class="form hidden"></form>
-        <button id="arm-btn" class="primary-btn hidden">Start receiving shipment</button>
-        <button id="finish-btn" class="back-btn hidden">Finish / change shipment</button>
 
-        <!-- Per-unit fields, filled before each trigger pull -->
-        <form id="item-form" class="form item-form hidden">
-          <p class="hint">Fill in this unit's details, then pull the trigger to tag it.</p>
-        </form>
+        <!-- Active truckload banner (scanned/uploaded doc, or manual mode) -->
+        <div id="bol-banner" class="bol-banner hidden"></div>
+
+        <!-- Step 2: receive shipments under the active BOL -->
+        <div id="checkin-main" class="hidden">
+          <div class="field">
+            <label>Item type</label>
+            <div id="type-buttons" class="type-buttons"></div>
+          </div>
+          <form id="checkin-form" class="form hidden"></form>
+          <button id="arm-btn" class="primary-btn hidden">Start receiving shipment</button>
+          <button id="finish-btn" class="back-btn hidden">Finish / change shipment</button>
+
+          <!-- Per-unit fields, filled before each trigger pull -->
+          <form id="item-form" class="form item-form hidden">
+            <p class="hint">Fill in this unit's details, then pull the trigger to tag it.</p>
+          </form>
+        </div>
       </div>
 
       <!-- Check Out (deliver to site) -->

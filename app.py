@@ -14,18 +14,21 @@ Then open http://127.0.0.1:8000
 import asyncio
 import csv
 import io
+import os
 import queue
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
 import reader as reader_mod
+import scanner
 from reader import ReaderWorker
 
 # ---------------------------------------------------------------------------
@@ -152,9 +155,11 @@ async def _handle_event(event: dict):
         building = fields.get("building_number", "")
         bol_number = fields.get("bol_number", "")
         vendor = fields.get("vendor", "")
+        bol_doc_id = _as_doc_id(fields.get("bol_doc_id"))
         result = await loop.run_in_executor(
             None, state.db.receive_shipment,
-            epcs, item_type, building, bol_number, vendor, item_fields)
+            epcs, item_type, building, bol_number, vendor, item_fields,
+            bol_doc_id)
         # Stay armed on this shipment so more units can be tagged in.
         await broadcast({"type": "checkin_result", **result})
         return
@@ -220,6 +225,15 @@ async def set_power(req: PowerRequest):
         return JSONResponse({"ok": False, "message": "Reader worker not ready"}, 503)
     applied = state.worker.set_check_power(req.dbm)
     return {"ok": True, "check_power": applied}
+
+
+def _as_doc_id(value):
+    """Coerce a fields-dict bol_doc_id (string) to an int, or None."""
+    try:
+        doc_id = int(str(value).strip())
+        return doc_id if doc_id > 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _wh_filters(bol="", building="", received_from="", received_to="",
@@ -348,6 +362,180 @@ async def export_inventory_csv(bol: str = "", building: str = "",
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Bill-of-lading documents (scan / upload / serve)
+# ---------------------------------------------------------------------------
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+def _new_scan_filename(prefix="bol"):
+    """Timestamped, collision-free filename inside SCANS_DIR."""
+    base = datetime.now().strftime(f"{prefix}_%Y%m%d_%H%M%S")
+    filename = f"{base}.pdf"
+    n = 2
+    while os.path.exists(os.path.join(config.SCANS_DIR, filename)):
+        filename = f"{base}_{n}.pdf"
+        n += 1
+    return filename
+
+
+def _default_bol_reference():
+    """Placeholder BOL number until the operator renames it, e.g. 'BOL 07-07 3:12PM'."""
+    now = datetime.now()
+    hour = now.strftime("%I").lstrip("0") or "12"
+    return f"BOL {now.strftime('%m-%d')} {hour}:{now.strftime('%M%p')}"
+
+
+class BolScanRequest(BaseModel):
+    append_to: Optional[int] = None
+
+
+@app.post("/api/bol/scan")
+async def bol_scan(req: BolScanRequest):
+    """Feed a sheet through the document scanner.
+
+    Without `append_to`: create a new BOL document (PDF + bol_docs row).
+    With `append_to`: rescan into that document, appending the new page.
+    """
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+
+    if req.append_to:
+        doc = await loop.run_in_executor(None, state.db.get_bol_doc, req.append_to)
+        if doc is None:
+            return JSONResponse(
+                {"ok": False, "message": "BOL document not found"}, 404)
+        path = os.path.join(config.SCANS_DIR, doc["filename"])
+        try:
+            await loop.run_in_executor(
+                None, lambda: scanner.scan_to_pdf(path, append_from=path))
+        except scanner.ScannerBusy as exc:
+            return JSONResponse({"ok": False, "message": str(exc)}, 409)
+        except scanner.ScanError as exc:
+            return {"ok": False, "message": str(exc)}
+        pages = await loop.run_in_executor(None, scanner.count_pdf_pages, path)
+        await loop.run_in_executor(
+            None, state.db.set_bol_doc_pages, doc["id"], pages)
+        doc = await loop.run_in_executor(None, state.db.get_bol_doc, doc["id"])
+        return {"ok": True, "doc": doc, "appended": True}
+
+    filename = _new_scan_filename()
+    path = os.path.join(config.SCANS_DIR, filename)
+    try:
+        await loop.run_in_executor(None, scanner.scan_to_pdf, path)
+    except scanner.ScannerBusy as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, 409)
+    except scanner.ScanError as exc:
+        return {"ok": False, "message": str(exc)}
+    pages = await loop.run_in_executor(None, scanner.count_pdf_pages, path)
+    doc = await loop.run_in_executor(
+        None, state.db.create_bol_doc, _default_bol_reference(), filename,
+        "scan", pages)
+    return {"ok": True, "doc": doc}
+
+
+@app.post("/api/bol/upload")
+async def bol_upload(file: UploadFile = File(...)):
+    """Fallback for when the scanner is unavailable: upload the BOL as a PDF."""
+    bad = _require_db()
+    if bad:
+        return bad
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        return {"ok": False, "message": "That PDF is too large (25 MB max)."}
+    if not data.startswith(b"%PDF-"):
+        return {"ok": False, "message": "That file doesn't look like a PDF."}
+
+    loop = asyncio.get_running_loop()
+    filename = _new_scan_filename("bol_upload")
+    path = os.path.join(config.SCANS_DIR, filename)
+
+    def _write():
+        os.makedirs(config.SCANS_DIR, exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+
+    await loop.run_in_executor(None, _write)
+    pages = await loop.run_in_executor(None, scanner.count_pdf_pages, path)
+    # The uploaded file's name is often the BOL number itself; use it as the
+    # initial reference when present (still renameable), else a timestamp.
+    stem = os.path.splitext(os.path.basename(file.filename or ""))[0].strip()
+    reference = stem or _default_bol_reference()
+    doc = await loop.run_in_executor(
+        None, state.db.create_bol_doc, reference, filename, "upload", pages)
+    return {"ok": True, "doc": doc}
+
+
+@app.get("/api/bol/docs")
+async def bol_docs():
+    """Recent BOL documents, newest first (the check-in 'resume' list)."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    docs = await loop.run_in_executor(None, state.db.list_bol_docs)
+    return {"docs": docs}
+
+
+class BolRenameRequest(BaseModel):
+    id: int
+    bol_number: str
+
+
+@app.post("/api/bol/rename")
+async def bol_rename(req: BolRenameRequest):
+    """Set the document's real BOL number; already-checked-in tags follow."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, state.db.rename_bol_doc, req.id, req.bol_number)
+
+
+@app.get("/api/bol/{doc_id}/file")
+async def bol_file(doc_id: int):
+    """Serve the BOL PDF inline so the browser can display it."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    doc = await loop.run_in_executor(None, state.db.get_bol_doc, doc_id)
+    if doc is None:
+        return JSONResponse({"ok": False, "message": "BOL document not found"}, 404)
+    path = os.path.join(config.SCANS_DIR, doc["filename"])
+    if not os.path.exists(path):
+        return JSONResponse(
+            {"ok": False, "message": f"PDF file missing on disk: {path}"}, 404)
+    safe_name = re.sub(r"[^\w\- ]+", "_", doc["bol_number"]) or "bol"
+    return FileResponse(path, media_type="application/pdf",
+                        filename=f"{safe_name}.pdf",
+                        content_disposition_type="inline")
+
+
+@app.get("/api/scanner/status")
+async def scanner_status():
+    """Document-scanner health check (NAPS2 installed? ES-50 visible?)."""
+    if not scanner.naps2_installed():
+        return {"ok": False, "installed": False, "devices": [],
+                "message": ("NAPS2 is not installed. Run: "
+                            "brew install --cask naps2")}
+    loop = asyncio.get_running_loop()
+    try:
+        devices = await loop.run_in_executor(None, scanner.list_devices)
+    except scanner.ScanError as exc:
+        return {"ok": False, "installed": True, "devices": [],
+                "message": str(exc)}
+    found = any(config.SCANNER_DEVICE.lower() in d.lower() for d in devices)
+    message = ("Scanner ready." if found else
+               (f"NAPS2 is installed but no '{config.SCANNER_DEVICE}' was "
+                "found. Check USB and power."))
+    return {"ok": found, "installed": True, "devices": devices,
+            "device_found": found, "message": message}
 
 
 # ---------------------------------------------------------------------------
