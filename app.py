@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import bol_extract
 import config
 import reader as reader_mod
 import scanner
@@ -63,6 +64,10 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
 
     await loop.run_in_executor(None, state.init_db)
+
+    # One-time NAPS2 OCR language download, off the startup path (needs
+    # network the first time; harmless no-op afterwards).
+    loop.run_in_executor(None, scanner.ensure_ocr_component)
 
     state.worker = ReaderWorker(on_event=lambda e: state.raw_events.put(e))
     state.worker.start()
@@ -154,12 +159,13 @@ async def _handle_event(event: dict):
         item_fields = event.get("item_fields", {})
         building = fields.get("building_number", "")
         bol_number = fields.get("bol_number", "")
+        po_number = fields.get("po_number", "")
         vendor = fields.get("vendor", "")
         bol_doc_id = _as_doc_id(fields.get("bol_doc_id"))
         result = await loop.run_in_executor(
             None, state.db.receive_shipment,
             epcs, item_type, building, bol_number, vendor, item_fields,
-            bol_doc_id)
+            bol_doc_id, po_number)
         # Stay armed on this shipment so more units can be tagged in.
         await broadcast({"type": "checkin_result", **result})
         return
@@ -361,6 +367,7 @@ EXPORT_COLUMNS = [
     ("EPC", "epc"),
     ("Item Type", "item_type"),
     ("BOL #", "bol_number"),
+    ("PO #", "po_number"),
     ("Building #", "building"),
     ("Checked Out To", "checkout_building"),
     ("Vendor", "vendor"),
@@ -439,6 +446,23 @@ def _default_bol_reference():
     return f"BOL {now.strftime('%m-%d')} {hour}:{now.strftime('%M%p')}"
 
 
+def _extract_bol_fields(path, ocr_if_needed=False):
+    """OCR-text guesses for a BOL PDF (blocking; run in an executor).
+
+    Returns {"bol_number", "po_number", "vendor", "ocr_text"} with "" for
+    anything not found. With `ocr_if_needed` (uploads), a PDF with no text
+    layer is first OCRed in place via NAPS2; scanned PDFs already got their
+    text layer during the scan itself.
+    """
+    text = scanner.extract_pdf_text(path)
+    if not text and ocr_if_needed and scanner.ocr_pdf(path):
+        text = scanner.extract_pdf_text(path)
+    vendors = state.db.list_vendors() if state.db else []
+    fields = bol_extract.extract_fields(text, vendors)
+    fields["ocr_text"] = text
+    return fields
+
+
 class BolScanRequest(BaseModel):
     append_to: Optional[int] = None
 
@@ -460,6 +484,7 @@ async def bol_scan(req: BolScanRequest):
         if doc is None:
             return JSONResponse(
                 {"ok": False, "message": "BOL document not found"}, 404)
+        doc_id = doc["id"]
         path = os.path.join(config.SCANS_DIR, doc["filename"])
         try:
             await loop.run_in_executor(
@@ -470,8 +495,16 @@ async def bol_scan(req: BolScanRequest):
             return {"ok": False, "message": str(exc)}
         pages = await loop.run_in_executor(None, scanner.count_pdf_pages, path)
         await loop.run_in_executor(
-            None, state.db.set_bol_doc_pages, doc["id"], pages)
-        doc = await loop.run_in_executor(None, state.db.get_bol_doc, doc["id"])
+            None, state.db.set_bol_doc_pages, doc_id, pages)
+        # Re-run extraction over the full document: the new page may carry
+        # the numbers the first page lacked. Only fills what the operator
+        # hasn't set (see apply_bol_extraction).
+        extracted = await loop.run_in_executor(None, _extract_bol_fields, path)
+        doc = await loop.run_in_executor(
+            None, lambda: state.db.apply_bol_extraction(
+                doc_id, bol_number=extracted["bol_number"],
+                vendor=extracted["vendor"], po_number=extracted["po_number"],
+                ocr_text=extracted["ocr_text"]))
         return {"ok": True, "doc": doc, "appended": True}
 
     filename = _new_scan_filename()
@@ -483,9 +516,13 @@ async def bol_scan(req: BolScanRequest):
     except scanner.ScanError as exc:
         return {"ok": False, "message": str(exc)}
     pages = await loop.run_in_executor(None, scanner.count_pdf_pages, path)
+    extracted = await loop.run_in_executor(None, _extract_bol_fields, path)
+    reference = extracted["bol_number"] or _default_bol_reference()
     doc = await loop.run_in_executor(
-        None, state.db.create_bol_doc, _default_bol_reference(), filename,
-        "scan", pages)
+        None, lambda: state.db.create_bol_doc(
+            reference, filename, "scan", pages,
+            vendor=extracted["vendor"], po_number=extracted["po_number"],
+            ocr_text=extracted["ocr_text"]))
     return {"ok": True, "doc": doc}
 
 
@@ -512,23 +549,32 @@ async def bol_upload(file: UploadFile = File(...)):
 
     await loop.run_in_executor(None, _write)
     pages = await loop.run_in_executor(None, scanner.count_pdf_pages, path)
-    # The uploaded file's name is often the BOL number itself; use it as the
-    # initial reference when present (still renameable), else a timestamp.
+    # Vendor-generated PDFs usually have a text layer already; photos/scans
+    # uploaded as PDF don't, so OCR those in place first (ocr_if_needed).
+    extracted = await loop.run_in_executor(
+        None, lambda: _extract_bol_fields(path, ocr_if_needed=True))
+    # Reference preference: number read off the document, else the file's
+    # name (often the BOL number), else a timestamp. Renameable regardless.
     stem = os.path.splitext(os.path.basename(file.filename or ""))[0].strip()
-    reference = stem or _default_bol_reference()
+    reference = extracted["bol_number"] or stem or _default_bol_reference()
     doc = await loop.run_in_executor(
-        None, state.db.create_bol_doc, reference, filename, "upload", pages)
+        None, lambda: state.db.create_bol_doc(
+            reference, filename, "upload", pages,
+            vendor=extracted["vendor"], po_number=extracted["po_number"],
+            ocr_text=extracted["ocr_text"]))
     return {"ok": True, "doc": doc}
 
 
 @app.get("/api/bol/docs")
-async def bol_docs():
-    """Recent BOL documents, newest first (the check-in 'resume' list)."""
+async def bol_docs(limit: int = 15):
+    """BOL documents, newest first. Default limit feeds the check-in
+    'resume' list; `limit=0` returns everything (BOL Documents view)."""
     bad = _require_db()
     if bad:
         return bad
+    limit = max(0, limit)
     loop = asyncio.get_running_loop()
-    docs = await loop.run_in_executor(None, state.db.list_bol_docs)
+    docs = await loop.run_in_executor(None, state.db.list_bol_docs, limit)
     return {"docs": docs}
 
 
@@ -670,6 +716,21 @@ async def admin_delete_note(req: AdminNoteDeleteRequest):
         return bad
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, state.db.delete_note, req.id)
+
+
+class AdminBolDeleteRequest(BaseModel):
+    pin: Optional[str] = None
+    id: int
+
+
+@app.post("/api/admin/bol/delete")
+async def admin_delete_bol(req: AdminBolDeleteRequest):
+    """Delete a BOL document (row + PDF); boxes under it are only unlinked."""
+    bad = _check_pin(req.pin) or _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, state.db.delete_bol_doc, req.id)
 
 
 class AdminGroupDeleteRequest(BaseModel):

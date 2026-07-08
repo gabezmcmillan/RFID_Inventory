@@ -3,15 +3,34 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RFID Inventory</title>
+  <title>RFID Inventory &mdash; Brasfield &amp; Gorrie</title>
+  <link rel="icon" type="image/png" href="/brand/bg-symbol-navy.png" />
+  <link rel="stylesheet" href="/brand/bg-theme.css" />
   <link rel="stylesheet" href="/styles.css" />
+  <script>
+    // Apply the saved theme before first paint to avoid a light-mode flash.
+    try {
+      var t = localStorage.getItem("rfid-theme");
+      if (t === "dark" || (!t && window.matchMedia &&
+          matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <header class="topbar">
-    <h1>RFID Inventory</h1>
-    <div class="status-pills">
-      <span id="reader-pill" class="pill pill-off">Reader</span>
-      <span id="db-pill" class="pill pill-off">Database</span>
+    <div class="brand">
+      <img src="/brand/bg-logo-horizontal-white.png" alt="Brasfield &amp; Gorrie" class="brand-logo" />
+      <h1 class="brand-app">RFID Inventory</h1>
+    </div>
+    <div class="topbar-actions">
+      <div class="status-pills">
+        <span id="reader-pill" class="pill pill-off">Reader</span>
+        <span id="db-pill" class="pill pill-off">Database</span>
+      </div>
+      <button id="theme-toggle" class="theme-toggle" type="button"
+              aria-label="Switch to dark mode">&#x263E; Dark</button>
     </div>
   </header>
 
@@ -37,6 +56,11 @@
         <span class="mode-icon">&#x1F4E6;</span>
         <span class="mode-title">Warehouse</span>
         <span class="mode-sub">Browse &amp; find items</span>
+      </button>
+      <button class="mode-card" data-mode="boldocs">
+        <span class="mode-icon">&#x1F4C4;</span>
+        <span class="mode-title">BOL Documents</span>
+        <span class="mode-sub">All scanned bills of lading</span>
       </button>
       <button class="mode-card" data-mode="eventlog">
         <span class="mode-icon">&#x1F4DC;</span>
@@ -185,6 +209,19 @@
           <button id="whf-clear" class="back-btn">Clear filters</button>
         </div>
         <div id="warehouse-tree" class="wh-tree"></div>
+      </div>
+
+      <!-- BOL Documents -->
+      <div id="boldocs-view" class="view hidden">
+        <div class="wh-controls">
+          <span class="hint bol-docs-hint">Every scanned or uploaded bill of lading,
+            newest first. Renaming fixes the BOL number everywhere, including
+            boxes already checked in. Deleting removes the PDF but leaves the
+            boxes untouched.</span>
+          <span class="wh-controls-spacer"></span>
+          <button id="bol-docs-refresh" class="back-btn">Refresh</button>
+        </div>
+        <div id="bol-docs-list" class="bol-docs-list"></div>
       </div>
 
       <!-- Event Log -->

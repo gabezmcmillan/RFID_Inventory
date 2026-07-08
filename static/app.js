@@ -4,15 +4,17 @@
 const MODE_TITLES = {
   checkin: "Check In", checkout: "Check Out",
   inventory: "Sweep & Count", warehouse: "Warehouse", finder: "Find a Tag",
-  eventlog: "Event Log", admin: "Admin",
+  boldocs: "BOL Documents", eventlog: "Event Log", admin: "Admin",
 };
 const VIEWS = ["checkin-view", "checkout-view", "inventory-view",
-               "warehouse-view", "finder-view", "eventlog-view", "admin-view"];
+               "warehouse-view", "finder-view", "boldocs-view",
+               "eventlog-view", "admin-view"];
 
 // Tag fields an admin may edit (key, label, input type).
 const EDIT_FIELDS = [
   { key: "item_type", label: "Type", type: "text" },
   { key: "bol_number", label: "BOL #", type: "text" },
+  { key: "po_number", label: "PO #", type: "text" },
   { key: "building", label: "Building #", type: "building" },
   { key: "vendor", label: "Vendor", type: "vendor" },
   { key: "sku", label: "SKU", type: "text" },
@@ -63,6 +65,43 @@ let finderStaleTimer = null;   // mutes the tone when reads stop
 let finderLastSignal = 0;      // performance.now() of the last finder event
 
 const $ = (id) => document.getElementById(id);
+
+// -- theme (light / dark) -----------------------------------------------------
+// The saved choice is also applied by an inline <head> script before first
+// paint; this section keeps the toggle button in sync and handles clicks.
+const THEME_KEY = "rfid-theme";
+
+function applyTheme(theme) {
+  if (theme === "dark") {
+    document.documentElement.dataset.theme = "dark";
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  const btn = $("theme-toggle");
+  const label = theme === "dark"
+    ? "\u2600\ufe0e Light"   // sun (text-style): switches back to light
+    : "\u263e Dark";         // moon: switches to dark
+  btn.textContent = label;
+  const tip = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  btn.setAttribute("aria-label", tip);
+  btn.title = tip;
+}
+
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch (e) { /* private mode */ }
+  const theme = saved ||
+    (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark" : "light");
+  applyTheme(theme);
+  $("theme-toggle").onclick = () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* private mode */ }
+    applyTheme(next);
+  };
+}
+
+initTheme();
 
 // -- boot --------------------------------------------------------------------
 async function boot() {
@@ -220,6 +259,9 @@ async function openMode(mode, opts = {}) {
     await setServerMode("idle");
     $("wh-edit-banner").classList.toggle("hidden", !isEditing());
     await loadWarehouse();
+  } else if (mode === "boldocs") {
+    await setServerMode("idle");
+    await loadBolDocs();
   } else if (mode === "eventlog") {
     await setServerMode("idle");
     state.eventFilter = "all";
@@ -286,11 +328,22 @@ function renderBolBanner() {
   if (d) {
     const pages = d.pages === 1 ? "1 page" : `${d.pages} pages`;
     const how = d.source === "upload" ? "Uploaded" : "Scanned";
+    // What OCR pulled off the document. Guesses, not gospel: the operator
+    // should check them against the paper copy (both prefill the form below
+    // and stay editable there).
+    const vendorTxt = d.vendor
+      ? `<strong>${escapeHtml(d.vendor)}</strong>` : "not detected";
+    const poTxt = d.po_number
+      ? `<strong>${escapeHtml(d.po_number)}</strong>` : "not detected";
+    const ocrLine = `
+      <span class="hint bol-ocr-line">Read from document: Vendor ${vendorTxt}
+        \u00b7 PO # ${poTxt} \u2014 verify below before arming.</span>`;
     el.innerHTML = `
       <div class="bol-banner-main">
         <span class="bol-banner-label">Truckload BOL</span>
         <strong>${escapeHtml(d.bol_number)}</strong>
         <span class="hint">${how} ${escapeHtml(fmtDateTime(d.created_at))} \u00b7 ${pages}</span>
+        ${ocrLine}
       </div>
       <div class="bol-banner-actions">
         <a class="back-btn bol-view-link" href="/api/bol/${d.id}/file" target="_blank">View PDF</a>
@@ -437,6 +490,10 @@ async function addBolPage() {
     if (data.ok) {
       state.bolDoc = data.doc;
       logActivity(`Added a page to ${data.doc.bol_number} (now ${data.doc.pages} pages)`, "ok");
+      // Re-running OCR over the fuller document may have filled in the BOL
+      // number (while still auto-named) or vendor/PO; push that into the form
+      // and any armed shipment.
+      await syncBolIntoCheckin();
     } else {
       logActivity(data.message || "Scan failed", "err");
       await showScanFailure(data.message);
@@ -519,6 +576,156 @@ async function endTruckload() {
   document.querySelectorAll(".type-btn").forEach((b) => b.classList.remove("active"));
   hide("checkin-form"); hide("arm-btn"); hide("result");
   renderBolStage();
+}
+
+// -- BOL documents view ----------------------------------------------------------
+// Every scanned/uploaded bill of lading, newest first, with its PDF and the
+// number of boxes filed under it. Deleting is PIN-gated: it removes the
+// document record and PDF file but leaves the boxes themselves in inventory.
+async function loadBolDocs() {
+  const wrap = $("bol-docs-list");
+  wrap.innerHTML = `<p class="hint">Loading\u2026</p>`;
+  let docs = [];
+  try {
+    docs = (await (await fetch("/api/bol/docs?limit=0")).json()).docs || [];
+  } catch (e) {
+    wrap.innerHTML = `<p class="hint">Could not load BOL documents.</p>`;
+    return;
+  }
+  renderBolDocs(docs);
+}
+
+function renderBolDocs(docs) {
+  const wrap = $("bol-docs-list");
+  if (!docs.length) {
+    wrap.innerHTML = `<p class="hint">No bills of lading yet \u2014 scan or
+      upload one from Check In.</p>`;
+    return;
+  }
+  const rows = docs.map((d) => `
+    <tr>
+      <td><strong>${escapeHtml(d.bol_number)}</strong></td>
+      <td>${escapeHtml(d.vendor || "")}</td>
+      <td>${escapeHtml(d.po_number || "")}</td>
+      <td>${d.source === "upload" ? "Uploaded" : "Scanned"}</td>
+      <td class="qty-cell">${d.pages}</td>
+      <td class="qty-cell">${d.boxes}</td>
+      <td>${escapeHtml(fmtDateTime(d.created_at))}</td>
+      <td class="wh-actions bol-docs-actions">
+        <a class="bol-pdf-btn bol-view-link" href="/api/bol/${d.id}/file"
+          target="_blank">View PDF</a>
+        <button class="bol-pdf-btn bol-doc-rename-btn" data-id="${d.id}">Rename</button>
+        <button class="danger-btn bol-del-btn" data-id="${d.id}">Delete</button>
+      </td>
+    </tr>`).join("");
+  wrap.innerHTML = `<table class="wh-tag-table bol-docs-table">
+      <thead><tr><th>BOL #</th><th>Vendor</th><th>PO #</th><th>Source</th>
+        <th>Pages</th><th>Boxes</th><th>Added</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  const byId = new Map(docs.map((d) => [String(d.id), d]));
+  wrap.querySelectorAll(".bol-doc-rename-btn").forEach((b) => {
+    b.onclick = () => startBolDocRename(b.closest("tr"), byId.get(b.dataset.id));
+  });
+  wrap.querySelectorAll(".bol-del-btn").forEach((b) => {
+    b.onclick = () => confirmDeleteBolDoc(byId.get(b.dataset.id));
+  });
+}
+
+// Inline rename, mirroring the check-in banner: the BOL # cell becomes an
+// input and the row's actions swap to Save/Cancel. Uses the same endpoint as
+// the banner, so boxes already filed under the document follow the new
+// number server-side. Not PIN-gated (same trust level as the banner rename).
+function startBolDocRename(row, doc) {
+  if (!row || !doc) return;
+  const nameCell = row.cells[0];
+  const actionsCell = row.cells[row.cells.length - 1];
+  nameCell.innerHTML = `<input class="bol-doc-rename-input" type="text"
+    value="${escapeHtml(doc.bol_number)}" maxlength="120"
+    title="BOL number as printed on the document" />`;
+  actionsCell.innerHTML = `
+    <button class="primary-btn bol-doc-rename-save">Save</button>
+    <button class="back-btn bol-doc-rename-cancel">Cancel</button>`;
+  const input = nameCell.querySelector("input");
+  input.focus();
+  input.select();
+  const save = async () => {
+    const name = input.value.trim();
+    if (!name || name === doc.bol_number) { await loadBolDocs(); return; }
+    try {
+      const res = await fetch("/api/bol/rename", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: doc.id, bol_number: name }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        logActivity(data.message +
+          (data.tags_updated ? ` ${data.tags_updated} box(es) updated.` : ""), "ok");
+        // Keep the active check-in truckload in sync if it's this document.
+        if (state.bolDoc && state.bolDoc.id === doc.id) state.bolDoc = data.doc;
+      } else {
+        logActivity(data.message || "Rename failed", "err");
+      }
+    } catch (e) {
+      logActivity("Cannot reach server", "err");
+    }
+    await loadBolDocs();
+  };
+  actionsCell.querySelector(".bol-doc-rename-save").onclick = save;
+  actionsCell.querySelector(".bol-doc-rename-cancel").onclick = loadBolDocs;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") save();
+    if (e.key === "Escape") loadBolDocs();
+  };
+}
+
+// Deleting needs the admin PIN. If Admin is already unlocked the stored PIN is
+// used; otherwise the confirmation modal asks for it inline (no detour).
+function confirmDeleteBolDoc(doc) {
+  if (!doc) return;
+  const boxNote = doc.boxes
+    ? `<p><strong>${doc.boxes} box(es)</strong> are filed under this BOL. They
+         stay in inventory and keep their BOL number \u2014 only the link to
+         the PDF goes away.</p>`
+    : `<p>No boxes are filed under this BOL.</p>`;
+  const pinField = state.admin.pin ? "" : `
+    <label class="edit-field bol-del-pin-row"><span>Admin PIN</span>
+      <input id="bol-del-pin" type="password" placeholder="Required to delete" />
+    </label>`;
+  const how = doc.source === "upload" ? "uploaded" : "scanned";
+  showModal(`Delete BOL "${doc.bol_number}"?`,
+    `<p>This permanently deletes the document record and its PDF file
+        (${doc.pages} page(s), ${how}). This cannot be undone.</p>
+     ${boxNote}${pinField}`,
+    [
+      { label: "Cancel", cls: "back-btn" },
+      { label: "Delete", cls: "danger-btn", onClick: () => deleteBolDoc(doc) },
+    ]);
+  const pinInput = $("bol-del-pin");
+  if (pinInput) pinInput.focus();
+}
+
+async function deleteBolDoc(doc) {
+  // The modal is hidden but still in the DOM, so the PIN typed into it is
+  // readable here.
+  const pinInput = $("bol-del-pin");
+  const pin = state.admin.pin || (pinInput ? pinInput.value.trim() : "");
+  if (!pin) {
+    logActivity("Admin PIN required to delete a BOL", "err");
+    return;
+  }
+  const data = await adminPost("/api/admin/bol/delete", { pin, id: doc.id });
+  if (data && data.ok) {
+    logActivity(data.message || `Deleted BOL ${doc.bol_number}`, "warn");
+    // If it was the active check-in truckload, drop that reference too.
+    if (state.bolDoc && state.bolDoc.id === doc.id) {
+      state.bolDoc = null;
+      state.bolManual = false;
+    }
+    await loadBolDocs();
+  } else if (data) {
+    logActivity(data.message || "Could not delete BOL", "err");
+  }
 }
 
 // -- check in ----------------------------------------------------------------
@@ -698,6 +905,9 @@ function renderShipmentForm(type) {
 
 // With a scanned BOL active, the form's BOL Number is filled from the document
 // and locked (rename it from the banner instead so the doc and tags agree).
+// OCR-extracted Vendor / PO # also prefill, but stay editable: they're
+// guesses. Prefill only lands in empty inputs and never while a shipment is
+// armed, so operator entries are never clobbered.
 function applyBolToForm() {
   const input = $("f_bol_number");
   if (!input) return;
@@ -706,6 +916,18 @@ function applyBolToForm() {
     input.readOnly = true;
     input.classList.add("locked");
     input.title = "Taken from the scanned BOL document. Use Rename in the banner above to change it.";
+    if (!state.shipment) {
+      const po = $("f_po_number");
+      if (po && !po.value && state.bolDoc.po_number) {
+        po.value = state.bolDoc.po_number;
+      }
+      const vendor = $("f_vendor");
+      if (vendor && !vendor.value && state.bolDoc.vendor) {
+        const known = Array.from(vendor.options)
+          .some((o) => o.value === state.bolDoc.vendor);
+        if (known) vendor.value = state.bolDoc.vendor;
+      }
+    }
   } else {
     input.readOnly = false;
     input.classList.remove("locked");
@@ -908,10 +1130,13 @@ function renderCheckinSummary(msg) {
     ? `<tr><th>EPC</th><td><span class="epc">${escapeHtml(msg.epc)}</span></td></tr>` : "";
   const editBtn = msg.epc
     ? `<button id="checkin-amend-btn" class="edit-btn checkin-amend-btn">Edit this box</button>` : "";
+  const po = msg.po_number
+    ? `<tr><th>PO Number</th><td>${escapeHtml(msg.po_number)}</td></tr>` : "";
   showResult("ok", `Shipment: ${escapeHtml(msg.item_type)} \u00b7 Qty ${msg.qty} units`,
     `<table>
        ${epcRow}
        <tr><th>BOL Number</th><td>${escapeHtml(bol)}</td></tr>
+       ${po}
        <tr><th>Building</th><td>${escapeHtml(bldg)}</td></tr>
        <tr><th>Vendor</th><td>${escapeHtml(msg.vendor || "")}</td></tr>
        ${sku}${mfc}
@@ -1290,6 +1515,7 @@ function sweepDetailsHtml(items) {
       <td>${escapeHtml(t.item_type || "")}</td>
       <td class="qty-cell">${escapeHtml(qty)}</td>
       <td>${escapeHtml(t.bol_number || "")}</td>
+      <td>${escapeHtml(t.po_number || "")}</td>
       <td>${escapeHtml(t.building || "")}</td>
       <td>${escapeHtml(t.vendor || "")}</td>
       <td>${escapeHtml(t.sku || "")}</td>
@@ -1302,7 +1528,7 @@ function sweepDetailsHtml(items) {
   return `<details class="sweep-details">
       <summary>View detailed scan (${items.length} box${items.length === 1 ? "" : "es"})</summary>
       <table>
-        <thead><tr><th>EPC</th><th>Type</th><th>Qty</th><th>BOL</th><th>Building</th>
+        <thead><tr><th>EPC</th><th>Type</th><th>Qty</th><th>BOL</th><th>PO</th><th>Building</th>
           <th>Vendor</th><th>SKU</th><th>Mfc date</th><th>Checked in</th>
           <th>Checked out</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -1496,8 +1722,8 @@ async function loadGroupTags(cell, itemType, groupBy, value, groupInfo) {
       const rows = data.tags.map((tag) =>
         tagRowHtml(tag, itemType, editing, groupBy)).join("");
       tableHtml = `<table class="wh-tag-table">
-        <thead><tr><th>EPC</th><th>${escapeHtml(otherLabel)}</th><th>SKU</th>
-          <th>Qty</th><th>Mfc date</th>
+        <thead><tr><th>EPC</th><th>${escapeHtml(otherLabel)}</th><th>PO #</th>
+          <th>SKU</th><th>Qty</th><th>Mfc date</th>
           <th>Checked in</th><th>Checked out</th><th>Checked out to</th>
           <th>Status</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table>`;
@@ -1617,7 +1843,7 @@ function tagRowHtml(tag, itemType, editing, groupBy) {
   let editorRow = "";
   if (editing) {
     editorRow = `<tr class="tag-editor-row hidden" data-editor="${escapeHtml(tag.epc)}">
-      <td colspan="10">${tagEditorHtml(tag)}</td></tr>`;
+      <td colspan="11">${tagEditorHtml(tag)}</td></tr>`;
   }
   const deliveredAt = tag.delivered_at ? fmtDateTime(tag.delivered_at) : "";
   const checkedOutTo = tag.checkout_building ? `Bldg ${tag.checkout_building}` : "";
@@ -1627,6 +1853,7 @@ function tagRowHtml(tag, itemType, editing, groupBy) {
       <td class="epc epc-link" data-epc="${escapeHtml(tag.epc)}"
           title="View this tag's event history">${escapeHtml(tag.epc)}</td>
       <td>${escapeHtml(otherValue || "")}</td>
+      <td>${escapeHtml(tag.po_number || "")}</td>
       <td>${escapeHtml(tag.sku || "")}</td>
       <td class="qty-cell">${escapeHtml(qty)}</td>
       <td>${escapeHtml(tag.mfc_date || "")}</td>
@@ -1771,7 +1998,8 @@ async function exportWarehousePdf() {
     .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
     .join(" \u00b7 ");
   $("print-area").innerHTML =
-    `<h1>Warehouse Inventory</h1>
+    `<img src="/brand/bg-logo-horizontal-navy.png" alt="Brasfield &amp; Gorrie" class="print-logo" />
+     <h1>Warehouse Inventory</h1>
      <p>Exported ${new Date().toLocaleString()}${filters ? ` \u00b7 Filters \u2014 ${escapeHtml(filters)}` : ""}
        \u00b7 ${rows.length} box(es)</p>
      <table>
@@ -2340,6 +2568,7 @@ function wireUI() {
       loadEvents();
     };
   });
+  $("bol-docs-refresh").onclick = loadBolDocs;
   $("event-refresh").onclick = loadEvents;
   $("event-epc").oninput = () => {
     clearTimeout(eventSearchTimer);

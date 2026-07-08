@@ -92,6 +92,7 @@ class Database:
                     epc          TEXT UNIQUE NOT NULL,
                     item_type    TEXT NOT NULL,
                     bol_number    TEXT NOT NULL DEFAULT '',
+                    po_number    TEXT NOT NULL DEFAULT '',
                     building     TEXT NOT NULL DEFAULT '',
                     vendor       TEXT NOT NULL DEFAULT '',
                     sku          TEXT NOT NULL DEFAULT '',
@@ -127,6 +128,10 @@ class Database:
                     filename   TEXT NOT NULL,
                     source     TEXT NOT NULL DEFAULT 'scan',
                     pages      INTEGER NOT NULL DEFAULT 1,
+                    vendor     TEXT NOT NULL DEFAULT '',
+                    po_number  TEXT NOT NULL DEFAULT '',
+                    ocr_text   TEXT NOT NULL DEFAULT '',
+                    auto_named INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS notes (
@@ -173,10 +178,22 @@ class Database:
                     f"ALTER TABLE {table} RENAME COLUMN po_number TO bol_number")
         have = {row["name"] for row in
                 self._conn.execute("PRAGMA table_info(tags)").fetchall()}
-        for col in ("flag", "flagged_at", "checkout_building"):
+        for col in ("flag", "flagged_at", "checkout_building", "po_number"):
             if col not in have:
                 self._conn.execute(
                     f"ALTER TABLE tags ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        # OCR metadata on BOL documents: extracted vendor/PO guesses, the raw
+        # text layer (debugging/search), and whether the doc's BOL number is
+        # still machine-generated (auto_named=1) vs. operator-confirmed.
+        have_docs = {row["name"] for row in
+                     self._conn.execute("PRAGMA table_info(bol_docs)").fetchall()}
+        for col in ("vendor", "po_number", "ocr_text"):
+            if col not in have_docs:
+                self._conn.execute(
+                    f"ALTER TABLE bol_docs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        if "auto_named" not in have_docs:
+            self._conn.execute(
+                "ALTER TABLE bol_docs ADD COLUMN auto_named INTEGER NOT NULL DEFAULT 1")
         # Link to the scanned bill-of-lading document (bol_docs row). Nullable:
         # legacy rows and manual check-ins have no document.
         if "bol_doc_id" not in have:
@@ -236,6 +253,7 @@ class Database:
             "epc": row["epc"],
             "item_type": row["item_type"],
             "bol_number": row["bol_number"],
+            "po_number": row["po_number"],
             "bol_doc_id": row["bol_doc_id"],
             "building": row["building"],
             "vendor": row["vendor"],
@@ -253,7 +271,7 @@ class Database:
 
     # -- writes --------------------------------------------------------------
     def receive_shipment(self, epcs, item_type, building, bol_number, vendor,
-                         item_fields=None, bol_doc_id=None):
+                         item_fields=None, bol_doc_id=None, po_number=""):
         """Check In: record a shipment's tags and report the group's quantity."""
         item_fields = item_fields or {}
         sku = (item_fields.get("sku") or "").strip()
@@ -277,15 +295,19 @@ class Database:
                     duplicates.append(epc)
                     continue
                 self._conn.execute(
-                    "INSERT INTO tags (epc, item_type, bol_number, bol_doc_id, "
-                    "building, vendor, sku, mfc_date, quantity, remaining, "
-                    "status, received_at, delivered_at, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (epc, item_type, bol_number, bol_doc_id, building, vendor,
-                     sku, mfc_date, units, units, STATUS_IN, ts, "", ts, ts),
+                    "INSERT INTO tags (epc, item_type, bol_number, po_number, "
+                    "bol_doc_id, building, vendor, sku, mfc_date, quantity, "
+                    "remaining, status, received_at, delivered_at, created_at, "
+                    "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (epc, item_type, bol_number, po_number, bol_doc_id,
+                     building, vendor, sku, mfc_date, units, units, STATUS_IN,
+                     ts, "", ts, ts),
                 )
+                detail = f"qty {units}"
+                if po_number:
+                    detail += f", PO {po_number}"
                 self._log("IN", epc, item_type, bol_number, building, vendor,
-                          detail=f"qty {units}")
+                          detail=detail)
                 added += 1
                 added_units += units
                 added_epcs.append(epc)
@@ -303,7 +325,8 @@ class Database:
                 "duplicates": duplicates, "epcs": added_epcs,
                 "epc": added_epcs[0] if added_epcs else "",
                 "qty": qty, "item_type": item_type,
-                "bol_number": bol_number, "bol_doc_id": bol_doc_id,
+                "bol_number": bol_number, "po_number": po_number,
+                "bol_doc_id": bol_doc_id,
                 "building": building, "vendor": vendor,
                 "sku": sku, "mfc_date": mfc_date}
 
@@ -359,23 +382,40 @@ class Database:
                 "tag": self._tag_dict(updated), "qty": qty}
 
     # -- bill-of-lading documents ---------------------------------------------
+    # ocr_text is deliberately left out of the dict: it's stored for debugging
+    # and future search, not something the UI needs on every payload.
     @staticmethod
     def _bol_doc_dict(row):
         return {"id": row["id"], "bol_number": row["bol_number"],
                 "filename": row["filename"], "source": row["source"],
-                "pages": row["pages"], "created_at": row["created_at"]}
+                "pages": row["pages"], "vendor": row["vendor"],
+                "po_number": row["po_number"],
+                "auto_named": bool(row["auto_named"]),
+                "created_at": row["created_at"]}
 
-    def create_bol_doc(self, bol_number, filename, source="scan", pages=1):
-        """Register a scanned/uploaded BOL PDF and log a BOL_SCAN event."""
+    def create_bol_doc(self, bol_number, filename, source="scan", pages=1,
+                       vendor="", po_number="", ocr_text=""):
+        """Register a scanned/uploaded BOL PDF and log a BOL_SCAN event.
+
+        vendor/po_number are OCR guesses (may be ""); the BOL number passed in
+        is either an OCR guess or a generated placeholder, so the doc starts
+        auto_named=1 until the operator confirms it via rename.
+        """
         ts = _now()
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO bol_docs (bol_number, filename, source, pages, "
-                "created_at) VALUES (?,?,?,?,?)",
-                (bol_number, filename, source, pages, ts))
+                "vendor, po_number, ocr_text, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (bol_number, filename, source, pages, vendor, po_number,
+                 ocr_text, ts))
             doc_id = cur.lastrowid
-            self._log("BOL_SCAN", "", bol_number=bol_number,
-                      detail=f"{source}: {filename} ({pages} page(s))")
+            extracted = ", ".join(
+                s for s in (f"vendor {vendor}" if vendor else "",
+                            f"PO {po_number}" if po_number else "") if s)
+            self._log("BOL_SCAN", "", bol_number=bol_number, vendor=vendor,
+                      detail=f"{source}: {filename} ({pages} page(s))"
+                             + (f"; OCR: {extracted}" if extracted else ""))
             self._conn.commit()
             row = self._conn.execute(
                 "SELECT * FROM bol_docs WHERE id=?", (doc_id,)).fetchone()
@@ -388,19 +428,60 @@ class Database:
         return self._bol_doc_dict(row) if row else None
 
     def list_bol_docs(self, limit=15):
-        """Recent BOL documents (newest first), each with its linked box count."""
+        """BOL documents (newest first), each with its linked box count.
+
+        `limit` of 0/None returns every document (the BOL Documents view);
+        the default keeps the check-in resume list short.
+        """
+        sql = ("SELECT d.*, (SELECT COUNT(*) FROM tags t "
+               "WHERE t.bol_doc_id = d.id) AS boxes "
+               "FROM bol_docs d ORDER BY d.id DESC")
+        params = ()
+        if limit:
+            sql += " LIMIT ?"
+            params = (limit,)
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT d.*, (SELECT COUNT(*) FROM tags t "
-                "WHERE t.bol_doc_id = d.id) AS boxes "
-                "FROM bol_docs d ORDER BY d.id DESC LIMIT ?",
-                (limit,)).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         docs = []
         for r in rows:
             d = self._bol_doc_dict(r)
             d["boxes"] = r["boxes"]
             docs.append(d)
         return docs
+
+    def delete_bol_doc(self, doc_id):
+        """Admin: delete a BOL document (DB row + PDF file on disk).
+
+        Boxes filed under it are NOT touched apart from losing the document
+        link (bol_doc_id -> NULL): they keep their BOL number text and stay
+        in inventory. Events are kept as an audit trail plus a BOL_DELETE.
+        """
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM bol_docs WHERE id=?", (doc_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"BOL document {doc_id} not found."}
+            cur = self._conn.execute(
+                "UPDATE tags SET bol_doc_id=NULL, updated_at=? WHERE bol_doc_id=?",
+                (ts, doc_id))
+            unlinked = cur.rowcount
+            self._conn.execute("DELETE FROM bol_docs WHERE id=?", (doc_id,))
+            self._log("BOL_DELETE", "", bol_number=row["bol_number"],
+                      detail=(f"deleted document ({row['filename']}, "
+                              f"{row['pages']} page(s)); "
+                              f"{unlinked} box(es) unlinked"))
+            self._conn.commit()
+        try:
+            os.remove(os.path.join(config.SCANS_DIR, row["filename"]))
+        except OSError:
+            pass  # already gone / never scanned to disk; the row is the record
+        msg = f"Deleted BOL '{row['bol_number']}' and its PDF."
+        if unlinked:
+            msg += (f" {unlinked} box(es) keep their BOL number "
+                    "but no longer link to a document.")
+        return {"ok": True, "message": msg, "unlinked": unlinked,
+                "id": doc_id}
 
     def rename_bol_doc(self, doc_id, new_number):
         """Set a document's BOL number; tags already filed under it follow."""
@@ -414,8 +495,10 @@ class Database:
             if row is None:
                 return {"ok": False, "message": f"BOL document {doc_id} not found."}
             old = row["bol_number"]
+            # A human typed this number: stop OCR re-extraction (Add page)
+            # from ever overwriting it.
             self._conn.execute(
-                "UPDATE bol_docs SET bol_number=? WHERE id=?",
+                "UPDATE bol_docs SET bol_number=?, auto_named=0 WHERE id=?",
                 (new_number, doc_id))
             cur = self._conn.execute(
                 "UPDATE tags SET bol_number=?, updated_at=? WHERE bol_doc_id=?",
@@ -435,6 +518,44 @@ class Database:
             self._conn.execute(
                 "UPDATE bol_docs SET pages=? WHERE id=?", (pages, doc_id))
             self._conn.commit()
+
+    def apply_bol_extraction(self, doc_id, bol_number="", vendor="",
+                             po_number="", ocr_text=""):
+        """Fold a re-run OCR extraction (after Add page) into the document.
+
+        Non-destructive: the BOL number is only replaced while it is still
+        machine-generated (auto_named=1) -- and tags already filed under the
+        doc follow, as with rename. Vendor/PO fill in only if still empty.
+        The stored ocr_text is always refreshed (it covers all pages now).
+        """
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM bol_docs WHERE id=?", (doc_id,)).fetchone()
+            if row is None:
+                return None
+            self._conn.execute(
+                "UPDATE bol_docs SET ocr_text=? WHERE id=?", (ocr_text, doc_id))
+            if vendor and not row["vendor"]:
+                self._conn.execute(
+                    "UPDATE bol_docs SET vendor=? WHERE id=?", (vendor, doc_id))
+            if po_number and not row["po_number"]:
+                self._conn.execute(
+                    "UPDATE bol_docs SET po_number=? WHERE id=?",
+                    (po_number, doc_id))
+            if (bol_number and row["auto_named"]
+                    and bol_number != row["bol_number"]):
+                self._conn.execute(
+                    "UPDATE bol_docs SET bol_number=? WHERE id=?",
+                    (bol_number, doc_id))
+                self._conn.execute(
+                    "UPDATE tags SET bol_number=?, updated_at=? "
+                    "WHERE bol_doc_id=?",
+                    (bol_number, ts, doc_id))
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM bol_docs WHERE id=?", (doc_id,)).fetchone()
+        return self._bol_doc_dict(row)
 
     # -- shipment notes --------------------------------------------------------
     # A shipment has no row of its own (it's an aggregation over tags), so notes
@@ -926,8 +1047,8 @@ class Database:
                             f"({label} '{value or '(blank)'}').")}
 
     # Fields an admin may edit on a tag.
-    EDITABLE = ("item_type", "bol_number", "building", "vendor", "sku",
-                "mfc_date", "quantity", "remaining", "status")
+    EDITABLE = ("item_type", "bol_number", "po_number", "building", "vendor",
+                "sku", "mfc_date", "quantity", "remaining", "status")
 
     def update_tag(self, epc, fields):
         """Admin: overwrite editable fields on a tag. Returns the updated tag."""

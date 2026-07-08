@@ -53,25 +53,46 @@ FINDER_RSSI_MAX_DBM = -40   # this dBm (or stronger) maps to 100%
 # ---------------------------------------------------------------------------
 # Document scanner (Epson ES-50 via the NAPS2 CLI)
 # ---------------------------------------------------------------------------
-# Bill-of-lading scans are driven through NAPS2 (install: brew install --cask
-# naps2), which talks to the scanner via Apple's ImageCaptureCore driver.
-# The app may live in the system or the per-user Applications folder.
+# Bill-of-lading scans are driven through NAPS2 (macOS: brew install --cask
+# naps2; Windows: https://www.naps2.com download). On macOS the GUI binary
+# doubles as the CLI via `NAPS2 console ...`; on Windows the CLI is the
+# separate NAPS2.Console.exe next to the GUI exe.
 import os as _os
+import sys as _sys
 
-_NAPS2_CANDIDATES = [
-    "/Applications/NAPS2.app/Contents/MacOS/NAPS2",
-    _os.path.expanduser("~/Applications/NAPS2.app/Contents/MacOS/NAPS2"),
-]
+IS_WINDOWS = _sys.platform.startswith("win")
+
+if IS_WINDOWS:
+    _NAPS2_CANDIDATES = [
+        _os.path.expandvars(r"%ProgramFiles%\NAPS2\NAPS2.Console.exe"),
+        _os.path.expandvars(r"%ProgramFiles(x86)%\NAPS2\NAPS2.Console.exe"),
+        _os.path.expandvars(r"%LocalAppData%\Programs\NAPS2\NAPS2.Console.exe"),
+    ]
+else:
+    _NAPS2_CANDIDATES = [
+        "/Applications/NAPS2.app/Contents/MacOS/NAPS2",
+        _os.path.expanduser("~/Applications/NAPS2.app/Contents/MacOS/NAPS2"),
+    ]
 NAPS2_BINARY = next((p for p in _NAPS2_CANDIDATES if _os.path.exists(p)),
                     _NAPS2_CANDIDATES[0])
-# NAPS2's bundled SANE backend (epsonds) drives the ES-50 over USB with no
-# extra Epson driver install; "apple" (ImageCaptureCore) would need Epson's
-# ICA driver package.
-SCANNER_DRIVER = "sane"
+# macOS: NAPS2's bundled SANE backend (epsonds) drives the ES-50 over USB with
+# no extra Epson driver install ("apple"/ImageCaptureCore would need Epson's
+# ICA driver package). Windows: WIA works with the standard Epson driver.
+SCANNER_DRIVER = "wia" if IS_WINDOWS else "sane"
 SCANNER_DEVICE = "ES-50"     # partial, case-insensitive device-name match
 SCAN_DPI = 300
 SCAN_TIMEOUT_SECONDS = 120   # give up on a scan after this long
 SCANS_DIR = "scans"          # BOL PDFs are stored here (path kept in the DB)
+
+# OCR: NAPS2's built-in Tesseract runs on every scanned/uploaded BOL so the
+# stored PDF gets a searchable text layer, from which BOL #, Vendor and PO #
+# are auto-extracted (see bol_extract.py). Requires the one-time language
+# component download: `NAPS2 console --install ocr-eng` (macOS) or
+# `NAPS2.Console.exe --install ocr-eng` (Windows); the app also attempts this
+# automatically at startup. If OCR is unavailable the scan flow still works,
+# fields just aren't prefilled.
+OCR_ENABLED = True
+OCR_LANG = "eng"
 
 # ---------------------------------------------------------------------------
 # Local database (SQLite)
@@ -111,6 +132,7 @@ SHIPMENT_FIELDS = [
     {"key": "building_number", "label": "Building #", "type": "buttons",
      "options": BUILDING_OPTIONS, "scope": "shipment"},
     {"key": "bol_number",      "label": "BOL Number", "type": "text",   "scope": "shipment"},
+    {"key": "po_number",       "label": "PO Number",  "type": "text",   "scope": "shipment"},
     {"key": "vendor",          "label": "Vendor",     "type": "select", "scope": "shipment"},
 ]
 ITEM_FIELDS = [
