@@ -206,6 +206,7 @@ async function openMode(mode, opts = {}) {
     await loadVendors();
     renderTypeButtons();
     hide("checkin-form"); hide("arm-btn"); hide("finish-btn");
+    hide("item-form"); hide("shipment-notes");
     renderBolStage();
     await setServerMode("idle");
   } else if (mode === "checkout") {
@@ -545,7 +546,8 @@ function selectType(type, btn) {
 }
 
 function setShipmentFormDisabled(disabled) {
-  $("checkin-form").querySelectorAll("input, select, .btn-group button")
+  $("checkin-form")
+    .querySelectorAll("input, select, .btn-group button, .vendor-add-row button")
     .forEach((i) => { i.disabled = disabled; });
   document.querySelectorAll(".type-btn").forEach((b) => { b.disabled = disabled; });
 }
@@ -578,11 +580,17 @@ function buildField(f, idPrefix) {
   } else if (f.type === "select") {
     const select = document.createElement("select");
     select.id = `${idPrefix}${f.key}`;
-    const opts = f.key === "vendor" ? state.vendors : (f.options || []);
-    select.innerHTML = `<option value=""></option>` +
-      (opts || []).map((o) =>
-        `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
-    field.appendChild(select);
+    if (f.key === "vendor") {
+      select.innerHTML = vendorOptionsHtml("");
+      field.appendChild(select);
+      wireVendorQuickAdd(field, select);
+    } else {
+      const opts = f.options || [];
+      select.innerHTML = `<option value=""></option>` +
+        opts.map((o) =>
+          `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
+      field.appendChild(select);
+    }
   } else if (f.type === "number") {
     const input = document.createElement("input");
     input.type = "number";
@@ -605,6 +613,80 @@ function getFieldValue(key, prefix) {
   if (!el) return "";
   if (el.classList && el.classList.contains("btn-group")) return el.dataset.value || "";
   return (el.value || "").trim();
+}
+
+// -- vendor quick add -----------------------------------------------------------
+const ADD_VENDOR_VALUE = "__add_vendor__";
+
+function vendorOptionsHtml(selected) {
+  return `<option value=""></option>` +
+    (state.vendors || []).map((v) =>
+      `<option value="${escapeHtml(v)}"${v === selected ? " selected" : ""}>` +
+      `${escapeHtml(v)}</option>`).join("") +
+    `<option value="${ADD_VENDOR_VALUE}">+ Add new vendor\u2026</option>`;
+}
+
+// Last entry of the vendor dropdown swaps in an inline name row; saving posts
+// the vendor (no PIN — same trust level as check-in) and re-selects it.
+function wireVendorQuickAdd(field, select) {
+  const addRow = document.createElement("div");
+  addRow.className = "vendor-add-row hidden";
+  addRow.innerHTML = `
+    <input type="text" class="vendor-add-name" maxlength="80"
+      placeholder="New vendor name" />
+    <button type="button" class="primary-btn vendor-add-save">Save</button>
+    <button type="button" class="vendor-add-cancel">Cancel</button>`;
+  field.appendChild(addRow);
+
+  const nameInput = addRow.querySelector(".vendor-add-name");
+  const saveBtn = addRow.querySelector(".vendor-add-save");
+  let prev = "";
+
+  const closeRow = () => {
+    addRow.classList.add("hidden");
+    nameInput.value = "";
+  };
+  select.onchange = () => {
+    if (select.value === ADD_VENDOR_VALUE) {
+      // Keep the select's real value clean while the name row is open.
+      select.value = prev;
+      addRow.classList.remove("hidden");
+      nameInput.focus();
+    } else {
+      prev = select.value;
+    }
+  };
+  addRow.querySelector(".vendor-add-cancel").onclick = closeRow;
+
+  const save = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { nameInput.focus(); return; }
+    saveBtn.disabled = true;
+    try {
+      const res = await fetch("/api/vendors", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        state.vendors = data.vendors || state.vendors;
+        select.innerHTML = vendorOptionsHtml(name);
+        prev = select.value;
+        logActivity(data.message || `Vendor '${name}' added`, "ok");
+        closeRow();
+      } else {
+        logActivity(data.message || "Could not add vendor", "err");
+      }
+    } catch (e) {
+      logActivity("Cannot reach server", "err");
+    }
+    saveBtn.disabled = false;
+  };
+  saveBtn.onclick = save;
+  nameInput.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    if (e.key === "Escape") closeRow();
+  };
 }
 
 function renderShipmentForm(type) {
@@ -698,6 +780,7 @@ async function armCheckin() {
     hide("arm-btn"); show("finish-btn"); show("item-form");
     await postItemFields();
     showScanner(`Receiving ${state.selectedType} \u2014 fill unit details, then pull the trigger`);
+    await showShipmentNotes();
   }
 }
 
@@ -706,6 +789,95 @@ async function finishCheckin() {
   state.shipment = null;
   setShipmentFormDisabled(false);
   show("arm-btn"); hide("finish-btn"); hide("item-form"); hide("scanner");
+  hide("shipment-notes");
+}
+
+// -- shipment notes (check-in panel) -------------------------------------------
+// Notes attach to the armed shipment's identifying triple. The panel lives
+// under the per-unit form and stays up for the whole shipment.
+function shipmentNoteTriple() {
+  const s = state.shipment;
+  return {
+    item_type: s.type,
+    bol_number: s.fields.bol_number || "",
+    building: s.fields.building_number || "",
+  };
+}
+
+async function fetchNotes(params) {
+  const q = new URLSearchParams(params);
+  try {
+    return (await (await fetch(`/api/notes?${q.toString()}`)).json()).notes || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// One <li> per note; `context` adds the note's own BOL/building (used in the
+// warehouse block, where a row can span several shipments).
+function noteItemHtml(n, editing, context = false) {
+  const del = editing
+    ? ` <button class="note-del-btn" data-id="${n.id}" title="Delete this note">&times;</button>`
+    : "";
+  const where = context
+    ? `<span class="note-where">BOL ${escapeHtml(n.bol_number || "n/a")}
+         \u00b7 Bldg ${escapeHtml(n.building || "n/a")}</span>`
+    : "";
+  return `<li class="note-item">
+      <span class="note-ts">${escapeHtml(fmtDateTime(n.ts))}</span>${where}
+      <span class="note-text">${escapeHtml(n.text)}</span>${del}
+    </li>`;
+}
+
+async function showShipmentNotes() {
+  if (!state.shipment) { hide("shipment-notes"); return; }
+  show("shipment-notes");
+  $("shipment-notes").innerHTML =
+    `<h3>Shipment notes</h3><p class="hint">Loading\u2026</p>`;
+  renderShipmentNotesPanel(await fetchNotes(shipmentNoteTriple()));
+}
+
+function renderShipmentNotesPanel(notes) {
+  const panel = $("shipment-notes");
+  if (!state.shipment) return;
+  const list = notes.length
+    ? `<ul class="note-list">${notes.map((n) => noteItemHtml(n, false)).join("")}</ul>`
+    : `<p class="hint">No notes yet for this shipment.</p>`;
+  panel.innerHTML = `
+    <h3>Shipment notes</h3>
+    ${list}
+    <div class="note-add">
+      <textarea id="shipment-note-text" rows="2"
+        placeholder="e.g. 2 boxes arrived damaged \u2014 refused"></textarea>
+      <button id="shipment-note-add" class="primary-btn note-add-btn">Add note</button>
+    </div>`;
+  const ta = $("shipment-note-text");
+  const btn = $("shipment-note-add");
+  const submit = async () => {
+    const text = ta.value.trim();
+    if (!text || !state.shipment) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/notes", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...shipmentNoteTriple(), text }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        logActivity("Note added to shipment", "ok");
+        renderShipmentNotesPanel(await fetchNotes(shipmentNoteTriple()));
+        return;
+      }
+      logActivity(data.message || "Could not add note", "err");
+    } catch (e) {
+      logActivity("Cannot reach server", "err");
+    }
+    btn.disabled = false;
+  };
+  btn.onclick = submit;
+  ta.onkeydown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  };
 }
 
 function onCheckinResult(msg) {
@@ -1241,13 +1413,17 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   const pdfBtn = groupBy === "bol" && g.bol_doc_id
     ? ` <button class="bol-pdf-btn" title="View the scanned bill of lading">BOL PDF</button>`
     : "";
+  const noteBadge = g.note_count
+    ? ` <span class="note-count" title="${g.note_count} note(s) on this group \u2014 expand to read">
+         ${g.note_count} note${g.note_count === 1 ? "" : "s"}</span>`
+    : "";
   row.innerHTML = `
     <td>${g.qty}</td>
     <td><span class="wh-caret">&#9656;</span> ${escapeHtml(g.value || "(blank)")}</td>
     <td>${otherValuesHtml(g)}</td>
     <td>${escapeHtml(fmtDateTime(g.received_at) || g.received || "")}</td>
     <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span></td>
-    <td class="wh-count">${boxes} box(es)${pdfBtn}${deleteBtn}</td>`;
+    <td class="wh-count">${boxes} box(es)${noteBadge}${pdfBtn}${deleteBtn}</td>`;
   const pdfLink = row.querySelector(".bol-pdf-btn");
   if (pdfLink) {
     pdfLink.onclick = (ev) => {
@@ -1277,7 +1453,7 @@ function addGroupRows(tbody, itemType, groupBy, g) {
       detail.classList.contains("hidden") ? "&#9656;" : "&#9662;";
     if (!loaded && !detail.classList.contains("hidden")) {
       loaded = true;
-      await loadGroupTags(cell, itemType, groupBy, g.value);
+      await loadGroupTags(cell, itemType, groupBy, g.value, g);
     }
   };
 
@@ -1303,25 +1479,32 @@ async function deleteGroup(itemType, groupBy, g, boxes) {
   }
 }
 
-async function loadGroupTags(cell, itemType, groupBy, value) {
+async function loadGroupTags(cell, itemType, groupBy, value, groupInfo) {
   try {
     const q = whFilterParams(new URLSearchParams(
       { item_type: itemType, group_by: groupBy, value: value || "" }));
-    const data = await (await fetch(`/api/inventory/group?${q.toString()}`)).json();
-    if (!data.tags || !data.tags.length) {
-      cell.innerHTML = `<p class="hint">No units.</p>`;
-      return;
-    }
+    const [data, notes] = await Promise.all([
+      fetch(`/api/inventory/group?${q.toString()}`).then((r) => r.json()),
+      fetchNotes(groupNoteParams(itemType, groupBy, value)),
+    ]);
     const editing = isEditing();
-    const otherLabel = groupBy === "building" ? "BOL #" : "Building #";
-    const rows = data.tags.map((tag) =>
-      tagRowHtml(tag, itemType, editing, groupBy)).join("");
-    cell.innerHTML = `<table class="wh-tag-table">
-      <thead><tr><th>EPC</th><th>${escapeHtml(otherLabel)}</th><th>SKU</th>
-        <th>Qty</th><th>Mfc date</th>
-        <th>Checked in</th><th>Checked out</th><th>Checked out to</th>
-        <th>Status</th><th></th></tr></thead>
-      <tbody>${rows}</tbody></table>`;
+    let tableHtml;
+    if (!data.tags || !data.tags.length) {
+      tableHtml = `<p class="hint">No units.</p>`;
+    } else {
+      const otherLabel = groupBy === "building" ? "BOL #" : "Building #";
+      const rows = data.tags.map((tag) =>
+        tagRowHtml(tag, itemType, editing, groupBy)).join("");
+      tableHtml = `<table class="wh-tag-table">
+        <thead><tr><th>EPC</th><th>${escapeHtml(otherLabel)}</th><th>SKU</th>
+          <th>Qty</th><th>Mfc date</th>
+          <th>Checked in</th><th>Checked out</th><th>Checked out to</th>
+          <th>Status</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+    cell.innerHTML = `<div class="group-notes"></div>${tableHtml}`;
+    renderGroupNotes(cell.querySelector(".group-notes"),
+                     itemType, groupBy, value, groupInfo, notes);
     cell.querySelectorAll(".find-btn").forEach((b) => {
       b.onclick = (ev) => { ev.stopPropagation(); openFinder(b.dataset.epc, b.dataset.label); };
     });
@@ -1335,6 +1518,87 @@ async function loadGroupTags(cell, itemType, groupBy, value) {
   } catch (e) {
     cell.innerHTML = `<p class="hint">Could not load units.</p>`;
   }
+}
+
+// -- warehouse group notes -----------------------------------------------------
+// List params: only the row's grouped dimension (a BOL row spans buildings and
+// vice versa, and all of its notes should be readable from it).
+function groupNoteParams(itemType, groupBy, value) {
+  const p = { item_type: itemType };
+  if (groupBy === "building") p.building = value || "";
+  else p.bol_number = value || "";
+  return p;
+}
+
+// Add body: pin down the other dimension too when the group only spans one
+// value of it (the common case), so the note also shows up at check-in.
+function groupNoteAddBody(itemType, groupBy, value, groupInfo) {
+  const others = (groupInfo && groupInfo.other_values) || [];
+  const other = others.length === 1 ? String(others[0]) : "";
+  return groupBy === "building"
+    ? { item_type: itemType, building: value || "", bol_number: other }
+    : { item_type: itemType, bol_number: value || "", building: other };
+}
+
+function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes) {
+  if (!container) return;
+  const editing = isEditing();
+  const list = notes.length
+    ? `<ul class="note-list">${notes.map((n) => noteItemHtml(n, editing, true)).join("")}</ul>`
+    : `<p class="hint">No notes for this shipment yet.</p>`;
+  container.innerHTML = `
+    <div class="group-notes-head">Notes</div>
+    ${list}
+    <div class="note-add">
+      <textarea rows="2" class="group-note-text"
+        placeholder="Add a note about this shipment\u2026"></textarea>
+      <button class="primary-btn note-add-btn group-note-add">Add note</button>
+    </div>`;
+  const ta = container.querySelector(".group-note-text");
+  const btn = container.querySelector(".group-note-add");
+  const reload = async () => {
+    renderGroupNotes(container, itemType, groupBy, value, groupInfo,
+                     await fetchNotes(groupNoteParams(itemType, groupBy, value)));
+  };
+  const submit = async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/notes", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          { ...groupNoteAddBody(itemType, groupBy, value, groupInfo), text }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        logActivity("Note added to shipment", "ok");
+        await reload();
+        return;
+      }
+      logActivity(data.message || "Could not add note", "err");
+    } catch (e) {
+      logActivity("Cannot reach server", "err");
+    }
+    btn.disabled = false;
+  };
+  btn.onclick = submit;
+  ta.onkeydown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  };
+  container.querySelectorAll(".note-del-btn").forEach((b) => {
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const data = await adminPost("/api/admin/note/delete",
+        { id: parseInt(b.dataset.id, 10) });
+      if (data && data.ok) {
+        logActivity("Note deleted", "warn");
+        await reload();
+      } else if (data) {
+        logActivity(data.message || "Could not delete note", "err");
+      }
+    };
+  });
 }
 
 function tagRowHtml(tag, itemType, editing, groupBy) {
@@ -1532,6 +1796,8 @@ const EVENT_LABELS = {
   VENDOR_DEL: { label: "Vendor removed", cls: "badge-out" },
   BOL_SCAN: { label: "BOL scanned", cls: "badge-in" },
   BOL_RENAME: { label: "BOL renamed", cls: "badge-partial" },
+  NOTE: { label: "Note added", cls: "badge-in" },
+  NOTE_DEL: { label: "Note deleted", cls: "badge-out" },
 };
 
 let eventSearchTimer = null;

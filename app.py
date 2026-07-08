@@ -288,6 +288,57 @@ async def get_vendors():
     return {"vendors": vendors}
 
 
+class VendorRequest(BaseModel):
+    name: str
+
+
+@app.post("/api/vendors")
+async def add_vendor(req: VendorRequest):
+    """Add a vendor from the check-in form (not PIN-gated: adding a missing
+    vendor is a check-in-desk action; removal stays admin-only)."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, state.db.add_vendor, req.name)
+
+
+# ---------------------------------------------------------------------------
+# Shipment notes
+# ---------------------------------------------------------------------------
+class NoteRequest(BaseModel):
+    item_type: str
+    bol_number: str = ""
+    building: str = ""
+    text: str
+
+
+@app.get("/api/notes")
+async def get_notes(item_type: str, bol_number: Optional[str] = None,
+                    building: Optional[str] = None):
+    """Notes for a shipment. Check-in passes the exact triple; a warehouse row
+    passes just its grouped dimension. Omitted params don't filter."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    notes = await loop.run_in_executor(
+        None, state.db.list_notes, item_type, bol_number, building)
+    return {"notes": notes}
+
+
+@app.post("/api/notes")
+async def add_note(req: NoteRequest):
+    """Attach a note to a shipment (not PIN-gated, same trust as check-in)."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, state.db.add_note, req.item_type, req.bol_number, req.building,
+        req.text)
+
+
 @app.get("/api/inventory/group")
 async def get_inventory_group(item_type: str, value: str = "", group_by: str = "bol",
                               bol: str = "", building: str = "",
@@ -604,6 +655,21 @@ async def admin_clear_flag(req: AdminEpcRequest):
         return bad
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, state.db.clear_flag, req.epc)
+
+
+class AdminNoteDeleteRequest(BaseModel):
+    pin: Optional[str] = None
+    id: int
+
+
+@app.post("/api/admin/note/delete")
+async def admin_delete_note(req: AdminNoteDeleteRequest):
+    """Remove a shipment note (typo fix, admin edit mode only)."""
+    bad = _check_pin(req.pin) or _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, state.db.delete_note, req.id)
 
 
 class AdminGroupDeleteRequest(BaseModel):

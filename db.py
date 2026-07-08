@@ -129,6 +129,16 @@ class Database:
                     pages      INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS notes (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts         TEXT NOT NULL,
+                    item_type  TEXT NOT NULL,
+                    bol_number TEXT NOT NULL DEFAULT '',
+                    building   TEXT NOT NULL DEFAULT '',
+                    text       TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_notes_group
+                    ON notes (item_type, bol_number, building);
                 CREATE INDEX IF NOT EXISTS idx_tags_group
                     ON tags (item_type, bol_number, building);
                 CREATE INDEX IF NOT EXISTS idx_tags_status ON tags (status);
@@ -426,6 +436,75 @@ class Database:
                 "UPDATE bol_docs SET pages=? WHERE id=?", (pages, doc_id))
             self._conn.commit()
 
+    # -- shipment notes --------------------------------------------------------
+    # A shipment has no row of its own (it's an aggregation over tags), so notes
+    # key on the same triple that identifies it: (item_type, bol_number,
+    # building). Append-only: each note keeps its own timestamp.
+    @staticmethod
+    def _note_dict(row):
+        return {"id": row["id"], "ts": row["ts"], "item_type": row["item_type"],
+                "bol_number": row["bol_number"], "building": row["building"],
+                "text": row["text"]}
+
+    def add_note(self, item_type, bol_number, building, text):
+        """Attach a timestamped note to a shipment and log a NOTE event."""
+        text = (text or "").strip()
+        item_type = (item_type or "").strip()
+        if not text:
+            return {"ok": False, "message": "Note text is required."}
+        if not item_type:
+            return {"ok": False, "message": "An item type is required."}
+        bol_number = (bol_number or "").strip()
+        building = (building or "").strip()
+        ts = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO notes (ts, item_type, bol_number, building, text) "
+                "VALUES (?,?,?,?,?)",
+                (ts, item_type, bol_number, building, text))
+            note_id = cur.lastrowid
+            detail = text if len(text) <= 200 else text[:197] + "..."
+            self._log("NOTE", "", item_type, bol_number, building,
+                      detail=detail)
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+        return {"ok": True, "message": "Note added.",
+                "note": self._note_dict(row)}
+
+    def list_notes(self, item_type, bol_number=None, building=None):
+        """Notes for a shipment, oldest first.
+
+        Check-in passes the exact triple; a warehouse row passes only its
+        grouped dimension (a BOL row can span buildings and vice versa).
+        None skips a filter; '' matches shipments recorded with a blank value.
+        """
+        where, params = ["item_type = ?"], [item_type]
+        if bol_number is not None:
+            where.append("bol_number = ?")
+            params.append(bol_number)
+        if building is not None:
+            where.append("building = ?")
+            params.append(building)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM notes WHERE " + " AND ".join(where) +
+                " ORDER BY id", params).fetchall()
+        return [self._note_dict(r) for r in rows]
+
+    def delete_note(self, note_id):
+        """Admin: remove a note (typo fix). Logs a NOTE_DEL event."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"Note {note_id} not found."}
+            self._conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
+            self._log("NOTE_DEL", "", row["item_type"], row["bol_number"],
+                      row["building"], detail=row["text"][:200])
+            self._conn.commit()
+        return {"ok": True, "message": "Note deleted."}
+
     def lookup_for_checkout(self, epc):
         """Check Out step 1: look up a box for the two-step confirm UI.
 
@@ -663,6 +742,12 @@ class Database:
                 """,
                 params,
             ).fetchall()
+            note_rows = self._conn.execute(
+                f"SELECT item_type, {gcol} AS gval, COUNT(*) AS n "
+                "FROM notes GROUP BY item_type, gval").fetchall()
+
+        note_counts = {(r["item_type"], r["gval"] or ""): r["n"]
+                       for r in note_rows}
 
         # SQL groups by (type, group, other) so the sub-rows are merged here,
         # accumulating the distinct other-dimension values along the way.
@@ -676,6 +761,7 @@ class Database:
             if g is None:
                 g = {"value": r["gval"] or "", "in_wh": 0, "capacity": 0,
                      "boxes": 0, "received_at": "", "bol_doc_id": None,
+                     "note_count": note_counts.get(key, 0),
                      "_others": set()}
                 groups[key] = g
                 t["groups"].append(g)
@@ -795,6 +881,7 @@ class Database:
                 "SELECT filename FROM bol_docs").fetchall()]
             self._conn.execute("DELETE FROM tags")
             self._conn.execute("DELETE FROM bol_docs")
+            self._conn.execute("DELETE FROM notes")
             self._log("CLEAR", "", detail=(f"cleared {removed} tag(s), "
                                            f"{len(doc_files)} BOL document(s)"))
             self._conn.commit()

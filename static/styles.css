@@ -845,6 +845,109 @@ table.event-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .modal-actions .primary-btn { width: auto; flex: 1; }
 .modal-actions .back-btn { flex: 1; padding: 12px; font-size: 15px; }
 
+/* ---- Shipment notes (check-in panel + warehouse drill-down) ---- */
+.shipment-notes {
+  margin-top: 18px;
+  padding: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.shipment-notes h3 { margin: 0 0 10px; font-size: 15px; color: var(--muted); }
+
+.group-notes {
+  margin: 4px 0 14px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.group-notes-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+
+.note-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.note-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.note-item:last-child { border-bottom: none; }
+.note-ts { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.note-where { color: var(--accent); font-size: 12px; white-space: nowrap; }
+.note-text { flex: 1; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+.note-del-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--red);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.note-del-btn:hover { border-color: var(--red); }
+
+.note-add { display: flex; gap: 10px; align-items: flex-end; }
+.note-add textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 44px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.note-add textarea:focus { outline: none; border-color: var(--accent); }
+.note-add-btn { width: auto; padding: 10px 16px; font-size: 14px; }
+
+.note-count {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(245, 166, 35, 0.15);
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ---- Inline "add new vendor" row under the vendor dropdown ---- */
+.vendor-add-row { display: flex; gap: 8px; margin-top: 8px; }
+.vendor-add-row .vendor-add-name {
+  flex: 1;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+}
+.vendor-add-row .vendor-add-name:focus { outline: none; border-color: var(--accent); }
+.vendor-add-row .primary-btn { width: auto; padding: 10px 16px; font-size: 14px; }
+.vendor-add-row .vendor-add-cancel {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 10px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.vendor-add-row .vendor-add-cancel:hover { color: var(--text); border-color: var(--accent); }
+
 /* Print-to-PDF export: hidden on screen, the only thing visible when printing */
 .print-area { display: none; }
 
