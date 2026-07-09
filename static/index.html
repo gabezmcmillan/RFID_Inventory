@@ -3,15 +3,34 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RFID Inventory</title>
+  <title>RFID Inventory &mdash; Brasfield &amp; Gorrie</title>
+  <link rel="icon" type="image/png" href="/brand/bg-symbol-navy.png" />
+  <link rel="stylesheet" href="/brand/bg-theme.css" />
   <link rel="stylesheet" href="/styles.css" />
+  <script>
+    // Apply the saved theme before first paint to avoid a light-mode flash.
+    try {
+      var t = localStorage.getItem("rfid-theme");
+      if (t === "dark" || (!t && window.matchMedia &&
+          matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <header class="topbar">
-    <h1>RFID Inventory</h1>
-    <div class="status-pills">
-      <span id="reader-pill" class="pill pill-off">Reader</span>
-      <span id="sheets-pill" class="pill pill-off">Sheets</span>
+    <div class="brand">
+      <img src="/brand/bg-logo-horizontal-white.png" alt="Brasfield &amp; Gorrie" class="brand-logo" />
+      <h1 class="brand-app">RFID Inventory</h1>
+    </div>
+    <div class="topbar-actions">
+      <div class="status-pills">
+        <span id="reader-pill" class="pill pill-off">Reader</span>
+        <span id="db-pill" class="pill pill-off">Database</span>
+      </div>
+      <button id="theme-toggle" class="theme-toggle" type="button"
+              aria-label="Switch to dark mode">&#x263E; Dark</button>
     </div>
   </header>
 
@@ -30,8 +49,28 @@
       </button>
       <button class="mode-card" data-mode="inventory">
         <span class="mode-icon">&#x21BB;</span>
-        <span class="mode-title">Inventory</span>
-        <span class="mode-sub">Sweep &amp; count</span>
+        <span class="mode-title">Sweep &amp; Count</span>
+        <span class="mode-sub">Live tag count</span>
+      </button>
+      <button class="mode-card" data-mode="warehouse">
+        <span class="mode-icon">&#x1F4E6;</span>
+        <span class="mode-title">Warehouse</span>
+        <span class="mode-sub">Browse &amp; find items</span>
+      </button>
+      <button class="mode-card" data-mode="boldocs">
+        <span class="mode-icon">&#x1F4C4;</span>
+        <span class="mode-title">BOL Documents</span>
+        <span class="mode-sub">All scanned bills of lading</span>
+      </button>
+      <button class="mode-card" data-mode="eventlog">
+        <span class="mode-icon">&#x1F4DC;</span>
+        <span class="mode-title">Event Log</span>
+        <span class="mode-sub">Browse &amp; filter activity</span>
+      </button>
+      <button class="mode-card" data-mode="admin">
+        <span class="mode-icon">&#x1F510;</span>
+        <span class="mode-title">Admin</span>
+        <span class="mode-sub">Edit &amp; clear records</span>
       </button>
     </section>
 
@@ -44,23 +83,178 @@
 
       <!-- Check In (receive shipment) -->
       <div id="checkin-view" class="view hidden">
-        <div class="field">
-          <label>Item type</label>
-          <div id="type-buttons" class="type-buttons"></div>
+        <!-- Step 1: capture the truckload's bill of lading -->
+        <div id="bol-gate">
+          <p class="hint">Truck arrived? Insert the bill of lading into the
+            scanner, then press Scan. Every box received will be filed under
+            that document.</p>
+          <button id="bol-scan-btn" class="primary-btn bol-scan-btn">Scan Bill of Lading</button>
+          <div class="bol-alt-row">
+            <button id="bol-upload-btn" class="back-btn">Upload a PDF instead</button>
+            <button id="bol-manual-btn" class="back-btn">No document &mdash; enter BOL # manually</button>
+          </div>
+          <input id="bol-upload-input" type="file" accept=".pdf,application/pdf" class="hidden" />
+          <div id="bol-recent" class="bol-recent"></div>
         </div>
-        <form id="checkin-form" class="form hidden"></form>
-        <button id="arm-btn" class="primary-btn hidden">Start receiving shipment</button>
-        <button id="finish-btn" class="back-btn hidden">Finish / change shipment</button>
+
+        <!-- Active truckload banner (scanned/uploaded doc, or manual mode) -->
+        <div id="bol-banner" class="bol-banner hidden"></div>
+
+        <!-- Step 2: receive shipments under the active BOL -->
+        <div id="checkin-main" class="hidden">
+          <div class="field">
+            <label>Item type</label>
+            <div id="type-buttons" class="type-buttons"></div>
+          </div>
+          <form id="checkin-form" class="form hidden"></form>
+          <button id="arm-btn" class="primary-btn hidden">Start receiving shipment</button>
+          <button id="finish-btn" class="back-btn hidden">Finish / change shipment</button>
+
+          <!-- Per-unit fields, filled before each trigger pull -->
+          <form id="item-form" class="form item-form hidden">
+            <p class="hint">Fill in this unit's details, then pull the trigger to tag it.</p>
+          </form>
+
+          <!-- Shipment notes (visible while a shipment is armed) -->
+          <div id="shipment-notes" class="shipment-notes hidden"></div>
+        </div>
       </div>
 
       <!-- Check Out (deliver to site) -->
       <div id="checkout-view" class="view hidden">
-        <p class="hint">Point the reader at a tag and pull the trigger to deliver it to site.</p>
+        <p class="hint">Point the reader at a tag and pull the trigger to deliver it to site.
+          Scan the same tag a second time (or press Confirm delivery) to finalize.</p>
       </div>
 
-      <!-- Inventory -->
+      <!-- Inventory sweep -->
       <div id="inventory-view" class="view hidden">
-        <p class="hint">Hold the trigger and sweep over the items. Release to count.</p>
+        <p class="hint">Hold the trigger and sweep over the items. Release to count.
+          Keep sweeping to cover the whole warehouse &mdash; scans accumulate until you reset.</p>
+        <div class="sweep-session-bar">
+          <span id="sweep-session-status" class="hint">No tags scanned yet this session.</span>
+          <button id="sweep-reset" class="back-btn">Reset sweep</button>
+        </div>
+      </div>
+
+      <!-- Admin -->
+      <div id="admin-view" class="view hidden">
+        <div id="admin-locked" class="admin-lock">
+          <p class="hint">Enter the admin PIN to manage records.</p>
+          <div class="dev-row">
+            <input id="admin-pin" type="password" placeholder="Admin PIN" />
+            <button id="admin-unlock" class="primary-btn">Unlock</button>
+          </div>
+        </div>
+        <div id="admin-panel" class="hidden">
+          <div class="admin-actions">
+            <button id="admin-edit-records" class="primary-btn">Edit warehouse records</button>
+            <button id="admin-clear" class="danger-btn">Clear database</button>
+            <button id="admin-lock-btn" class="back-btn">Lock</button>
+          </div>
+          <p class="hint">Edit mode lets you open any group and change a unit's fields,
+            fix its status, or clear a warning flag. Changes save immediately.</p>
+          <div class="admin-vendors">
+            <h3>Vendors</h3>
+            <p class="hint">These options appear in the check-in Vendor dropdown.</p>
+            <div id="admin-vendor-list" class="vendor-list"></div>
+            <div class="dev-row">
+              <input id="admin-vendor-name" type="text" placeholder="New vendor name" />
+              <button id="admin-vendor-add" class="primary-btn">Add</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Warehouse browse / drill-down -->
+      <div id="warehouse-view" class="view hidden">
+        <div id="wh-edit-banner" class="edit-banner hidden">
+          Edit mode is ON &mdash; you can edit units and clear flags. Changes save immediately.
+        </div>
+        <div class="wh-controls">
+          <span class="wh-controls-label">Group by</span>
+          <div class="seg">
+            <button class="seg-btn active" data-group="bol">BOL #</button>
+            <button class="seg-btn" data-group="building">Building #</button>
+          </div>
+          <button id="wh-refresh" class="back-btn">Refresh</button>
+          <span class="wh-controls-spacer"></span>
+          <button id="wh-export-csv" class="back-btn">Export CSV</button>
+          <button id="wh-export-pdf" class="back-btn">Export PDF</button>
+        </div>
+        <div class="wh-filters">
+          <div class="wh-filter">
+            <label for="whf-bol">BOL #</label>
+            <input id="whf-bol" type="text" placeholder="Full or partial" />
+          </div>
+          <div class="wh-filter">
+            <label for="whf-building">Building #</label>
+            <select id="whf-building"><option value="">All</option></select>
+          </div>
+          <div class="wh-filter">
+            <label for="whf-recv-from">Received</label>
+            <div class="wh-date-range">
+              <input id="whf-recv-from" type="date" title="Received from" />
+              <span>&ndash;</span>
+              <input id="whf-recv-to" type="date" title="Received to" />
+            </div>
+          </div>
+          <div class="wh-filter">
+            <label for="whf-out-from">Checked out</label>
+            <div class="wh-date-range">
+              <input id="whf-out-from" type="date" title="Checked out from" />
+              <span>&ndash;</span>
+              <input id="whf-out-to" type="date" title="Checked out to" />
+            </div>
+          </div>
+          <button id="whf-clear" class="back-btn">Clear filters</button>
+        </div>
+        <div id="warehouse-tree" class="wh-tree"></div>
+      </div>
+
+      <!-- BOL Documents -->
+      <div id="boldocs-view" class="view hidden">
+        <div class="wh-controls">
+          <span class="hint bol-docs-hint">Every scanned or uploaded bill of lading,
+            newest first. Renaming fixes the BOL number everywhere, including
+            boxes already checked in. Deleting removes the PDF but leaves the
+            boxes untouched.</span>
+          <span class="wh-controls-spacer"></span>
+          <button id="bol-docs-refresh" class="back-btn">Refresh</button>
+        </div>
+        <div id="bol-docs-list" class="bol-docs-list"></div>
+      </div>
+
+      <!-- Event Log -->
+      <div id="eventlog-view" class="view hidden">
+        <div class="wh-controls">
+          <span class="wh-controls-label">Filter</span>
+          <div class="seg" id="event-filter">
+            <button class="seg-btn active" data-filter="all">All events</button>
+            <button class="seg-btn" data-filter="checkin">Check-In</button>
+            <button class="seg-btn" data-filter="checkout">Check-Out</button>
+            <button class="seg-btn" data-filter="scan">Scans</button>
+          </div>
+          <button id="event-refresh" class="back-btn">Refresh</button>
+        </div>
+        <div class="dev-row event-search">
+          <input id="event-epc" type="text" placeholder="Search by EPC (full or partial)" />
+          <button id="event-epc-clear" class="back-btn">Clear</button>
+        </div>
+        <div id="event-log-list" class="event-log"></div>
+      </div>
+
+      <!-- Finder -->
+      <div id="finder-view" class="view hidden">
+        <div id="finder-target" class="finder-target"></div>
+        <div class="finder-stage">
+          <div class="finder-bar"><div class="finder-bar-fill" id="finder-bar-fill"></div></div>
+        </div>
+        <div class="finder-readout">
+          <span id="finder-strength">No signal yet</span>
+          <span id="finder-rssi" class="hint"></span>
+        </div>
+        <p class="hint">Hold the trigger and sweep slowly. The bar rises and the tone climbs as you home in.</p>
+        <button id="finder-stop" class="back-btn">Stop finding</button>
       </div>
 
       <!-- Reader power (check-in / check-out only) -->
@@ -88,6 +282,7 @@
     <!-- Activity log -->
     <section class="log-section">
       <h3>Activity</h3>
+      <div id="reader-status-detail" class="reader-status-detail">Reader last connected: &mdash; &middot; last disconnected: &mdash;</div>
       <ul id="activity" class="activity"></ul>
     </section>
 
@@ -100,6 +295,18 @@
       </div>
     </details>
   </main>
+
+  <!-- Modal confirmation dialog (checkout scan-to-confirm warnings) -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="modal-title"></h3>
+      <div id="modal-body"></div>
+      <div id="modal-actions" class="modal-actions"></div>
+    </div>
+  </div>
+
+  <!-- Print-only container for the PDF export (filled just before printing) -->
+  <div id="print-area" class="print-area"></div>
 
   <script src="/app.js"></script>
 </body>

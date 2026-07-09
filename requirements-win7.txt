@@ -1,0 +1,18 @@
+# Windows 7 requirements — use with Python 3.8.10 (the last Python that
+# supports Windows 7; installer at python.org/downloads/release/python-3810/).
+#
+# These are the newest versions of each package that still support Python 3.8.
+# Note: uvicorn is installed WITHOUT the [standard] extra because httptools has
+# no py3.8 Windows wheel; websockets is pinned explicitly instead so the app's
+# live WebSocket updates still work.
+#
+# Install:  pip install -r requirements-win7.txt
+# Remember to set SERIAL_PORT in config.py to the Windows COM port (e.g. "COM3").
+
+pyserial==3.5
+fastapi==0.124.4
+uvicorn==0.33.0
+websockets==13.1
+pydantic==2.10.6
+# BOL OCR text extraction; 4.3.1 is the last pypdf that supports Python 3.8.
+pypdf==4.3.1

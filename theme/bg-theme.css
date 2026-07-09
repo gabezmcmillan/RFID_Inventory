@@ -1,0 +1,30 @@
+/* Brasfield & Gorrie Theme Pack (2026 Brand Update)
+   Drop this in and reference the CSS variables, e.g. color: var(--bg-navy);
+   Lead with navy + white; blues are accents, not fields. */
+
+:root {
+  /* ---- Core brand ---- */
+  --bg-navy:        #002070; /* Blue 4 — PRIMARY brand navy. Logo, headings, primary surfaces */
+  --bg-navy-dark:   #00143C; /* Blue 5 — deep backgrounds, footers, hero sections */
+  --bg-blue-vivid:  #0028F0; /* Blue 3 — signature accent on LIGHT only: links, one key CTA/figure */
+  --bg-blue-bright: #3888FF; /* Blue 2 — bright accent; links/accents on dark (large only), highlights */
+  --bg-blue-tint:   #B0FFFF; /* Blue 1 — pale cyan highlight on dark surfaces. Sparingly */
+
+  /* ---- Neutrals ---- */
+  --bg-white:       #FFFFFF; /* primary background */
+  --bg-gray:        #E8E8EC; /* Gray 1 — quiet section backgrounds, table stripes, dividers */
+  --bg-ink:         #11131A; /* near-black body text */
+  --bg-black:       #000000;
+
+  /* ---- Semantic roles ---- */
+  --bg-bg:          var(--bg-white);
+  --bg-surface:     var(--bg-gray);
+  --bg-text:        var(--bg-ink);
+  --bg-heading:     var(--bg-navy);
+  --bg-link:        var(--bg-blue-vivid);
+  --bg-cta:         var(--bg-blue-vivid);
+  --bg-footer:      var(--bg-navy-dark);
+
+  /* ---- Type ---- */
+  --bg-font: "Sharp Grotesk PE Book 20", Verdana, Arial, "Helvetica Neue", Helvetica, sans-serif;
+}

@@ -4,6 +4,9 @@ credentials.json
 # Local database
 *.db
 
+# Scanned bill-of-lading PDFs
+scans/
+
 # Python
 __pycache__/
 *.pyc
