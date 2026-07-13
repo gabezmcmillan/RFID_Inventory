@@ -63,6 +63,37 @@ python app.py
 
 Then open http://127.0.0.1:8000
 
+## Building the Windows app (.exe)
+
+The repo ships a PyInstaller setup that packages the whole app (server +
+browser UI) into a self-contained folder — no Python needed on the machine
+that runs it. PyInstaller cannot cross-compile, so the build itself must
+happen **on a Windows machine**:
+
+1. Install [Python 3.10+](https://www.python.org/downloads/windows/) with
+   **"Add python.exe to PATH"** checked.
+2. Copy this repo onto the machine and double-click `build-windows.bat`
+   (it installs the requirements + PyInstaller and runs the spec).
+3. The result is `dist\RFIDInventory\` — copy that whole folder anywhere
+   (e.g. `C:\RFIDInventory`) and make a desktop shortcut to
+   `RFIDInventory.exe`.
+
+Double-clicking the exe starts the server in a console window (closing the
+window stops the app) and opens the browser UI automatically.
+
+Notes for the machine that runs the exe:
+
+- `settings.ini` next to the exe holds the per-machine values (serial port,
+  admin PIN, web port). The default `serial_port = auto` finds the reader on
+  its own; pin it to e.g. `COM3` if needed (Device Manager > Ports).
+- `inventory.db` and `scans\` are created next to the exe on first run — back
+  up / migrate by copying them.
+- Still separate installs (not bundled): [NAPS2](https://www.naps2.com) and
+  the Epson ES-50 driver for BOL scanning. The RFID reader's USB-serial (FTDI)
+  driver installs itself via Windows Update on first plug-in.
+- The exe is unsigned, so the first launch may show a SmartScreen warning:
+  "More info" > "Run anyway".
+
 ## Database tables (auto-created)
 
 - `tags`: one row per physical EPC — item_type, BOL #, PO #, Building #,

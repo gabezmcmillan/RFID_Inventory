@@ -36,8 +36,36 @@ import threading
 from collections import Counter
 
 import serial
+from serial.tools import list_ports
 
 import config
+
+
+def resolve_port(configured):
+    """Turn config.SERIAL_PORT into a real device name.
+
+    Anything other than "auto" is used as-is. "auto" scans the system's serial
+    ports for the handheld: first a port whose name/description mentions the
+    TSL 1128 (the Indium is a rebadged 1128; macOS exposes it as
+    /dev/cu.usbserial-1128_...), else the first FTDI device (the USB-serial
+    chip inside it; on Windows it enumerates as a generic "USB Serial Port").
+    Raises SerialException when nothing matches, so the worker's reconnect
+    loop reports the miss and keeps retrying.
+    """
+    if configured and configured.lower() != "auto":
+        return configured
+    ports = list(list_ports.comports())
+    for p in ports:
+        text = " ".join(str(x) for x in (p.device, p.description, p.product) if x)
+        if "1128" in text:
+            return p.device
+    for p in ports:
+        if p.vid == 0x0403:  # FTDI's USB vendor ID
+            return p.device
+    raise serial.SerialException(
+        "no serial port looks like the RFID reader (no '1128' or FTDI device); "
+        "plug it in over USB, or set serial_port in settings.ini (e.g. COM3)")
+
 
 # Modes
 IDLE = "idle"
@@ -201,7 +229,10 @@ class ReaderWorker:
     def _run(self):
         while not self._stop.is_set():
             try:
-                self._ser = serial.Serial(self.port, self.baud, timeout=self.timeout)
+                # Resolve on every attempt so plugging the reader in (or into a
+                # different USB port) is picked up without a restart.
+                port = resolve_port(self.port)
+                self._ser = serial.Serial(port, self.baud, timeout=self.timeout)
                 time.sleep(0.2)
                 self._ser.reset_input_buffer()
                 self._ser.write(b".sa -aon\r\n")  # async switch-state notifications
@@ -222,7 +253,7 @@ class ReaderWorker:
                     self._pending_beep = (self._mode != FINDER)
                     self._pending_finder = True
                 self._emit({"event": "status", "connected": True,
-                            "message": f"Reader connected on {self.port}"})
+                            "message": f"Reader connected on {port}"})
                 self._read_loop()
             except serial.SerialException as exc:
                 self._connected = False

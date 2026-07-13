@@ -922,12 +922,24 @@ async def websocket_endpoint(ws: WebSocket):
 # ---------------------------------------------------------------------------
 @app.get("/")
 async def index():
-    return FileResponse("static/index.html")
+    return FileResponse(os.path.join(config.STATIC_DIR, "index.html"))
 
 
-app.mount("/", StaticFiles(directory="static"), name="static")
+app.mount("/", StaticFiles(directory=config.STATIC_DIR), name="static")
 
 
 if __name__ == "__main__":
+    import threading
+    import webbrowser
+
     import uvicorn
-    uvicorn.run("app:app", host=config.HOST, port=config.PORT, reload=False)
+
+    if config.FROZEN:
+        # Double-clicked .exe: pop the UI open once the server is up. (From
+        # source, developers open/reload the browser themselves.)
+        threading.Timer(
+            1.5, webbrowser.open, args=(f"http://{config.HOST}:{config.PORT}",)
+        ).start()
+    # Pass the app object, not the "app:app" import string: a frozen bundle
+    # can't re-import this module by name.
+    uvicorn.run(app, host=config.HOST, port=config.PORT)
