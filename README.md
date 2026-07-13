@@ -4,6 +4,12 @@ A local web app for the Vulcan RFID Indium (TSL ASCII 2.0) handheld reader. Pick
 a mode in the browser, drive scans with the reader's physical trigger, and have
 everything written to a local SQLite database (`inventory.db`).
 
+The app is **offline-first**: everything works with no internet at all. When a
+cloud URL is configured (see *Cloud site + sync* below), a background worker
+mirrors inventory to a small Azure-hosted site
+(`switch-warehouse.brasfieldgorrie.com`) where jobsite users can view stock and
+submit material requests that flow back into the app.
+
 ## Modes
 
 - **Check In** — a truckload starts by scanning its bill of lading on the
@@ -28,6 +34,10 @@ everything written to a local SQLite database (`inventory.db`).
 - **Find a Tag** — launched from the Warehouse drill-down. Hold the trigger and
   sweep; a pulse speeds up as you get closer to the chosen tag (uses the reader's
   per-read RSSI).
+- **Requests** — material requests submitted on the cloud site, pulled in by
+  the sync worker (the mode card shows a pending-count badge). Fulfill or
+  decline each one with an optional note; the requester sees the outcome on
+  the site after the next sync.
 
 ## Setup
 
@@ -84,8 +94,9 @@ window stops the app) and opens the browser UI automatically.
 Notes for the machine that runs the exe:
 
 - `settings.ini` next to the exe holds the per-machine values (serial port,
-  admin PIN, web port). The default `serial_port = auto` finds the reader on
-  its own; pin it to e.g. `COM3` if needed (Device Manager > Ports).
+  admin PIN, web port, and the cloud sync settings `cloud_url` /
+  `sync_token`). The default `serial_port = auto` finds the reader on its
+  own; pin it to e.g. `COM3` if needed (Device Manager > Ports).
 - `inventory.db` and `scans\` are created next to the exe on first run — back
   up / migrate by copying them.
 - Still separate installs (not bundled): [NAPS2](https://www.naps2.com) and
@@ -93,6 +104,34 @@ Notes for the machine that runs the exe:
   driver installs itself via Windows Update on first plug-in.
 - The exe is unsigned, so the first launch may show a SmartScreen warning:
   "More info" > "Run anyway".
+
+## Cloud site + sync (optional)
+
+The `cloud/` directory holds a second, lightweight FastAPI app meant for Azure
+App Service + Azure Database for PostgreSQL. It serves a **read-only inventory
+view** and a **material request form** for jobsite users; the warehouse app
+never needs to be reachable from the internet.
+
+- The exe's sync worker (`sync.py`) calls `POST {cloud_url}/sync/exchange`
+  every ~30 s (and on demand via the Sync pill / "Sync now"): it pushes a
+  snapshot of tags/vendors/notes/BOL metadata plus new audit events, and pulls
+  new material requests. All watermarks are row ids, so retries are safe and
+  losing WiFi mid-exchange never corrupts anything.
+- Offline is the normal case: the topbar Sync pill shows
+  "Sync offline · N pending" and everything keeps working; the backlog uploads
+  when connectivity returns. Without `cloud_url` configured the pill just
+  shows "Sync off".
+- To enable it, set in `settings.ini`:
+
+  ```ini
+  cloud_url = https://switch-warehouse.brasfieldgorrie.com
+  sync_token = <shared secret, same as the cloud app's SYNC_TOKEN>
+  ```
+
+- Running the cloud app locally (Docker Postgres), the end-to-end test
+  (`cloud/test_sync.py`), and the full Azure deployment walkthrough (App
+  Service, Postgres, custom domain, Entra ID sign-in with `/sync/exchange`
+  excluded) live in [cloud/README.md](cloud/README.md).
 
 ## Database tables (auto-created)
 
@@ -103,6 +142,9 @@ Notes for the machine that runs the exe:
 - `bol_docs`: one row per scanned/uploaded bill of lading (the PDF itself lives
   in `scans/`), including the OCR text and the extracted vendor/PO guesses.
 - `events`: append-only audit log of IN / OUT / COUNT / BOL_SCAN actions.
+- `requests`: material requests pulled from the cloud site plus the manager's
+  handling status (fulfilled / declined, note).
+- `sync_state`: key/value watermarks used by the sync worker.
 
 ## Configuration notes
 
@@ -115,7 +157,9 @@ Notes for the machine that runs the exe:
 
 - The reader's trigger drives scans: a single press runs `.iv`, and the app
   detects the end of a burst once the reader goes quiet (trigger released).
-- Reader and database status are shown as pills; the reader reconnects on its own.
+- Reader, database and cloud-sync status are shown as pills; the reader and
+  the sync worker both reconnect on their own (clicking the Sync pill forces
+  a sync).
 - "Test without hardware" (bottom of the page) injects fake EPCs so you can
   exercise the UI without the physical reader.
 - The finder relies on the reader streaming RSSI (`RI:` lines via `.iv -r on`);

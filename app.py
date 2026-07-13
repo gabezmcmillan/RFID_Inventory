@@ -31,6 +31,7 @@ import config
 import reader as reader_mod
 import scanner
 from reader import ReaderWorker
+from sync import SyncWorker
 
 # ---------------------------------------------------------------------------
 # Shared state
@@ -39,6 +40,7 @@ class AppState:
     def __init__(self):
         self.raw_events: "queue.Queue[dict]" = queue.Queue()
         self.worker: Optional[ReaderWorker] = None
+        self.sync: Optional[SyncWorker] = None
         self.db = None
         self.db_error: Optional[str] = None
         self.clients: set[WebSocket] = set()
@@ -72,6 +74,13 @@ async def lifespan(app: FastAPI):
     state.worker = ReaderWorker(on_event=lambda e: state.raw_events.put(e))
     state.worker.start()
 
+    # Cloud sync runs alongside the reader (needs the DB; no-op when
+    # cloud_url isn't configured -- the app is fully usable offline).
+    if state.db is not None:
+        state.sync = SyncWorker(state.db,
+                                on_event=lambda e: state.raw_events.put(e))
+        state.sync.start()
+
     pump = asyncio.create_task(_event_pump())
     try:
         yield
@@ -79,6 +88,8 @@ async def lifespan(app: FastAPI):
         pump.cancel()
         if state.worker:
             state.worker.stop()
+        if state.sync:
+            state.sync.stop()
         if state.db:
             state.db.close()
 
@@ -147,6 +158,22 @@ async def _handle_event(event: dict):
         await broadcast({"type": "finder_reset"})
         return
 
+    if kind == "sync_status":
+        await broadcast({"type": "sync_status",
+                         "enabled": event.get("enabled"),
+                         "online": event.get("online"),
+                         "last_sync": event.get("last_sync"),
+                         "error": event.get("error"),
+                         "pending": event.get("pending")})
+        return
+
+    if kind == "sync_requests":
+        # New material requests arrived from the cloud on the last sync.
+        await broadcast({"type": "requests_update",
+                         "added": event.get("added", 0),
+                         "pending": event.get("pending", 0)})
+        return
+
     if state.db is None:
         await broadcast({"type": "error",
                          "message": f"Database not available: {state.db_error}"})
@@ -211,12 +238,22 @@ async def get_config():
 
 @app.get("/api/status")
 async def get_status():
+    loop = asyncio.get_running_loop()
+    requests_pending = 0
+    if state.db is not None:
+        requests_pending = await loop.run_in_executor(
+            None, state.db.count_pending_requests)
+    # status() recounts pending changes from the DB, so keep it off the loop.
+    sync_status = (await loop.run_in_executor(None, state.sync.status)
+                   if state.sync else {"enabled": False})
     return {
         "reader_connected": bool(state.worker and state.worker.connected),
         "db_connected": state.db is not None,
         "db_error": state.db_error,
         "mode": state.worker.mode if state.worker else reader_mod.IDLE,
         "check_power": state.worker.check_power if state.worker else config.CHECK_POWER_DBM,
+        "sync": sync_status,
+        "requests_pending": requests_pending,
     }
 
 
@@ -420,6 +457,57 @@ async def export_inventory_csv(bol: str = "", building: str = "",
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Material requests (pulled from the cloud) + cloud sync
+# ---------------------------------------------------------------------------
+class RequestHandleRequest(BaseModel):
+    id: int
+    status: str          # "fulfilled" | "declined"
+    note: str = ""
+
+
+@app.get("/api/requests")
+async def get_requests(status: str = ""):
+    """Material requests for the Requests panel (pending first, newest first)."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    rows = await loop.run_in_executor(
+        None, state.db.list_requests, status or None)
+    pending = await loop.run_in_executor(None, state.db.count_pending_requests)
+    return {"requests": rows, "pending": pending}
+
+
+@app.post("/api/requests/handle")
+async def handle_request(req: RequestHandleRequest):
+    """Manager resolves a request; the new status is pushed on the next sync."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, state.db.set_request_status, req.id, req.status, req.note)
+    if result.get("ok"):
+        pending = await loop.run_in_executor(
+            None, state.db.count_pending_requests)
+        await broadcast({"type": "requests_update", "added": 0,
+                         "pending": pending})
+        if state.sync:
+            state.sync.sync_now()   # tell the requester ASAP
+    return result
+
+
+@app.post("/api/sync/now")
+async def sync_now():
+    """Manual 'Sync now' (the worker also runs on its own timer)."""
+    if state.sync is None or not state.sync.enabled:
+        return {"ok": False,
+                "message": "Sync is off — set cloud_url in settings.ini"}
+    state.sync.sync_now()
+    return {"ok": True, "message": "Sync started"}
 
 
 # ---------------------------------------------------------------------------

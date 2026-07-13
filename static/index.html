@@ -28,6 +28,7 @@
       <div class="status-pills">
         <span id="reader-pill" class="pill pill-off">Reader</span>
         <span id="db-pill" class="pill pill-off">Database</span>
+        <span id="sync-pill" class="pill pill-idle" title="Cloud sync">Sync</span>
       </div>
       <button id="theme-toggle" class="theme-toggle" type="button"
               aria-label="Switch to dark mode">&#x263E; Dark</button>
@@ -61,6 +62,12 @@
         <span class="mode-icon">&#x1F4C4;</span>
         <span class="mode-title">BOL Documents</span>
         <span class="mode-sub">All scanned bills of lading</span>
+      </button>
+      <button class="mode-card" data-mode="requests">
+        <span id="requests-card-badge" class="mode-card-badge hidden">0</span>
+        <span class="mode-icon">&#x1F4E8;</span>
+        <span class="mode-title">Requests</span>
+        <span class="mode-sub">Material requests from jobsites</span>
       </button>
       <button class="mode-card" data-mode="eventlog">
         <span class="mode-icon">&#x1F4DC;</span>
@@ -222,6 +229,20 @@
           <button id="bol-docs-refresh" class="back-btn">Refresh</button>
         </div>
         <div id="bol-docs-list" class="bol-docs-list"></div>
+      </div>
+
+      <!-- Material requests (pulled from the cloud site) -->
+      <div id="requests-view" class="view hidden">
+        <div class="wh-controls">
+          <span class="hint requests-hint">Jobsite users submit these on the
+            cloud site; they arrive here on each sync. Fulfilling or declining
+            is reported back on the next sync.</span>
+          <span class="wh-controls-spacer"></span>
+          <span id="sync-detail" class="hint sync-detail"></span>
+          <button id="sync-now-btn" class="back-btn">Sync now</button>
+          <button id="requests-refresh" class="back-btn">Refresh</button>
+        </div>
+        <div id="requests-list" class="requests-list"></div>
       </div>
 
       <!-- Event Log -->

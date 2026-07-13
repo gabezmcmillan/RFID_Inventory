@@ -16,3 +16,5 @@ websockets==13.1
 pydantic==2.10.6
 # BOL OCR text extraction; 4.3.1 is the last pypdf that supports Python 3.8.
 pypdf==4.3.1
+# Cloud sync worker (sync.py); 2.31 still supports Python 3.8.
+requests==2.31.0

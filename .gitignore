@@ -17,6 +17,9 @@ venv/
 build/
 dist/
 
+# Cloud app deploy bundle (generated; see cloud/README.md)
+cloud/deploy.zip
+
 # OS
 .DS_Store
 

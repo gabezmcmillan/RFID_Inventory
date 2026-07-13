@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h2>What's in the warehouse</h2>
+  <div class="stats">
+    <div class="stat">
+      <span class="stat-num">{{ counts.units }}</span>
+      <span class="stat-label">units in stock</span>
+    </div>
+    <div class="stat">
+      <span class="stat-num">{{ counts.requests_pending }}</span>
+      <span class="stat-label">requests waiting</span>
+    </div>
+  </div>
+</div>
+
+<p class="hint">Counts come straight from the warehouse manager's RFID system
+  and refresh automatically each time it syncs. Need something?
+  <a href="/requests">Submit a material request</a>.</p>
+
+{% if not types %}
+  <div class="empty">Nothing on hand right now (or the warehouse hasn't
+    synced yet).</div>
+{% endif %}
+
+{% for t in types %}
+<section class="type-card">
+  <div class="type-head">
+    <h3>{{ t.item_type }}</h3>
+    <span class="type-qty">{{ t.units }} unit{{ "" if t.units == 1 else "s" }}
+      &middot; {{ t.boxes }} box{{ "" if t.boxes == 1 else "es" }}</span>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Units</th><th>BOL #</th><th>Building</th><th>Vendor</th>
+          <th>First received</th></tr>
+    </thead>
+    <tbody>
+      {% for g in t.groups %}
+      <tr>
+        <td class="num">{{ g.units }}</td>
+        <td>{{ g.bol_number or "—" }}</td>
+        <td>{{ g.building or "—" }}</td>
+        <td>{{ g.vendor or "—" }}</td>
+        <td>{{ (g.first_received or "")[:10] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+{% endblock %}

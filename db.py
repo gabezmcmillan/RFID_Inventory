@@ -7,9 +7,12 @@ derived aggregation over tags grouped by (item_type, bol_number, building), so
 quantities are always a COUNT and can never drift out of sync.
 
 Tables (created on first run):
-  tags    EPC -> item_type, BOL#, Building#, Vendor, SKU, mfc date, status,
-          received_at, delivered_at. One row per physical tag.
-  events  Append-only audit log (IN / OUT / COUNT).
+  tags       EPC -> item_type, BOL#, Building#, Vendor, SKU, mfc date, status,
+             received_at, delivered_at. One row per physical tag.
+  events     Append-only audit log (IN / OUT / COUNT / ...).
+  requests   Material requests pulled from the cloud app (cloud id == local id)
+             plus the manager's handling status.
+  sync_state Key/value watermarks for the cloud sync worker (sync.py).
 
 A tag (box) can hold multiple units: `quantity` is the units it arrived with and
 `remaining` is the units left in it now. Group/item quantities are SUM(remaining)
@@ -34,6 +37,13 @@ import config
 STATUS_IN = "In Warehouse"
 STATUS_DELIVERED = "Delivered"
 STATUS_PARTIAL = "Partial"
+
+# Material-request lifecycle (rows are created by the cloud app; the manager
+# resolves them here).
+REQUEST_PENDING = "pending"
+REQUEST_FULFILLED = "fulfilled"
+REQUEST_DECLINED = "declined"
+REQUEST_STATUSES = (REQUEST_PENDING, REQUEST_FULFILLED, REQUEST_DECLINED)
 
 # group_by accepts these UI dimensions, mapped to tag columns.
 GROUP_COLUMNS = {"bol": "bol_number", "building": "building"}
@@ -141,6 +151,30 @@ class Database:
                     bol_number TEXT NOT NULL DEFAULT '',
                     building   TEXT NOT NULL DEFAULT '',
                     text       TEXT NOT NULL
+                );
+                -- Material requests pulled from the cloud. The cloud owns
+                -- creation, so its serial id is used as the local primary key
+                -- (making re-pulls idempotent). status_dirty marks rows whose
+                -- handling (fulfilled/declined) still has to be pushed back.
+                CREATE TABLE IF NOT EXISTS requests (
+                    id           INTEGER PRIMARY KEY,
+                    item_type    TEXT NOT NULL,
+                    quantity     INTEGER NOT NULL DEFAULT 1,
+                    building     TEXT NOT NULL DEFAULT '',
+                    jobsite      TEXT NOT NULL DEFAULT '',
+                    requester    TEXT NOT NULL DEFAULT '',
+                    contact      TEXT NOT NULL DEFAULT '',
+                    note         TEXT NOT NULL DEFAULT '',
+                    status       TEXT NOT NULL DEFAULT 'pending',
+                    created_at   TEXT NOT NULL DEFAULT '',
+                    handled_at   TEXT NOT NULL DEFAULT '',
+                    handler_note TEXT NOT NULL DEFAULT '',
+                    status_dirty INTEGER NOT NULL DEFAULT 0
+                );
+                -- Sync watermarks / bookkeeping for sync.py (key/value).
+                CREATE TABLE IF NOT EXISTS sync_state (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_notes_group
                     ON notes (item_type, bol_number, building);
@@ -1177,6 +1211,176 @@ class Database:
             self._conn.commit()
         return {"ok": True, "message": f"Removed vendor '{name}'.",
                 "vendors": self.list_vendors()}
+
+    # -- cloud sync (used by sync.py) ------------------------------------------
+    # The .exe is the source of truth for warehouse data; the cloud app keeps a
+    # mirror. Small tables (tags/vendors/notes/bol_docs) are pushed as full
+    # snapshots -- which naturally carries edits and deletes -- and the
+    # append-only events table is pushed incrementally above a watermark.
+    SNAPSHOT_TABLES = ("tags", "vendors", "notes", "bol_docs")
+
+    def export_snapshot(self):
+        """Full dump of the mirrored tables, JSON-ready ({table: [rows...]}).
+
+        ocr_text is stripped from bol_docs: it can be hundreds of KB per doc
+        and the cloud view doesn't use it.
+        """
+        snap = {}
+        with self._lock:
+            for table in self.SNAPSHOT_TABLES:
+                rows = self._conn.execute(
+                    f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                snap[table] = [dict(r) for r in rows]
+        for doc in snap["bol_docs"]:
+            doc.pop("ocr_text", None)
+        return snap
+
+    def events_since(self, after_id, limit=1000):
+        """Events with id > after_id, oldest first, capped at `limit` rows.
+
+        The cap bounds one exchange payload; the next cycle picks up where the
+        ack left off.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT ?",
+                (after_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def last_event_id(self):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(id), 0) AS n FROM events").fetchone()
+        return row["n"]
+
+    def sync_get(self, key, default=""):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM sync_state WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def sync_set(self, key, value):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sync_state (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, str(value)))
+            self._conn.commit()
+
+    # -- material requests (pulled from the cloud) -----------------------------
+    @staticmethod
+    def _request_dict(row):
+        return {"id": row["id"], "item_type": row["item_type"],
+                "quantity": row["quantity"], "building": row["building"],
+                "jobsite": row["jobsite"], "requester": row["requester"],
+                "contact": row["contact"], "note": row["note"],
+                "status": row["status"], "created_at": row["created_at"],
+                "handled_at": row["handled_at"],
+                "handler_note": row["handler_note"]}
+
+    def upsert_pulled_requests(self, rows):
+        """Store request rows pulled from the cloud. Idempotent.
+
+        New ids are inserted as pending; ids already on file are left alone
+        (the manager's handling is the local truth once a row is here). Logs a
+        REQUEST event per new row so requests show in the audit trail.
+        """
+        added = []
+        with self._lock:
+            for r in rows or []:
+                try:
+                    rid = int(r["id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                have = self._conn.execute(
+                    "SELECT id FROM requests WHERE id=?", (rid,)).fetchone()
+                if have:
+                    continue
+                self._conn.execute(
+                    "INSERT INTO requests (id, item_type, quantity, building, "
+                    "jobsite, requester, contact, note, status, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (rid, str(r.get("item_type") or ""),
+                     _as_quantity(r.get("quantity")),
+                     str(r.get("building") or ""), str(r.get("jobsite") or ""),
+                     str(r.get("requester") or ""), str(r.get("contact") or ""),
+                     str(r.get("note") or ""), REQUEST_PENDING,
+                     str(r.get("created_at") or _now())))
+                self._log("REQUEST", "", str(r.get("item_type") or ""),
+                          building=str(r.get("building") or ""),
+                          detail=(f"#{rid}: {r.get('quantity') or 1} x "
+                                  f"{r.get('item_type') or '?'} for "
+                                  f"{r.get('jobsite') or r.get('requester') or 'jobsite'}"))
+                added.append(rid)
+            if added:
+                self._conn.commit()
+        return added
+
+    def list_requests(self, status=None):
+        """Requests, pending first then newest first (for the Requests panel)."""
+        sql = "SELECT * FROM requests"
+        params = ()
+        if status:
+            sql += " WHERE status=?"
+            params = (status,)
+        sql += (" ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END,"
+                " id DESC")
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [self._request_dict(r) for r in rows]
+
+    def count_pending_requests(self):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM requests WHERE status=?",
+                (REQUEST_PENDING,)).fetchone()
+        return row["n"]
+
+    def set_request_status(self, req_id, status, note=""):
+        """Manager resolves a request (fulfilled/declined); pushed on next sync."""
+        if status not in (REQUEST_FULFILLED, REQUEST_DECLINED):
+            return {"ok": False, "message": f"Invalid request status: {status}"}
+        note = (note or "").strip()
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"Request #{req_id} not found."}
+            self._conn.execute(
+                "UPDATE requests SET status=?, handled_at=?, handler_note=?, "
+                "status_dirty=1 WHERE id=?",
+                (status, ts, note, req_id))
+            self._log("REQUEST_" + status.upper(), "", row["item_type"],
+                      building=row["building"],
+                      detail=(f"#{req_id}: {row['quantity']} x "
+                              f"{row['item_type']}"
+                              + (f" -- {note}" if note else "")))
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+        return {"ok": True, "message": f"Request #{req_id} {status}.",
+                "request": self._request_dict(updated)}
+
+    def dirty_request_statuses(self):
+        """Handled requests whose status the cloud hasn't acked yet."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM requests WHERE status_dirty=1").fetchall()
+        return [{"id": r["id"], "status": r["status"],
+                 "handled_at": r["handled_at"],
+                 "handler_note": r["handler_note"]} for r in rows]
+
+    def clear_request_dirty(self, ids):
+        """Ack from the cloud: stop re-pushing these request statuses."""
+        ids = [int(i) for i in ids or []]
+        if not ids:
+            return
+        with self._lock:
+            self._conn.execute(
+                "UPDATE requests SET status_dirty=0 WHERE id IN (%s)"
+                % ",".join("?" * len(ids)), ids)
+            self._conn.commit()
 
     def close(self):
         with self._lock:

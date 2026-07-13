@@ -3,3 +3,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 pypdf>=4.0
+# Cloud sync worker (sync.py) -- outbound HTTPS to the cloud app.
+requests>=2.31

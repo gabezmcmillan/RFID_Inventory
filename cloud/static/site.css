@@ -1,0 +1,196 @@
+/* Switch Warehouse cloud site — Brasfield & Gorrie brand (see bg-theme.css).
+   Deliberately simple: a read-only inventory view and a request form. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--bg-font, Verdana, Arial, "Helvetica Neue", sans-serif);
+  background: #f6f7f9;
+  color: var(--bg-ink, #11131a);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Topbar */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 28px;
+  background: var(--bg-navy, #002070);
+  border-bottom: 3px solid var(--bg-navy-dark, #00143C);
+}
+.brand { display: flex; align-items: center; gap: 14px; }
+.brand-logo { height: 26px; display: block; }
+h1.brand-app {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--bg-blue-tint, #B0FFFF);
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  padding-left: 14px;
+  white-space: nowrap;
+}
+.nav { display: flex; gap: 8px; }
+.nav a {
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.nav a:hover { border-color: rgba(255, 255, 255, 0.4); color: #fff; }
+.nav a.active { background: rgba(255, 255, 255, 0.14); color: #fff; }
+
+main {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 28px 20px 40px;
+  flex: 1;
+}
+
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.page-head h2 { margin: 0 0 10px; color: var(--bg-navy, #002070); font-size: 24px; }
+
+.stats { display: flex; gap: 22px; }
+.stat { text-align: right; }
+.stat-num { display: block; font-size: 26px; font-weight: 700; color: var(--bg-navy); }
+.stat-label { font-size: 12px; color: #565d6d; text-transform: uppercase; letter-spacing: 0.6px; }
+
+.hint { color: #565d6d; font-size: 14px; line-height: 1.5; }
+.hint a { color: var(--bg-blue-vivid, #0028F0); }
+
+.empty {
+  border: 1px dashed #c9ccd6;
+  border-radius: 12px;
+  padding: 26px;
+  text-align: center;
+  color: #565d6d;
+  margin-top: 14px;
+}
+
+/* Inventory cards */
+.type-card {
+  background: #fff;
+  border: 1px solid #d8dae2;
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin-top: 16px;
+  box-shadow: 0 2px 10px rgba(0, 20, 60, 0.05);
+}
+.type-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.type-head h3 { margin: 0 0 8px; color: var(--bg-navy); font-size: 19px; }
+.type-qty { color: #565d6d; font-size: 14px; white-space: nowrap; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th {
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #565d6d;
+  padding: 8px 10px;
+  border-bottom: 2px solid #e8e8ec;
+}
+td { padding: 9px 10px; border-bottom: 1px solid #eef0f4; vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.sub { color: #565d6d; font-size: 12px; margin-top: 2px; }
+
+/* Requests page */
+.columns { display: grid; grid-template-columns: 380px 1fr; gap: 18px; margin-top: 6px; }
+@media (max-width: 860px) { .columns { grid-template-columns: 1fr; } }
+
+.form-card, .list-card {
+  background: #fff;
+  border: 1px solid #d8dae2;
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: 0 2px 10px rgba(0, 20, 60, 0.05);
+}
+.form-card h3, .list-card h3 { margin: 0 0 12px; color: var(--bg-navy); }
+
+form label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333a49;
+  margin-bottom: 12px;
+}
+form input, form select, form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 9px 10px;
+  font-size: 15px;
+  font-family: inherit;
+  border: 1px solid #c9ccd6;
+  border-radius: 8px;
+  background: #f6f7f9;
+}
+form input:focus, form select:focus, form textarea:focus {
+  outline: 2px solid var(--bg-blue-vivid, #0028F0);
+  outline-offset: 0;
+}
+
+.cta {
+  background: var(--bg-blue-vivid, #0028F0);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 11px 18px;
+  width: 100%;
+  cursor: pointer;
+}
+.cta:hover { filter: brightness(1.1); }
+
+/* Status + banners */
+.badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid;
+  text-transform: capitalize;
+}
+.badge-pending { color: #b25e00; border-color: rgba(178, 94, 0, 0.45); background: rgba(178, 94, 0, 0.07); }
+.badge-fulfilled { color: #1a7f4e; border-color: rgba(26, 127, 78, 0.45); background: rgba(26, 127, 78, 0.07); }
+.badge-declined { color: #c8102e; border-color: rgba(200, 16, 46, 0.35); background: rgba(200, 16, 46, 0.06); }
+
+.banner {
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin: 12px 0;
+  font-size: 15px;
+}
+.banner-ok { background: rgba(26, 127, 78, 0.1); border: 1px solid rgba(26, 127, 78, 0.4); color: #135e3a; }
+.banner-err { background: rgba(200, 16, 46, 0.08); border: 1px solid rgba(200, 16, 46, 0.35); color: #8f0b20; }
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 28px;
+  background: var(--bg-navy-dark, #00143C);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+}

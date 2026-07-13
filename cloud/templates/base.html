@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Switch Warehouse &mdash; Brasfield &amp; Gorrie</title>
+  <link rel="icon" type="image/png" href="/static/brand/bg-symbol-navy.png" />
+  <link rel="stylesheet" href="/static/brand/bg-theme.css" />
+  <link rel="stylesheet" href="/static/site.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="/static/brand/bg-logo-horizontal-white.png"
+           alt="Brasfield &amp; Gorrie" class="brand-logo" />
+      <h1 class="brand-app">Switch Warehouse</h1>
+    </div>
+    <nav class="nav">
+      <a href="/" class="{{ 'active' if active == 'inventory' else '' }}">Inventory</a>
+      <a href="/requests" class="{{ 'active' if active == 'requests' else '' }}">Request materials</a>
+    </nav>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span>
+      Live view of the Switch warehouse.
+      {% if last_synced %}
+        Warehouse last reported in {{ last_synced | replace("T", " ") }}.
+      {% else %}
+        Waiting for the warehouse's first sync.
+      {% endif %}
+    </span>
+    <span>Questions about an order? Contact the warehouse manager.</span>
+  </footer>
+</body>
+</html>

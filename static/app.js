@@ -4,11 +4,12 @@
 const MODE_TITLES = {
   checkin: "Check In", checkout: "Check Out",
   inventory: "Sweep & Count", warehouse: "Warehouse", finder: "Find a Tag",
-  boldocs: "BOL Documents", eventlog: "Event Log", admin: "Admin",
+  boldocs: "BOL Documents", requests: "Material Requests",
+  eventlog: "Event Log", admin: "Admin",
 };
 const VIEWS = ["checkin-view", "checkout-view", "inventory-view",
                "warehouse-view", "finder-view", "boldocs-view",
-               "eventlog-view", "admin-view"];
+               "requests-view", "eventlog-view", "admin-view"];
 
 // Tag fields an admin may edit (key, label, input type).
 const EDIT_FIELDS = [
@@ -51,6 +52,7 @@ const state = {
   finder: null,        // {epc, rssiMin, rssiMax, proxEma, samples, found}
   admin: { pin: null, editMode: false },
   vendors: [],         // dropdown options, managed in Admin
+  sync: null,          // last sync_status message {enabled, online, ...}
   readerConnected: null,          // last known connection state
   readerLastConnectedAt: null,    // Date of most recent connect
   readerLastDisconnectedAt: null, // Date of most recent disconnect
@@ -159,6 +161,8 @@ async function refreshStatus() {
     setReaderPill(s.reader_connected);
     setDbPill(s.db_connected, s.db_error);
     if (s.check_power != null) setPowerSlider(s.check_power);
+    if (s.sync) setSyncPill(s.sync);
+    if (s.requests_pending != null) updateRequestsBadge(s.requests_pending);
   } catch (e) { /* ignore */ }
 }
 
@@ -201,6 +205,8 @@ function handleMessage(msg) {
     case "inventory_result": onInventoryResult(msg); break;
     case "finder": onFinder(msg); break;
     case "finder_reset": onFinderReset(); break;
+    case "sync_status": onSyncStatus(msg); break;
+    case "requests_update": onRequestsUpdate(msg); break;
     case "error":
       logActivity(msg.message, "err");
       showResult("err", "Error", `<p>${escapeHtml(msg.message)}</p>`);
@@ -219,6 +225,63 @@ function setDbPill(on, err) {
   p.className = "pill " + (on ? "pill-on" : "pill-off");
   p.textContent = on ? "Database ready" : "Database offline";
   if (!on && err) p.title = err;
+}
+
+// Cloud-sync pill. Offline is normal for this app, so the pill stays calm:
+// gray when sync isn't configured, green when the last exchange worked, red
+// when the cloud is unreachable (with detail in the tooltip).
+function setSyncPill(sync) {
+  state.sync = sync;
+  const p = $("sync-pill");
+  if (!p) return;
+  if (!sync || !sync.enabled) {
+    p.className = "pill pill-idle";
+    p.textContent = "Sync off";
+    p.title = "Cloud sync is not configured (set cloud_url in settings.ini). " +
+      "The app works fully standalone.";
+    return;
+  }
+  const pending = sync.pending || 0;
+  const lastTxt = sync.last_sync
+    ? `Last synced ${fmtDateTime(sync.last_sync)}` : "Never synced yet";
+  const pendTxt = pending ? ` \u00b7 ${pending} change(s) pending` : "";
+  if (sync.online) {
+    p.className = "pill pill-on";
+    p.textContent = pending ? `Sync (${pending})` : "Sync ok";
+    p.title = `${lastTxt}${pendTxt} \u00b7 click to sync now`;
+  } else {
+    p.className = "pill pill-off";
+    p.textContent = pending ? `Sync offline (${pending})` : "Sync offline";
+    p.title = `${sync.error || "Cloud unreachable"} \u00b7 ${lastTxt}${pendTxt}` +
+      " \u00b7 changes are safe locally and will sync when back online";
+  }
+  updateSyncDetail();
+}
+
+function onSyncStatus(msg) {
+  const wasError = state.sync && state.sync.enabled && !state.sync.online;
+  setSyncPill(msg);
+  // Log transitions (not every 30s heartbeat): going offline / coming back.
+  if (msg.enabled && !msg.online && !wasError && msg.error) {
+    logActivity(`Cloud sync: ${msg.error}`, "warn");
+  } else if (msg.enabled && msg.online && wasError) {
+    logActivity("Cloud sync restored \u2014 caught up", "ok");
+  }
+}
+
+function onRequestsUpdate(msg) {
+  if (msg.pending != null) updateRequestsBadge(msg.pending);
+  if (msg.added) {
+    logActivity(`${msg.added} new material request(s) from the cloud`, "ok");
+  }
+  if (state.mode === "requests") loadRequests();
+}
+
+function updateRequestsBadge(n) {
+  const b = $("requests-card-badge");
+  if (!b) return;
+  b.textContent = n;
+  b.classList.toggle("hidden", !n);
 }
 
 // -- view helpers ------------------------------------------------------------
@@ -262,6 +325,10 @@ async function openMode(mode, opts = {}) {
   } else if (mode === "boldocs") {
     await setServerMode("idle");
     await loadBolDocs();
+  } else if (mode === "requests") {
+    await setServerMode("idle");
+    updateSyncDetail();
+    await loadRequests();
   } else if (mode === "eventlog") {
     await setServerMode("idle");
     state.eventFilter = "all";
@@ -2009,6 +2076,137 @@ async function exportWarehousePdf() {
   window.print();
 }
 
+// -- material requests ---------------------------------------------------------
+// Jobsite users submit requests on the cloud site; the sync worker pulls them
+// here. Fulfill/decline updates local state immediately and is pushed back to
+// the cloud on the next sync (which /api/requests/handle kicks off).
+const REQUEST_BADGE = {
+  pending: "badge-partial", fulfilled: "badge-in", declined: "badge-out",
+};
+
+function updateSyncDetail() {
+  const el = $("sync-detail");
+  if (!el) return;
+  const s = state.sync;
+  if (!s || !s.enabled) {
+    el.textContent = "Cloud sync is off (set cloud_url in settings.ini).";
+    return;
+  }
+  const last = s.last_sync
+    ? `Last synced ${fmtDateTime(s.last_sync)}` : "Never synced yet";
+  const pending = s.pending ? ` \u00b7 ${s.pending} change(s) pending` : "";
+  const err = s.online ? "" : ` \u00b7 offline: ${s.error || "cloud unreachable"}`;
+  el.textContent = `${last}${pending}${err}`;
+}
+
+async function syncNow() {
+  try {
+    const data = await (await fetch("/api/sync/now", { method: "POST" })).json();
+    logActivity(data.message || (data.ok ? "Sync started" : "Sync failed"),
+                data.ok ? "ok" : "warn");
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+}
+
+async function loadRequests() {
+  const wrap = $("requests-list");
+  wrap.innerHTML = `<p class="hint">Loading\u2026</p>`;
+  let data;
+  try {
+    data = await (await fetch("/api/requests")).json();
+  } catch (e) {
+    wrap.innerHTML = `<p class="hint">Could not load requests.</p>`;
+    return;
+  }
+  updateRequestsBadge(data.pending || 0);
+  renderRequests(data.requests || []);
+}
+
+function renderRequests(rows) {
+  const wrap = $("requests-list");
+  if (!rows.length) {
+    wrap.innerHTML = `<p class="hint">No material requests yet. They appear
+      here when someone submits one on the cloud site.</p>`;
+    return;
+  }
+  const html = rows.map((r) => {
+    const badgeCls = REQUEST_BADGE[r.status] || "badge-partial";
+    const who = [r.requester, r.jobsite && `Jobsite: ${r.jobsite}`,
+                 r.building && `Bldg ${r.building}`, r.contact]
+      .filter(Boolean).map(escapeHtml).join(" \u00b7 ");
+    const note = r.note
+      ? `<div class="request-note">\u201C${escapeHtml(r.note)}\u201D</div>` : "";
+    const handled = r.status !== "pending"
+      ? `<div class="request-handled hint">${escapeHtml(r.status)}
+           ${r.handled_at ? escapeHtml(fmtDateTime(r.handled_at)) : ""}
+           ${r.handler_note ? `\u2014 ${escapeHtml(r.handler_note)}` : ""}</div>`
+      : "";
+    const actions = r.status === "pending"
+      ? `<div class="request-actions">
+           <button class="primary-btn req-fulfill" data-id="${r.id}">Fulfill</button>
+           <button class="danger-btn req-decline" data-id="${r.id}">Decline</button>
+         </div>`
+      : "";
+    return `<div class="request-card${r.status === "pending" ? " request-pending" : ""}">
+      <div class="request-main">
+        <div class="request-title">
+          <span class="request-qty">${r.quantity}\u00d7</span>
+          <strong>${escapeHtml(r.item_type)}</strong>
+          <span class="badge ${badgeCls}">${escapeHtml(r.status)}</span>
+        </div>
+        <div class="request-meta hint">#${r.id}
+          \u00b7 ${escapeHtml(fmtDateTime(r.created_at))}
+          ${who ? `\u00b7 ${who}` : ""}</div>
+        ${note}${handled}
+      </div>${actions}
+    </div>`;
+  }).join("");
+  wrap.innerHTML = html;
+  wrap.querySelectorAll(".req-fulfill").forEach((b) => {
+    b.onclick = () => confirmHandleRequest(parseInt(b.dataset.id, 10), "fulfilled");
+  });
+  wrap.querySelectorAll(".req-decline").forEach((b) => {
+    b.onclick = () => confirmHandleRequest(parseInt(b.dataset.id, 10), "declined");
+  });
+}
+
+function confirmHandleRequest(id, status) {
+  const verb = status === "fulfilled" ? "Fulfill" : "Decline";
+  showModal(`${verb} request #${id}?`,
+    `<p>The requester sees this status (and your note) on the cloud site
+        after the next sync.</p>
+     <label class="edit-field"><span>Note (optional)</span>
+       <input id="request-handle-note" type="text"
+         placeholder="e.g. Sent with Tuesday's truck" maxlength="200" />
+     </label>`,
+    [{ label: verb, cls: status === "fulfilled" ? "primary-btn" : "danger-btn",
+       onClick: () => handleRequest(id, status) },
+     { label: "Cancel", cls: "back-btn" }]);
+  const input = $("request-handle-note");
+  if (input) input.focus();
+}
+
+async function handleRequest(id, status) {
+  const input = $("request-handle-note");
+  const note = input ? input.value.trim() : "";
+  try {
+    const res = await fetch("/api/requests/handle", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status, note }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      logActivity(data.message || `Request #${id} ${status}`, "ok");
+    } else {
+      logActivity(data.message || "Could not update request", "err");
+    }
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+  await loadRequests();
+}
+
 // -- event log ---------------------------------------------------------------
 // Raw audit actions -> friendly label + badge class for the log table.
 const EVENT_LABELS = {
@@ -2026,6 +2224,9 @@ const EVENT_LABELS = {
   BOL_RENAME: { label: "BOL renamed", cls: "badge-partial" },
   NOTE: { label: "Note added", cls: "badge-in" },
   NOTE_DEL: { label: "Note deleted", cls: "badge-out" },
+  REQUEST: { label: "Request received", cls: "badge-partial" },
+  REQUEST_FULFILLED: { label: "Request fulfilled", cls: "badge-in" },
+  REQUEST_DECLINED: { label: "Request declined", cls: "badge-out" },
 };
 
 let eventSearchTimer = null;
@@ -2569,6 +2770,11 @@ function wireUI() {
     };
   });
   $("bol-docs-refresh").onclick = loadBolDocs;
+  $("requests-refresh").onclick = loadRequests;
+  $("sync-now-btn").onclick = syncNow;
+  $("sync-pill").onclick = () => {
+    if (state.sync && state.sync.enabled) syncNow();
+  };
   $("event-refresh").onclick = loadEvents;
   $("event-epc").oninput = () => {
     clearTimeout(eventSearchTimer);

@@ -135,6 +135,18 @@ HOST = "127.0.0.1"
 PORT = 8000
 
 # ---------------------------------------------------------------------------
+# Cloud sync (see sync.py and cloud/)
+# ---------------------------------------------------------------------------
+# The .exe keeps working entirely offline; when CLOUD_URL is set, a background
+# worker pushes inventory to the cloud app and pulls material requests every
+# SYNC_INTERVAL_SECONDS. Leave CLOUD_URL empty to run without a cloud at all.
+# These are normally set per machine in settings.ini, not here.
+CLOUD_URL = ""            # e.g. "https://switch-warehouse.brasfieldgorrie.com"
+SYNC_TOKEN = ""           # bearer token; must match the cloud app's SYNC_TOKEN
+SYNC_ENABLED = True       # master switch (only matters when CLOUD_URL is set)
+SYNC_INTERVAL_SECONDS = 30
+
+# ---------------------------------------------------------------------------
 # Per-machine overrides (settings.ini)
 # ---------------------------------------------------------------------------
 # A frozen .exe bakes this file in, so the handful of values that vary per
@@ -148,6 +160,11 @@ if _ini.read(os.path.join(BASE_DIR, "settings.ini")) and "settings" in _ini:
     ADMIN_PIN = _s.get("admin_pin", ADMIN_PIN).strip() or ADMIN_PIN
     HOST = _s.get("host", HOST).strip() or HOST
     PORT = _s.getint("port", fallback=PORT)
+    CLOUD_URL = _s.get("cloud_url", CLOUD_URL).strip() or CLOUD_URL
+    SYNC_TOKEN = _s.get("sync_token", SYNC_TOKEN).strip() or SYNC_TOKEN
+    SYNC_ENABLED = _s.getboolean("sync_enabled", fallback=SYNC_ENABLED)
+    SYNC_INTERVAL_SECONDS = _s.getint("sync_interval_seconds",
+                                      fallback=SYNC_INTERVAL_SECONDS)
 
 # ---------------------------------------------------------------------------
 # Item types and check-in fields
