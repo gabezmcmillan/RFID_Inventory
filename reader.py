@@ -45,18 +45,23 @@ def resolve_port(configured):
     """Turn config.SERIAL_PORT into a real device name.
 
     Anything other than "auto" is used as-is. "auto" scans the system's serial
-    ports for the handheld: first a port whose name/description mentions the
-    TSL 1128 (the Indium is a rebadged 1128; macOS exposes it as
-    /dev/cu.usbserial-1128_...), else the first FTDI device (the USB-serial
-    chip inside it; on Windows it enumerates as a generic "USB Serial Port").
-    Raises SerialException when nothing matches, so the worker's reconnect
-    loop reports the miss and keeps retrying.
+    ports for the handheld: first a port whose USB metadata mentions the TSL
+    1128 the Indium is a rebadge of, else the first FTDI device (the USB-serial
+    chip inside it). The "1128" marker lives in different fields per OS --
+    macOS puts the USB serial number in the device path itself
+    (/dev/cu.usbserial-1128_US_...), while Windows reports a generic
+    "USB Serial Port (COMx)" description and carries the serial number only in
+    serial_number/hwid ("USB VID:PID=... SER=1128_US_...") -- so every field is
+    searched. Raises SerialException when nothing matches, so the worker's
+    reconnect loop reports the miss and keeps retrying.
     """
     if configured and configured.lower() != "auto":
         return configured
     ports = list(list_ports.comports())
     for p in ports:
-        text = " ".join(str(x) for x in (p.device, p.description, p.product) if x)
+        text = " ".join(str(x) for x in (
+            p.device, p.description, p.product, p.manufacturer,
+            p.serial_number, p.hwid) if x)
         if "1128" in text:
             return p.device
     for p in ports:
