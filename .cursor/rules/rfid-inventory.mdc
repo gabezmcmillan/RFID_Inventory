@@ -1,70 +1,50 @@
 ---
-description: Project context for a barebones RFID inventory tool (Vulcan Indium / TSL 1128 reader -> Google Sheets) on macOS.
-globs:
+description: Project context for the RFID warehouse inventory app (TSL 1128 handheld, FastAPI + SQLite, Windows .exe, planned Azure sync).
 alwaysApply: true
 ---
 
-# RFID Inventory Project — Context
+# RFID Inventory — Project Context
 
-## Goal
-A barebones desktop app that reads UHF RFID tags with a handheld reader and
-auto-populates a Google Sheet with inventory data (per-SKU counts + a scan log).
+## What this is
+Warehouse inventory web app driven by a UHF RFID handheld. FastAPI backend
+(`app.py`) + SQLite (`db.py`), single-page browser UI (`static/`), serial
+worker thread for the reader (`reader.py`). Modes: check-in, check-out,
+sweep & count, warehouse browse, tag finder. Bills of lading are scanned
+(Epson ES-50 via the NAPS2 CLI, `scanner.py`), OCRed, and BOL#/PO#/vendor
+auto-extracted (`bol_extract.py`). `rfid_inventory.py` is a legacy CLI kept
+only as reference; the old Google Sheets backend is gone.
 
-## Hardware
-- Reader: **Vulcan RFID Indium** Bluetooth UHF handheld. Under the hood it is a
-  **rebadged TSL 1128** (confirmed by the USB device name `usbserial-1128_US_V01336`).
-- Protocol: **TSL ASCII 2.0**. Commands are a period + two lowercase letters
-  (e.g. `.iv` inventory, `.vr` version, `.rd` read, `.ws` write single), terminated
-  with CR/LF.
-- Tags: EPC Class 1 Gen 2 (ISO 18000-6C), 902–928 MHz (US).
+## Hardware facts (not discoverable from code alone)
+- Reader: Vulcan RFID Indium = rebadged TSL 1128. Protocol: TSL ASCII 2.0
+  over USB serial (classic-Bluetooth SPP is unreliable; avoid).
+- Commands are `.xx` + args, CR/LF-terminated (`.iv` inventory, `.ws` write
+  single transponder). Responses are line-based: `EP:` per-tag EPC hex,
+  `RI:` RSSI, `SW:` trigger state, terminated by `OK:` or `ER: nnn`.
+- The physical trigger drives scans (the reader runs `.iv` itself; the app
+  never polls). A scan burst is finalized after a quiet gap
+  (`QUIET_GAP_SECONDS`); parameters are set with `-n` (no action) commands.
+- UHF dedup principle: a tag is read many times per second — NEVER count
+  raw reads. Collect distinct EPCs; one EPC == one physical box.
 
-## ASCII 2.0 response format
-Line-based. Inventory (`.iv`) returns:
-```
-CS: .iv ...                      # command echoed back
-EP: 41524E4C3030303030310000     # one EP: line per transponder (the EPC, hex)
-EP: 330DE29525C0210005F5F8F2
-OK:                              # or "ER: nnn" on failure
-```
-Parsing rule: collect each value after an `EP:` header until `OK:`/`ER:`.
-Other possible per-tag fields (off by default): `IX:` index, `RI:` RSSI, `PC:`,
-`CR:` CRC. Default trigger press also runs `.iv`.
+## Packaging / platforms
+- Windows .exe via PyInstaller (`RFIDInventory.spec`, `build-windows.bat`).
+  Per-machine overrides live in `settings.ini` next to the exe; defaults in
+  `config.py` (note the frozen-build path split: bundled assets vs.
+  persistent data next to the executable).
+- Development happens on macOS; the serial port is auto-detected with a
+  `settings.ini` override.
 
-## Platform / connection (macOS)
-- Running on a Mac. The reader exposes two serial ports:
-  - `/dev/cu.usbserial-1128_US_V01336`  → USB  (preferred — stable, no pairing)
-  - `/dev/cu.V01336-US-Indium`          → Bluetooth SPP
-- Use the **USB** port. Over USB the reader always speaks ASCII 2.0.
-- macOS classic-Bluetooth SPP is unreliable for serial; avoid unless USB unavailable.
-- pyserial baud: try 115200 first, fall back to 9600 if no response.
-
-## Critical design principle — UHF dedup
-UHF readers re-read the same tag many times per second. NEVER count raw reads.
-Collect DISTINCT EPCs into a `set()`. One unique EPC == one physical item, so a
-SKU's quantity == number of distinct EPCs seen for it in a scan session.
-
-## Google Sheets
-- Library: `gspread` with a **service account** (`credentials.json` next to the script).
-- Enable BOTH the Google Sheets API and Google Drive API (gspread opens by name).
-- Share the spreadsheet with the service account's `client_email` as Editor.
-- Worksheet layout (auto-created if missing):
-  - `Mapping`:   EPC | SKU | Item Name | Registered At
-  - `Inventory`: SKU | Item Name | Quantity | Last Counted
-  - `Log`:       Timestamp | EPC | SKU
-
-## App structure (see rfid_inventory.py)
-- Menu loop: [1] Enroll a tag  [2] Run inventory count  [3] Quit
-- Enroll: `.iv -fs on` (strongest tag only) -> prompt for SKU/name -> write Mapping.
-- Count: repeatedly issue `.iv` for SWEEP_SECONDS, accumulate unique EPCs, resolve
-  via Mapping, write per-SKU counts to Inventory + rows to Log. Unknown EPCs flagged.
-
-## Current state / open items
-- Serial ports identified; next step is a `.vr` comms check to confirm link + baud.
-- `credentials.json` not yet downloaded: in Google Cloud the JSON only downloads on
-  Service account -> Keys tab -> Add key -> Create new key -> JSON -> Create.
-- Count mode currently OVERWRITES each SKU's quantity with the current session count
-  ("what's here now"). A cumulative running total is an alternative if needed.
+## Current direction (July 2026)
+- Offline-first: the .exe + SQLite is the source of truth. A `cloud/`
+  FastAPI app on Azure (App Service + Azure PostgreSQL,
+  switch-warehouse.brasfieldgorrie.com) mirrors inventory read-only and
+  queues material requests; the .exe syncs via an outbound
+  `POST /sync/exchange` worker. Databricks is intentionally not used.
+- Later phases: label printing (Rollo X1040, 3"x2" labels) with EPC
+  encoding via the handheld's `.ws`; stale-stock aging flags; a staged
+  checkout state so exit staging and sweeps don't conflict.
 
 ## Conventions
-- Keep it barebones; standard library + pyserial + gspread only.
-- Confirm `.iv` response delimiters against the real reader output before trusting parse.
+- Raw SQL house style in `db.py` (no ORM); keep dependencies minimal.
+- Confirm reader behavior against real hardware before trusting parsing
+  changes; "Test without hardware" in the UI injects fake EPCs.

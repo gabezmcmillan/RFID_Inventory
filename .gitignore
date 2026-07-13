@@ -19,3 +19,6 @@ dist/
 
 # OS
 .DS_Store
+
+# Cursor plan files (local working notes; rules stay tracked)
+.cursor/plans/
