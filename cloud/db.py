@@ -180,6 +180,15 @@ class CloudDatabase:
                     if attempt == 2:
                         raise
                     self._connect()
+                except Exception:
+                    # A failed statement leaves the transaction aborted;
+                    # without a rollback the connection would reject every
+                    # later query ("current transaction is aborted").
+                    try:
+                        self._conn.rollback()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    raise
 
     def _create_schema(self):
         self._run(lambda cur: cur.execute(SCHEMA))
