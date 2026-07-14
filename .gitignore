@@ -15,3 +15,8 @@ venv/
 
 # OS
 .DS_Store
+
+# Vercel
+.vercel
+.env.local
+.env*.local
