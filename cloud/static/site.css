@@ -197,6 +197,12 @@ form input:focus, form select:focus, form textarea:focus {
 }
 
 /* ---- Browse & request: stock table ---------------------------------------- */
+
+/* The cart bar and checkout modal are shown/hidden by toggling the `hidden`
+   attribute. The browser's built-in [hidden] { display: none } loses to any
+   author `display` rule, so their display: flex rules below are scoped with
+   :not([hidden]); this is a safety net for future elements. */
+[hidden] { display: none !important; }
 .stock-toolbar {
   display: flex;
   gap: 10px;
@@ -338,7 +344,7 @@ table.bol-table { font-size: 13px; min-width: 0; }
 tbody.in-cart .add-btn { background: var(--bg-blue-vivid, #0028F0); color: #fff; }
 
 /* Sticky cart bar */
-.cart-bar {
+.cart-bar:not([hidden]) {
   position: sticky;
   bottom: 14px;
   display: flex;
@@ -368,7 +374,7 @@ tbody.in-cart .add-btn { background: var(--bg-blue-vivid, #0028F0); color: #fff;
 .ghost-btn:hover { border-color: #fff; }
 
 /* Checkout dialog */
-.modal-overlay {
+.modal-overlay:not([hidden]) {
   position: fixed;
   inset: 0;
   background: rgba(0, 20, 60, 0.45);
