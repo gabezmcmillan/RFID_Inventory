@@ -1,82 +1,57 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <h2>Request materials</h2>
+  <h2>Orders</h2>
 </div>
 
 {% if submitted %}
-<div class="banner banner-ok">Request #{{ submitted }} submitted. The
-  warehouse manager will see it on their next sync.</div>
-{% endif %}
-{% if error %}
-<div class="banner banner-err">{{ error }}</div>
+<div class="banner banner-ok">Order {{ submitted }} submitted. The warehouse
+  manager will see it on their next sync.</div>
 {% endif %}
 
-<div class="columns">
-  <section class="form-card">
-    <h3>New request</h3>
-    <form method="post" action="/requests">
-      <label>Item type *
-        <select name="item_type" required>
-          <option value="" disabled selected>Choose an item…</option>
-          {% for it in item_types %}
-          <option value="{{ it }}">{{ it }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Quantity (units) *
-        <input type="number" name="quantity" min="1" step="1" value="1" required />
-      </label>
-      <label>Deliver to building
-        <input type="text" name="building" maxlength="40" placeholder="e.g. 7" />
-      </label>
-      <label>Jobsite / project
-        <input type="text" name="jobsite" maxlength="120" placeholder="e.g. Switch 4" />
-      </label>
-      <label>Your name *
-        <input type="text" name="requester" maxlength="120" required />
-      </label>
-      <label>Contact (phone or email)
-        <input type="text" name="contact" maxlength="120" />
-      </label>
-      <label>Notes for the warehouse
-        <textarea name="note" rows="3" maxlength="500"
-          placeholder="e.g. Needed on site by Friday morning"></textarea>
-      </label>
-      <button type="submit" class="cta">Submit request</button>
-    </form>
-    <p class="hint">The warehouse works offline much of the day; requests are
-      picked up on its next sync, usually within a minute of it coming online.</p>
-  </section>
+<p class="hint">Every order placed from the
+  <a href="/">browse &amp; request</a> page shows up here with its current
+  status. The warehouse works offline much of the day; orders are picked up
+  on its next sync, usually within a minute of it coming online.</p>
 
-  <section class="list-card">
-    <h3>Recent requests</h3>
-    {% if not requests %}
-      <div class="empty">No requests yet.</div>
-    {% else %}
-    <table>
-      <thead>
-        <tr><th>#</th><th>Item</th><th class="num">Qty</th><th>For</th>
-            <th>Requested by</th><th>Status</th></tr>
-      </thead>
-      <tbody>
-        {% for r in requests %}
-        <tr>
-          <td>{{ r.id }}</td>
-          <td>{{ r.item_type }}</td>
-          <td class="num">{{ r.quantity }}</td>
-          <td>{{ r.jobsite or r.building or "—" }}</td>
-          <td>{{ r.requester }}<div class="sub">{{ (r.created_at or "")[:10] }}</div></td>
-          <td>
-            <span class="badge badge-{{ r.status }}">{{
-              "staging for exit" if r.status == "staging" else r.status }}</span>
-            {% if r.handler_note %}<div class="sub">“{{ r.handler_note }}”</div>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-  </section>
-</div>
+{% if not orders %}
+  <div class="empty">No orders yet. Pick items on the
+    <a href="/">browse &amp; request</a> page to place one.</div>
+{% endif %}
+
+{% for o in orders %}
+<section class="order-card">
+  <div class="order-head">
+    <div class="order-title">
+      {% if o.order_ref %}<h3>Order {{ o.order_ref }}</h3>{% else %}
+      <h3>Request #{{ o.lines[0].id }}</h3>{% endif %}
+      <span class="order-meta">{{ o.requester }}
+        &middot; {{ (o.created_at or "")[:10] }}</span>
+    </div>
+    <span class="order-meta">
+      {% if o.jobsite %}Jobsite: {{ o.jobsite }} &middot; {% endif %}
+      {% if o.building %}Deliver to Bldg {{ o.building }}{% endif %}
+    </span>
+  </div>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Item</th><th class="num">Qty</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for r in o.lines %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ r.item_type }}</td>
+        <td class="num">{{ r.quantity }}</td>
+        <td>
+          <span class="badge badge-{{ r.status }}">{{
+            "staging for exit" if r.status == "staging" else r.status }}</span>
+          {% if r.handler_note %}<div class="sub">&ldquo;{{ r.handler_note }}&rdquo;</div>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
 {% endblock %}

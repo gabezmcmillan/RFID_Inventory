@@ -2439,7 +2439,8 @@ function renderRequests(rows) {
           <strong>${escapeHtml(r.item_type)}</strong>
           <span class="badge ${badgeCls}">${escapeHtml(badgeTxt)}</span>
         </div>
-        <div class="request-meta hint">#${r.id}
+        <div class="request-meta hint">#${r.id}${r.order_ref
+            ? ` \u00b7 Order ${escapeHtml(r.order_ref)}` : ""}
           \u00b7 ${escapeHtml(fmtDateTime(r.created_at))}
           ${who ? `\u00b7 ${who}` : ""}</div>
         ${note}${handled}

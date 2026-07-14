@@ -18,6 +18,7 @@ connection, which Azure does after a while.
 """
 
 import os
+import secrets
 import threading
 from datetime import datetime
 
@@ -124,6 +125,8 @@ CREATE TABLE IF NOT EXISTS sync_meta (
 );
 CREATE INDEX IF NOT EXISTS idx_tags_type ON tags (item_type);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests (status);
+-- Cart orders: lines submitted together share an order_ref (short hex).
+ALTER TABLE requests ADD COLUMN IF NOT EXISTS order_ref TEXT NOT NULL DEFAULT '';
 """
 
 
@@ -131,12 +134,19 @@ def _now():
     return datetime.now().isoformat(timespec="seconds")
 
 
-def _as_quantity(value, default=1):
+def _parse_quantity(value):
+    """Strict positive-int parse; None means invalid (callers reject, never
+    silently clamp -- a mistyped quantity should bounce, not become 1)."""
     try:
-        n = int(float(str(value).strip()))
+        n = int(str(value).strip())
     except (TypeError, ValueError, AttributeError):
-        return default
-    return n if n >= 1 else default
+        return None
+    return n if n >= 1 else None
+
+
+def _new_order_ref():
+    """Short, human-readable order id shared by the lines of one cart."""
+    return secrets.token_hex(3).upper()
 
 
 class CloudDatabase:
@@ -330,15 +340,57 @@ class CloudDatabase:
             t["groups"].append(r)
         return list(types.values())
 
-    def item_types(self):
-        """Item types for the request form: everything the warehouse has ever
-        mirrored (present stock first, then the rest)."""
+    def stock_rows(self):
+        """Requestable stock for the cart view: one row per item type x
+        building (units summed across BOLs), each with its BOL breakdown for
+        the drill-down. Only stock actually on hand appears -- an item type
+        with zero remaining units simply isn't requestable."""
         def work(cur):
             cur.execute(
-                "SELECT item_type, SUM(CASE WHEN COALESCE(remaining,0) > 0 "
-                "THEN remaining ELSE 0 END) AS units FROM tags "
-                "GROUP BY item_type ORDER BY units DESC, item_type")
-            return [r["item_type"] for r in cur.fetchall() if r["item_type"]]
+                """
+                SELECT item_type,
+                       COALESCE(building, '')   AS building,
+                       bol_number,
+                       vendor,
+                       COALESCE(SUM(remaining), 0) AS units,
+                       COUNT(*)                    AS boxes,
+                       MIN(received_at)            AS first_received
+                FROM tags
+                WHERE COALESCE(remaining, 0) > 0
+                GROUP BY item_type, COALESCE(building, ''), bol_number, vendor
+                ORDER BY item_type, COALESCE(building, ''), bol_number
+                """)
+            return cur.fetchall()
+        rows = self._run(work)
+        stock = {}
+        for r in rows:
+            key = (r["item_type"], r["building"])
+            row = stock.setdefault(key, {
+                "item_type": r["item_type"], "building": r["building"],
+                "units": 0, "boxes": 0, "vendors": [],
+                "oldest_received": "", "groups": []})
+            row["units"] += r["units"] or 0
+            row["boxes"] += r["boxes"] or 0
+            if r["vendor"] and r["vendor"] not in row["vendors"]:
+                row["vendors"].append(r["vendor"])
+            first = (r["first_received"] or "")
+            if first and (not row["oldest_received"]
+                          or first < row["oldest_received"]):
+                row["oldest_received"] = first
+            row["groups"].append({
+                "bol_number": r["bol_number"], "vendor": r["vendor"],
+                "units": r["units"], "boxes": r["boxes"],
+                "first_received": r["first_received"]})
+        return list(stock.values())
+
+    def buildings(self):
+        """Known delivery buildings: every building the mirror has ever seen
+        (a valid destination doesn't need stock on hand)."""
+        def work(cur):
+            cur.execute(
+                "SELECT DISTINCT COALESCE(building, '') AS b FROM tags "
+                "WHERE COALESCE(building, '') != '' ORDER BY b")
+            return [r["b"] for r in cur.fetchall()]
         return self._run(work)
 
     def counts(self):
@@ -356,28 +408,151 @@ class CloudDatabase:
         return self._run(work)
 
     # -- requests (cloud-owned) ------------------------------------------------
+    @staticmethod
+    def _available_units(cur, item_type, stock_building=None):
+        """Units on hand for an item type, optionally scoped to the building
+        the stock is assigned to ('' = unassigned). Runs on the caller's
+        cursor so checks and inserts share one transaction."""
+        if stock_building is None:
+            cur.execute(
+                "SELECT COALESCE(SUM(remaining), 0) AS n FROM tags "
+                "WHERE item_type=%s AND COALESCE(remaining, 0) > 0",
+                (item_type,))
+        else:
+            cur.execute(
+                "SELECT COALESCE(SUM(remaining), 0) AS n FROM tags "
+                "WHERE item_type=%s AND COALESCE(building, '')=%s "
+                "AND COALESCE(remaining, 0) > 0",
+                (item_type, stock_building))
+        return cur.fetchone()["n"] or 0
+
+    @classmethod
+    def _validate_line(cls, cur, item_type, quantity, stock_building=None):
+        """One requested line against the mirrored stock. Returns an error
+        message, or None when the line is fulfillable as asked."""
+        if not item_type:
+            return "An item type is required."
+        qty = _parse_quantity(quantity)
+        if qty is None:
+            return "Quantity must be a whole number of 1 or more."
+        available = cls._available_units(cur, item_type, stock_building)
+        where = (f" in Building {stock_building}" if stock_building else "")
+        if available <= 0:
+            return f"No {item_type} in stock{where} right now."
+        if qty > available:
+            return (f"Only {available} unit(s) of {item_type} "
+                    f"available{where}; requested {qty}.")
+        return None
+
     def create_request(self, item_type, quantity, building="", jobsite="",
                        requester="", contact="", note=""):
+        """Single-line request (legacy JSON API). Availability is checked
+        across all buildings -- this path has no stock-row context."""
         item_type = (item_type or "").strip()
         requester = (requester or "").strip()
-        if not item_type:
-            return {"ok": False, "message": "An item type is required."}
         if not requester:
             return {"ok": False, "message": "Your name is required."}
 
         def work(cur):
+            error = self._validate_line(cur, item_type, quantity)
+            if error:
+                return {"ok": False, "message": error}
             cur.execute(
                 "INSERT INTO requests (item_type, quantity, building, jobsite,"
-                " requester, contact, note, status, created_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-                (item_type, _as_quantity(quantity),
+                " requester, contact, note, status, created_at, order_ref) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+                (item_type, _parse_quantity(quantity),
                  (building or "").strip(), (jobsite or "").strip(),
                  requester, (contact or "").strip(), (note or "").strip(),
-                 REQUEST_PENDING, _now()))
-            return cur.fetchone()
-        row = self._run(work)
+                 REQUEST_PENDING, _now(), _new_order_ref()))
+            return {"ok": True, "row": cur.fetchone()}
+        result = self._run(work)
+        if not result["ok"]:
+            return result
+        row = result["row"]
         return {"ok": True, "message": f"Request #{row['id']} submitted.",
                 "request": row}
+
+    def create_cart_request(self, requester, contact, jobsite, note,
+                            delivery_building, lines):
+        """One submitted cart -> N request rows sharing an order_ref, in a
+        single all-or-nothing transaction.
+
+        `lines` is a list of {item_type, building, quantity} where `building`
+        is the STOCK row the requester picked ('' = unassigned stock); every
+        line is checked against that stock's availability. `delivery_building`
+        is where the whole order should go (stored on each row).
+
+        Returns {ok, order_ref, ids} or {ok: False, message, errors:
+        [{line, message}]} with `line` an index into `lines`.
+        """
+        requester = (requester or "").strip()
+        delivery_building = (delivery_building or "").strip()
+        lines = lines or []
+        if not requester:
+            return {"ok": False, "message": "Your name is required.",
+                    "errors": []}
+        if not delivery_building:
+            return {"ok": False, "message": "A delivery building is required.",
+                    "errors": []}
+        if not lines:
+            return {"ok": False, "message": "The cart is empty.", "errors": []}
+
+        def work(cur):
+            errors = []
+            # Per-line checks (shape, quantity), then per stock-row aggregate
+            # checks so two lines drawing on the same (type, building) can't
+            # each pass individually while jointly exceeding availability.
+            parsed = []
+            for i, line in enumerate(lines):
+                item_type = str(line.get("item_type") or "").strip()
+                stock_building = str(line.get("building") or "").strip()
+                qty = _parse_quantity(line.get("quantity"))
+                if not item_type:
+                    errors.append({"line": i,
+                                   "message": "An item type is required."})
+                elif qty is None:
+                    errors.append({"line": i, "message":
+                                   "Quantity must be a whole number of 1 "
+                                   "or more."})
+                else:
+                    parsed.append((i, item_type, stock_building, qty))
+            groups = {}
+            for i, item_type, stock_building, qty in parsed:
+                g = groups.setdefault((item_type, stock_building),
+                                      {"total": 0, "lines": []})
+                g["total"] += qty
+                g["lines"].append(i)
+            for (item_type, stock_building), g in groups.items():
+                message = self._validate_line(cur, item_type, g["total"],
+                                              stock_building)
+                if message:
+                    errors.extend({"line": i, "message": message}
+                                  for i in g["lines"])
+            if errors:
+                errors.sort(key=lambda e: e["line"])
+                return {"ok": False, "errors": errors,
+                        "message": "Some items can't be fulfilled as "
+                                   "requested."}
+
+            order_ref = _new_order_ref()
+            ts = _now()
+            ids = []
+            for i, item_type, stock_building, qty in parsed:
+                cur.execute(
+                    "INSERT INTO requests (item_type, quantity, building, "
+                    "jobsite, requester, contact, note, status, created_at, "
+                    "order_ref) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                    "RETURNING id",
+                    (item_type, qty, delivery_building,
+                     (jobsite or "").strip(), requester,
+                     (contact or "").strip(), (note or "").strip(),
+                     REQUEST_PENDING, ts, order_ref))
+                ids.append(cur.fetchone()["id"])
+            return {"ok": True, "order_ref": order_ref, "ids": ids,
+                    "message": (f"Order {order_ref} submitted "
+                                f"({len(ids)} item{'s' if len(ids) != 1 else ''}).")}
+        return self._run(work)
 
     def list_requests(self, limit=100):
         def work(cur):
@@ -387,3 +562,26 @@ class CloudDatabase:
                 "ELSE 1 END, id DESC LIMIT %s", (limit,))
             return cur.fetchall()
         return self._run(work)
+
+    def list_orders(self, limit=100):
+        """Requests grouped into orders for the status page. Lines sharing an
+        order_ref group together; legacy rows (no ref) stand alone. Open
+        orders (any line pending/staging) first, then newest."""
+        rows = self.list_requests(limit)
+        orders = {}
+        for r in rows:
+            key = r["order_ref"] or f"request-{r['id']}"
+            o = orders.setdefault(key, {
+                "order_ref": r["order_ref"], "lines": [],
+                "requester": r["requester"], "contact": r["contact"],
+                "jobsite": r["jobsite"], "building": r["building"],
+                "created_at": r["created_at"], "open": False,
+                "max_id": 0})
+            o["lines"].append(r)
+            o["open"] = o["open"] or r["status"] in ("pending", "staging")
+            o["max_id"] = max(o["max_id"], r["id"])
+        result = list(orders.values())
+        for o in result:
+            o["lines"].sort(key=lambda r: r["id"])
+        result.sort(key=lambda o: (not o["open"], -o["max_id"]))
+        return result

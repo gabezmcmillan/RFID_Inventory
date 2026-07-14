@@ -7,23 +7,28 @@ Two jobs, one small FastAPI process (App Service + Azure PostgreSQL):
      HTTPS from the warehouse PC; the cloud never calls into the .exe). Auth
      is a bearer token (SYNC_TOKEN env var), NOT Entra SSO -- exclude /sync/*
      from Easy Auth when enabling it (see README.md).
-  2. The employee-facing site: a read-only inventory view and a "request
-     materials" form. Requests queue in Postgres until the .exe's next sync.
-     Sign-in is handled by App Service Easy Auth (Entra ID) in front of the
-     app; the app itself stays auth-agnostic.
+  2. The employee-facing site: a browse-the-stock table with a shopping cart
+     (pick rows, set quantities, check out with contact/jobsite/notes) plus
+     an order-status page. Requests queue in Postgres until the .exe's next
+     sync. Sign-in is handled by App Service Easy Auth (Entra ID) in front
+     of the app; the app itself stays auth-agnostic (headers only prefill
+     the checkout form).
 
 Run locally:
   DATABASE_URL=postgresql://postgres:postgres@localhost:5433/warehouse \
   SYNC_TOKEN=dev-token uvicorn app:app --port 8100   (from cloud/)
 """
 
+import base64
+import binascii
 import hmac
+import json
 import os
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import Body, FastAPI, Form, Header, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import Body, FastAPI, Header, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -121,6 +126,23 @@ def _last_synced(db):
     return db.meta_get("last_exchange_at", "")
 
 
+def _user_from_headers(request: Request):
+    """Signed-in user per App Service Easy Auth, for prefilling checkout.
+    Absent headers (local runs, auth not enabled yet) mean manual entry --
+    the app stays auth-agnostic."""
+    email = request.headers.get("x-ms-client-principal-name", "").strip()
+    name = ""
+    principal = request.headers.get("x-ms-client-principal", "")
+    if principal:
+        try:
+            claims = json.loads(base64.b64decode(principal)).get("claims", [])
+            name = next((c.get("val", "") for c in claims
+                         if c.get("typ") == "name"), "")
+        except (ValueError, binascii.Error):
+            pass
+    return {"name": name, "email": email}
+
+
 @app.get("/")
 def inventory_page(request: Request):
     db, err = _db_or_503()
@@ -128,53 +150,32 @@ def inventory_page(request: Request):
         return templates.TemplateResponse(request, "error.html", {
             "message": state.db_error}, status_code=503)
     return templates.TemplateResponse(request, "inventory.html", {
-        "types": db.inventory_summary(),
+        "stock": db.stock_rows(),
+        "buildings": db.buildings(),
         "counts": db.counts(),
         "last_synced": _last_synced(db),
+        "user": _user_from_headers(request),
         "active": "inventory",
     })
 
 
 @app.get("/requests")
-def requests_page(request: Request, ok: str = "", error: str = ""):
+def requests_page(request: Request, ok: str = ""):
     db, err = _db_or_503()
     if err:
         return templates.TemplateResponse(request, "error.html", {
             "message": state.db_error}, status_code=503)
     return templates.TemplateResponse(request, "requests.html", {
-        "requests": db.list_requests(),
-        "item_types": db.item_types(),
+        "orders": db.list_orders(),
         "counts": db.counts(),
         "last_synced": _last_synced(db),
         "submitted": ok,
-        "error": error,
         "active": "requests",
     })
 
 
-@app.post("/requests")
-def submit_request(item_type: str = Form(""),
-                   quantity: str = Form("1"),
-                   building: str = Form(""),
-                   jobsite: str = Form(""),
-                   requester: str = Form(""),
-                   contact: str = Form(""),
-                   note: str = Form("")):
-    """Plain form post from the site; redirects back with the outcome."""
-    db, err = _db_or_503()
-    if err:
-        return err
-    result = db.create_request(item_type, quantity, building, jobsite,
-                               requester, contact, note)
-    if result.get("ok"):
-        return RedirectResponse(f"/requests?ok={result['request']['id']}",
-                                status_code=303)
-    return RedirectResponse(f"/requests?error={result.get('message', '')}",
-                            status_code=303)
-
-
 # ---------------------------------------------------------------------------
-# JSON API (same data as the pages, for programmatic use)
+# JSON API (the cart UI plus programmatic use)
 # ---------------------------------------------------------------------------
 class RequestBody(BaseModel):
     item_type: str
@@ -186,12 +187,37 @@ class RequestBody(BaseModel):
     note: str = ""
 
 
+class CartLine(BaseModel):
+    item_type: str
+    building: str = ""     # the stock row's building ('' = unassigned)
+    quantity: int = 1
+
+
+class CartBody(BaseModel):
+    requester: str = ""
+    contact: str = ""
+    jobsite: str = ""
+    note: str = ""
+    delivery_building: str = ""
+    lines: List[CartLine] = []
+
+
 @app.get("/api/inventory")
 def api_inventory():
     db, err = _db_or_503()
     if err:
         return err
     return {"types": db.inventory_summary(), "counts": db.counts(),
+            "last_synced": _last_synced(db)}
+
+
+@app.get("/api/stock")
+def api_stock():
+    """Requestable stock rows for the cart UI (refresh + re-validation)."""
+    db, err = _db_or_503()
+    if err:
+        return err
+    return {"stock": db.stock_rows(), "buildings": db.buildings(),
             "last_synced": _last_synced(db)}
 
 
@@ -211,6 +237,22 @@ def api_create_request(body: RequestBody):
     return db.create_request(body.item_type, body.quantity, body.building,
                              body.jobsite, body.requester, body.contact,
                              body.note)
+
+
+@app.post("/api/requests/cart")
+def api_create_cart(body: CartBody):
+    """Submit a whole cart. Per-line availability errors come back with a 400
+    so the UI can mark the offending lines."""
+    db, err = _db_or_503()
+    if err:
+        return err
+    result = db.create_cart_request(
+        body.requester, body.contact, body.jobsite, body.note,
+        body.delivery_building,
+        [line.model_dump() for line in body.lines])
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=400)
+    return result
 
 
 if __name__ == "__main__":

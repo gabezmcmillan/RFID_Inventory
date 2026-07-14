@@ -16,8 +16,8 @@
       <h1 class="brand-app">Switch Warehouse</h1>
     </div>
     <nav class="nav">
-      <a href="/" class="{{ 'active' if active == 'inventory' else '' }}">Inventory</a>
-      <a href="/requests" class="{{ 'active' if active == 'requests' else '' }}">Request materials</a>
+      <a href="/" class="{{ 'active' if active == 'inventory' else '' }}">Browse &amp; request</a>
+      <a href="/requests" class="{{ 'active' if active == 'requests' else '' }}">Orders</a>
     </nav>
   </header>
 
@@ -36,5 +36,6 @@
     </span>
     <span>Questions about an order? Contact the warehouse manager.</span>
   </footer>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -172,7 +172,9 @@ class Database:
                     created_at   TEXT NOT NULL DEFAULT '',
                     handled_at   TEXT NOT NULL DEFAULT '',
                     handler_note TEXT NOT NULL DEFAULT '',
-                    status_dirty INTEGER NOT NULL DEFAULT 0
+                    status_dirty INTEGER NOT NULL DEFAULT 0,
+                    -- Lines submitted together as one cart order share a ref.
+                    order_ref    TEXT NOT NULL DEFAULT ''
                 );
                 -- Sync watermarks / bookkeeping for sync.py (key/value).
                 CREATE TABLE IF NOT EXISTS sync_state (
@@ -235,6 +237,12 @@ class Database:
         # legacy rows and manual check-ins have no document.
         if "bol_doc_id" not in have:
             self._conn.execute("ALTER TABLE tags ADD COLUMN bol_doc_id INTEGER")
+        # Cart orders on the cloud site: lines of one order share an order_ref.
+        have_req = {row["name"] for row in
+                    self._conn.execute("PRAGMA table_info(requests)").fetchall()}
+        if "order_ref" not in have_req:
+            self._conn.execute(
+                "ALTER TABLE requests ADD COLUMN order_ref TEXT NOT NULL DEFAULT ''")
         # Multi-unit columns: a tag (box) can represent N units. Older rows were
         # one-unit-per-tag, so they default to quantity = remaining = 1, except
         # already-delivered boxes which have nothing left (remaining = 0).
@@ -1284,7 +1292,8 @@ class Database:
                 "contact": row["contact"], "note": row["note"],
                 "status": row["status"], "created_at": row["created_at"],
                 "handled_at": row["handled_at"],
-                "handler_note": row["handler_note"]}
+                "handler_note": row["handler_note"],
+                "order_ref": row["order_ref"]}
 
     def upsert_pulled_requests(self, rows):
         """Store request rows pulled from the cloud. Idempotent.
@@ -1306,14 +1315,15 @@ class Database:
                     continue
                 self._conn.execute(
                     "INSERT INTO requests (id, item_type, quantity, building, "
-                    "jobsite, requester, contact, note, status, created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "jobsite, requester, contact, note, status, created_at, "
+                    "order_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (rid, str(r.get("item_type") or ""),
                      _as_quantity(r.get("quantity")),
                      str(r.get("building") or ""), str(r.get("jobsite") or ""),
                      str(r.get("requester") or ""), str(r.get("contact") or ""),
                      str(r.get("note") or ""), REQUEST_PENDING,
-                     str(r.get("created_at") or _now())))
+                     str(r.get("created_at") or _now()),
+                     str(r.get("order_ref") or "")))
                 self._log("REQUEST", "", str(r.get("item_type") or ""),
                           building=str(r.get("building") or ""),
                           detail=(f"#{rid}: {r.get('quantity') or 1} x "

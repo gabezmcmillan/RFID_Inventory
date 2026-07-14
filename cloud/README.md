@@ -3,10 +3,11 @@
 The lightweight, employee-facing half of the RFID inventory system
 (`switch-warehouse.brasfieldgorrie.com`):
 
-- **Read-only inventory view** mirrored from the warehouse manager's
-  `RFIDInventory.exe` (the .exe stays the source of truth).
-- **Material request form** — requests queue in Postgres and flow down to the
-  .exe on its next sync.
+- **Browse & request** — the mirrored stock table (from the warehouse
+  manager's `RFIDInventory.exe`, which stays the source of truth) doubles as
+  a shopping cart: pick rows, set quantities capped at availability, and
+  check out with contact/jobsite/notes. Orders queue in Postgres and flow
+  down to the .exe on its next sync.
 - **`POST /sync/exchange`** — the private, token-authenticated endpoint the
   .exe calls. The cloud never calls into the warehouse PC.
 

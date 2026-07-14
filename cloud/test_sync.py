@@ -8,7 +8,10 @@ local SQLite Database + SyncWorker against it, and checks the full round trip:
 
   1. check-in on the "exe" side -> appears in the cloud inventory API/pages
   2. no-change cycles skip the snapshot (hash watermark)
-  3. request submitted on the site -> lands in the exe as pending
+  3. request submitted on the site -> lands in the exe as pending, and the
+     cart endpoint validates availability (zero stock, over-quantity, lines
+     jointly exceeding stock) before creating an order of N lines that share
+     an order_ref
   4. staging round trip: Fulfill shows "staging for exit" on the site, cancel
      reverts to pending, and fulfill_request commits the checkout draws +
      fulfilled status together (short fulfillment requires a note)
@@ -152,6 +155,63 @@ def main():
         check("sync_requests event fired for the UI",
               any(e.get("event") == "sync_requests" for e in events))
 
+        # -- 3b. cart orders validate against mirrored stock -------------------
+        bad = http.post(f"{BASE}/api/requests", json={
+            "item_type": "TSC", "quantity": 999, "requester": "E2E Bot"},
+            timeout=5).json()
+        check("legacy API rejects over-quantity", not bad.get("ok"), str(bad))
+        bad = http.post(f"{BASE}/api/requests", json={
+            "item_type": "Ghost Item", "quantity": 1, "requester": "E2E Bot"},
+            timeout=5).json()
+        check("legacy API rejects zero-stock item", not bad.get("ok"), str(bad))
+
+        bad = http.post(f"{BASE}/api/requests/cart", json={
+            "requester": "E2E Bot", "delivery_building": "7",
+            "lines": [{"item_type": "TSC", "building": "7", "quantity": 999}]},
+            timeout=5)
+        check("cart over-quantity line rejected (400)", bad.status_code == 400,
+              bad.text)
+        body = bad.json()
+        check("cart error names the offending line",
+              (body.get("errors") or [{}])[0].get("line") == 0
+              and "Only 10" in body["errors"][0]["message"], str(body))
+        bad = http.post(f"{BASE}/api/requests/cart", json={
+            "requester": "E2E Bot", "delivery_building": "7",
+            "lines": [{"item_type": "Ghost Item", "building": "7",
+                       "quantity": 1}]}, timeout=5)
+        check("cart zero-stock line rejected", bad.status_code == 400, bad.text)
+        bad = http.post(f"{BASE}/api/requests/cart", json={
+            "requester": "E2E Bot", "delivery_building": "7",
+            "lines": [{"item_type": "TSC", "building": "7", "quantity": 6},
+                      {"item_type": "TSC", "building": "7", "quantity": 6}]},
+            timeout=5)
+        check("cart lines jointly exceeding stock rejected",
+              bad.status_code == 400
+              and len(bad.json().get("errors") or []) == 2, bad.text)
+        bad = http.post(f"{BASE}/api/requests/cart", json={
+            "requester": "E2E Bot", "delivery_building": "",
+            "lines": [{"item_type": "TSC", "building": "7", "quantity": 1}]},
+            timeout=5)
+        check("cart without a delivery building rejected",
+              bad.status_code == 400, bad.text)
+
+        cart = http.post(f"{BASE}/api/requests/cart", json={
+            "requester": "E2E Bot", "contact": "e2e@example.com",
+            "jobsite": "Switch 4", "note": "cart e2e",
+            "delivery_building": "7",
+            "lines": [{"item_type": "TSC", "building": "7", "quantity": 2},
+                      {"item_type": "CDU", "building": "8", "quantity": 1}]},
+            timeout=5).json()
+        check("valid cart accepted", cart.get("ok"), str(cart))
+        check("cart returns an order_ref and one id per line",
+              bool(cart.get("order_ref")) and len(cart.get("ids") or []) == 2,
+              str(cart))
+        worker.exchange()
+        local = {x["id"]: x for x in db.list_requests()}
+        refs = {local[i]["order_ref"] for i in cart["ids"] if i in local}
+        check("cart lines pulled into exe sharing the order_ref",
+              refs == {cart["order_ref"]}, str(refs))
+
         # -- 4. staging + checkout-driven fulfillment --------------------------
         def cloud_request():
             rows = http.get(f"{BASE}/api/requests", timeout=5).json()["requests"]
@@ -212,8 +272,8 @@ def main():
         check("cloud inventory reflects the fulfillment draw (8 TSC left)",
               by_type.get("TSC", {}).get("units") == 8, str(by_type.get("TSC")))
         rpage = http.get(f"{BASE}/requests", timeout=5).text
-        check("requests page renders status + form",
-              "fulfilled" in rpage and "New request" in rpage)
+        check("orders page renders line status + order ref",
+              "fulfilled" in rpage and cart["order_ref"] in rpage)
         check("already-fulfilled request cannot be re-fulfilled",
               not db.fulfill_request(rid, [{"epc": "E2E00003"}], "x")["ok"])
 
