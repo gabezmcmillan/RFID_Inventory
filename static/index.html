@@ -129,7 +129,23 @@
 
       <!-- Check Out (deliver to site) -->
       <div id="checkout-view" class="view hidden">
-        <p class="hint">Point the reader at a tag and pull the trigger to deliver it to site.
+        <!-- Shown while fulfilling a material request: staged boxes accumulate
+             here and nothing is committed until Confirm delivery. -->
+        <div id="request-banner" class="request-banner hidden">
+          <div class="request-banner-head">
+            <div>
+              <span class="request-banner-label">Fulfilling request</span>
+              <strong id="request-banner-title"></strong>
+            </div>
+            <span id="request-banner-progress" class="request-banner-progress"></span>
+          </div>
+          <div id="request-staged-list" class="request-staged-list"></div>
+          <div class="request-banner-actions">
+            <button id="request-cancel-btn" class="back-btn">Cancel staging</button>
+            <button id="request-confirm-btn" class="primary-btn" disabled>Confirm delivery</button>
+          </div>
+        </div>
+        <p class="hint" id="checkout-hint">Point the reader at a tag and pull the trigger to deliver it to site.
           Scan the same tag a second time (or press Confirm delivery) to finalize.</p>
       </div>
 
@@ -235,8 +251,9 @@
       <div id="requests-view" class="view hidden">
         <div class="wh-controls">
           <span class="hint requests-hint">Jobsite users submit these on the
-            cloud site; they arrive here on each sync. Fulfilling or declining
-            is reported back on the next sync.</span>
+            cloud site; they arrive here on each sync. Fulfill opens the
+            check-out screen to scan the boxes; the request completes when you
+            confirm delivery there.</span>
           <span class="wh-controls-spacer"></span>
           <span id="sync-detail" class="hint sync-detail"></span>
           <button id="sync-now-btn" class="back-btn">Sync now</button>

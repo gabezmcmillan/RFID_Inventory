@@ -184,6 +184,62 @@ main {
 .request-handled { margin-top: 8px; }
 .request-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .sync-detail { white-space: nowrap; }
+.badge-staging { color: var(--accent-2); border-color: rgba(0, 32, 112, 0.35); }
+
+/* Staging banner in the checkout view (fulfilling a material request) */
+.request-banner {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent-2);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.request-banner-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.request-banner-label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+}
+.request-banner-progress { font-weight: 700; color: var(--amber); }
+.request-banner-progress.request-progress-done { color: var(--green); }
+.request-staged-list { margin: 12px 0; display: flex; flex-direction: column; gap: 6px; }
+.staged-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 14px;
+}
+.staged-qty { font-weight: 700; color: var(--accent-2); }
+.staged-desc { flex: 1; }
+.staged-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  width: 26px; height: 26px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.staged-remove:hover { color: var(--red); border-color: var(--red); }
+.request-banner-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 
 /* Panel */
 .panel {

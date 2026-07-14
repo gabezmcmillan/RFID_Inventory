@@ -48,6 +48,8 @@ const state = {
                checked_out_from: "", checked_out_to: "" },
   sweep: null,         // sweep session accumulator (see newSweepSession)
   pendingCheckout: null, // checkout_prompt currently awaiting confirmation
+  activeRequest: null, // material request being fulfilled in checkout mode
+  stagedDraws: [],     // staged checkout draws for it [{epc, amount, building, ...}]
   eventFilter: "all",  // event-log filter category
   finder: null,        // {epc, rssiMin, rssiMax, proxEma, samples, found}
   admin: { pin: null, editMode: false },
@@ -313,7 +315,10 @@ async function openMode(mode, opts = {}) {
     await setServerMode("idle");
   } else if (mode === "checkout") {
     await setServerMode("checkout");
-    showScanner("Ready \u2014 pull the trigger to deliver to site");
+    renderRequestBanner();
+    showScanner(state.activeRequest
+      ? "Scan a box to stage it for this request"
+      : "Ready \u2014 pull the trigger to deliver to site");
   } else if (mode === "inventory") {
     resetSweepSession();
     await setServerMode("inventory");
@@ -1300,7 +1305,10 @@ function handleCheckoutScan(msg) {
   const group = $("checkout-bldg-group");
   const dest = group ? (group.dataset.value || "") : "";
   const home = String(pending.building || "");
-  if (dest && home && dest !== home) {
+  // While fulfilling a request the destination is the requester's choice, so
+  // a mismatch with the box's home building is expected — skip the modal (the
+  // draw still gets flagged in the DB when it commits).
+  if (dest && home && dest !== home && !state.activeRequest) {
     // Case b: destination differs from the building the box is assigned to.
     showModal("Different building",
       `<p>This box is assigned to Building <b>${escapeHtml(home)}</b> but is being
@@ -1315,24 +1323,74 @@ function handleCheckoutScan(msg) {
 }
 
 function onCheckoutPrompt(msg) {
+  const req = state.activeRequest;
   if (!msg.ok) {
     state.pendingCheckout = null;
     showResult("warn", "Cannot deliver",
       `<p class="epc">${escapeHtml(msg.epc || "")}</p>
        <p>${escapeHtml(msg.message)}</p>`);
     logActivity(msg.message, "warn");
-    showScanner("Ready \u2014 pull the trigger to deliver to site");
+    showScanner(req ? "Scan a box to stage it for this request"
+                    : "Ready \u2014 pull the trigger to deliver to site");
     return;
   }
+
+  if (req) {
+    // Already in the staged list: point at the banner instead of re-adding.
+    if (state.stagedDraws.some((d) => d.epc === msg.epc)) {
+      state.pendingCheckout = null;
+      showResult("warn", "Already staged",
+        `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
+           <span class="epc">${escapeHtml(msg.epc)}</span></p>
+         <p>This box is already staged for request #${req.id}. Remove it from
+           the staged list above if you scanned it by mistake.</p>`);
+      showScanner("Scan a box to stage it for this request");
+      return;
+    }
+    // Wrong item type: allow it, but only with an explicit override.
+    if (req.item_type && msg.item_type && msg.item_type !== req.item_type) {
+      showModal("Different item type",
+        `<p>Request #${req.id} asks for <b>${escapeHtml(req.item_type)}</b>,
+           but this box is <b>${escapeHtml(msg.item_type)}</b>
+           (<span class="epc">${escapeHtml(msg.epc)}</span>).</p>
+         <p>Stage it anyway?</p>`,
+        [{ label: "Stage anyway", cls: "primary-btn",
+           onClick: () => showCheckoutCard(msg) },
+         { label: "Skip this box", cls: "back-btn" }]);
+      logActivity(`Type mismatch for request #${req.id}: scanned ` +
+                  `${msg.item_type}, requested ${req.item_type}`, "warn");
+      return;
+    }
+  }
+  showCheckoutCard(msg);
+}
+
+// The per-box confirm card. Outside a request it commits a checkout draw
+// immediately; while fulfilling a request it only adds the draw to the
+// staged list (nothing hits the DB until Confirm delivery).
+function showCheckoutCard(msg) {
+  const req = state.activeRequest;
   state.pendingCheckout = msg;
   const remaining = msg.remaining;
   const quantity = msg.quantity;
   const buildings = state.config.building_options || [];
-  const defaultBldg = String(msg.building || "");
+  const needed = req ? Math.max(0, req.quantity - stagedTotal()) : 0;
+  const defaultAmount = req
+    ? Math.max(1, Math.min(remaining, needed || 1)) : remaining;
+  const defaultBldg = req && req.building
+    ? String(req.building) : String(msg.building || "");
   const bldgBtns = buildings.map((b) =>
     `<button type="button" class="opt-btn checkout-bldg-btn${String(b) === defaultBldg ? " active" : ""}"
        data-building="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join("");
-  showResult("ok", "How many units leave?",
+  const title = req ? `Add to staging (request #${req.id})`
+                    : "How many units leave?";
+  const btnLabel = req ? "Add to staging" : "Confirm delivery";
+  const hint = req
+    ? `Defaults to what the request still needs. Scan this tag again or press
+       Add to staging to add it to the list.`
+    : `Defaults to the whole box. Lower it to deliver part of the box.
+       Scan this tag again or press Confirm delivery to finish.`;
+  showResult("ok", title,
     `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
        <span class="epc">${escapeHtml(msg.epc)}</span></p>
      <table>
@@ -1347,14 +1405,14 @@ function onCheckoutPrompt(msg) {
             data-value="${escapeHtml(defaultBldg)}">${bldgBtns}</div>
      </div>
      <div class="checkout-confirm">
-       <label for="checkout-amount">Units to deliver</label>
+       <label for="checkout-amount">Units to ${req ? "stage" : "deliver"}</label>
        <input id="checkout-amount" type="number" min="1" max="${remaining}"
-              step="1" value="${remaining}" />
-       <button id="checkout-confirm-btn" class="primary-btn">Confirm delivery</button>
+              step="1" value="${defaultAmount}" />
+       <button id="checkout-confirm-btn" class="primary-btn">${btnLabel}</button>
      </div>
-     <p class="hint">Defaults to the whole box. Lower it to deliver part of the box.
-       Scan this tag again or press Confirm delivery to finish.</p>`);
-  showScanner("Scan the same tag again to confirm delivery");
+     <p class="hint">${hint}</p>`);
+  showScanner(req ? "Scan the same tag again to add it to staging"
+                  : "Scan the same tag again to confirm delivery");
   const group = $("checkout-bldg-group");
   group.querySelectorAll(".checkout-bldg-btn").forEach((b) => {
     b.onclick = () => {
@@ -1381,6 +1439,10 @@ async function confirmCheckout(epc, remaining) {
   if (amount > remaining) amount = remaining;
   const group = $("checkout-bldg-group");
   const building = group ? (group.dataset.value || "") : "";
+  if (state.activeRequest) {
+    stageDraw({ epc, amount, building });
+    return;
+  }
   try {
     const res = await fetch("/api/checkout", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -1390,6 +1452,216 @@ async function confirmCheckout(epc, remaining) {
   } catch (e) {
     logActivity("Cannot reach server", "err");
   }
+}
+
+// -- request staging (checkout mode driven from a material request) -----------
+function stagedTotal() {
+  return state.stagedDraws.reduce((sum, d) => sum + (d.amount || 0), 0);
+}
+
+function stageDraw(draw) {
+  const box = state.pendingCheckout || {};
+  state.stagedDraws.push({
+    epc: draw.epc, amount: draw.amount, building: draw.building,
+    item_type: box.item_type || "", bol_number: box.bol_number || "",
+  });
+  state.pendingCheckout = null;
+  hide("result");
+  renderRequestBanner();
+  const req = state.activeRequest;
+  logActivity(`Staged ${draw.amount} unit(s) of ${box.item_type || draw.epc} ` +
+              `for request #${req.id}`, "ok");
+  showScanner("Scan the next box, or press Confirm delivery when done");
+}
+
+function renderRequestBanner() {
+  const banner = $("request-banner");
+  if (!banner) return;
+  const req = state.activeRequest;
+  if (!req || state.mode !== "checkout") {
+    banner.classList.add("hidden");
+    return;
+  }
+  banner.classList.remove("hidden");
+  const dest = [req.building && `Bldg ${req.building}`, req.jobsite]
+    .filter(Boolean).join(" \u00b7 ");
+  $("request-banner-title").textContent =
+    `#${req.id} \u2014 ${req.quantity} \u00d7 ${req.item_type}` +
+    (dest ? ` \u2192 ${dest}` : "");
+  const total = stagedTotal();
+  const progress = $("request-banner-progress");
+  progress.textContent = `${total} of ${req.quantity} unit(s) staged`;
+  progress.classList.toggle("request-progress-done", total >= req.quantity);
+
+  const list = $("request-staged-list");
+  if (!state.stagedDraws.length) {
+    list.innerHTML = `<p class="hint">Nothing staged yet — scan a box to add it.</p>`;
+  } else {
+    list.innerHTML = state.stagedDraws.map((d, i) => `
+      <div class="staged-row">
+        <span class="staged-qty">${d.amount}\u00d7</span>
+        <span class="staged-desc"><b>${escapeHtml(d.item_type)}</b>
+          <span class="epc">${escapeHtml(d.epc)}</span>
+          ${d.bol_number ? `\u00b7 BOL ${escapeHtml(d.bol_number)}` : ""}
+          ${d.building ? `\u2192 Bldg ${escapeHtml(d.building)}` : ""}</span>
+        <button class="staged-remove" data-i="${i}" title="Remove">&times;</button>
+      </div>`).join("");
+    list.querySelectorAll(".staged-remove").forEach((b) => {
+      b.onclick = () => {
+        state.stagedDraws.splice(parseInt(b.dataset.i, 10), 1);
+        renderRequestBanner();
+      };
+    });
+  }
+  $("request-confirm-btn").disabled = !state.stagedDraws.length;
+}
+
+function clearRequestContext() {
+  state.activeRequest = null;
+  state.stagedDraws = [];
+  renderRequestBanner();
+}
+
+// Fulfill clicked on a pending card (moves it to staging on the cloud too),
+// or Resume clicked on a card already staging.
+async function startRequestFulfillment(r) {
+  if (r.status === "pending") {
+    try {
+      const res = await fetch("/api/requests/handle", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: r.id, status: "staging", note: "" }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        logActivity(data.message || "Could not start staging", "err");
+        await loadRequests();
+        return;
+      }
+      r = data.request || r;
+    } catch (e) {
+      logActivity("Cannot reach server", "err");
+      return;
+    }
+  }
+  // Keep the cart when resuming the same request; starting a different one
+  // (or starting fresh) begins empty.
+  if (!state.activeRequest || state.activeRequest.id !== r.id) {
+    state.stagedDraws = [];
+  }
+  state.activeRequest = r;
+  await openMode("checkout");
+}
+
+function cancelRequestStaging(id) {
+  showModal(`Cancel staging for request #${id}?`,
+    `<p>Nothing has been checked out yet — the request simply goes back to
+        pending.</p>`,
+    [{ label: "Cancel staging", cls: "danger-btn",
+       onClick: async () => {
+         try {
+           const res = await fetch("/api/requests/handle", {
+             method: "POST", headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({ id, status: "pending", note: "" }),
+           });
+           const data = await res.json();
+           logActivity(data.message || `Request #${id} back to pending`,
+                       data.ok ? "ok" : "err");
+         } catch (e) {
+           logActivity("Cannot reach server", "err");
+         }
+         if (state.activeRequest && state.activeRequest.id === id) {
+           clearRequestContext();
+         }
+         if (state.mode === "checkout") {
+           await openMode("requests");
+         } else {
+           await loadRequests();
+         }
+       } },
+     { label: "Keep staging", cls: "back-btn" }]);
+}
+
+// Confirm delivery pressed: summarize, collect the note (required when the
+// staged total is short of the request), then commit via /api/requests/fulfill.
+function confirmRequestDelivery() {
+  const req = state.activeRequest;
+  if (!req || !state.stagedDraws.length) return;
+  const total = stagedTotal();
+  const short = total < req.quantity;
+  const shortWarn = short
+    ? `<p class="flag-warning"><strong>&#9888; Only ${total} of ${req.quantity}
+         unit(s) staged.</strong> A note for the requester is required.</p>`
+    : "";
+  showModal(`Confirm delivery for request #${req.id}?`,
+    `${shortWarn}
+     <p>${total} unit(s) of <b>${escapeHtml(req.item_type)}</b> from
+        ${state.stagedDraws.length} box(es) will be checked out, and the
+        request marked fulfilled on the cloud site.</p>
+     <label class="edit-field"><span>Note for the requester${short ? " (required)" : " (optional)"}</span>
+       <input id="request-fulfill-note" type="text" maxlength="200"
+         placeholder="${short ? "e.g. Remainder ships next week" : "e.g. On Tuesday's truck"}" />
+     </label>`,
+    [{ label: "Confirm delivery", cls: "primary-btn",
+       onClick: () => submitRequestFulfill() },
+     { label: "Back", cls: "back-btn" }]);
+  const input = $("request-fulfill-note");
+  if (input) input.focus();
+}
+
+async function submitRequestFulfill() {
+  const req = state.activeRequest;
+  const input = $("request-fulfill-note");
+  const note = input ? input.value.trim() : "";
+  const total = stagedTotal();
+  if (total < req.quantity && !note) {
+    logActivity("A note is required when fulfilling short", "warn");
+    confirmRequestDelivery();
+    return;
+  }
+  let data;
+  try {
+    const res = await fetch("/api/requests/fulfill", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: req.id,
+        draws: state.stagedDraws.map((d) => (
+          { epc: d.epc, amount: d.amount, building: d.building })),
+        note,
+      }),
+    });
+    data = await res.json();
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+    return;
+  }
+  if (!data.ok) {
+    logActivity(data.message || "Could not fulfill request", "err");
+    if (data.note_required) confirmRequestDelivery();
+    return;
+  }
+  const draws = data.results || [];
+  const okDraws = draws.filter((r) => r.ok);
+  const failed = draws.filter((r) => !r.ok);
+  const rows = okDraws.map((r) => `
+    <tr><td>${r.delivered}\u00d7 ${escapeHtml(r.item_type || "")}</td>
+        <td><span class="epc">${escapeHtml(r.epc)}</span></td>
+        <td>${r.checkout_building ? `Bldg ${escapeHtml(r.checkout_building)}` : ""}</td></tr>`).join("");
+  const failHtml = failed.length
+    ? `<p class="flag-warning"><strong>&#9888; ${failed.length} box(es) could not
+         be delivered:</strong> ${failed.map((r) => escapeHtml(r.message || r.epc)).join("; ")}</p>`
+    : "";
+  const flags = okDraws.filter((r) => r.flag);
+  const flagHtml = flags.length
+    ? `<p class="hint">${flags.map((r) => escapeHtml(r.flag)).join("<br>")}</p>` : "";
+  logActivity(data.message, data.short || failed.length ? "warn" : "ok");
+  clearRequestContext();
+  await openMode("requests");
+  showResult(data.short || failed.length ? "warn" : "ok",
+    `Request #${req.id} fulfilled`,
+    `${failHtml}
+     <p>${data.delivered} of ${data.requested} requested unit(s) delivered.
+        The requester sees the outcome after the next sync.</p>
+     ${rows ? `<table>${rows}</table>` : ""}${flagHtml}`);
 }
 
 function onCheckoutResult(msg) {
@@ -2081,8 +2353,10 @@ async function exportWarehousePdf() {
 // here. Fulfill/decline updates local state immediately and is pushed back to
 // the cloud on the next sync (which /api/requests/handle kicks off).
 const REQUEST_BADGE = {
-  pending: "badge-partial", fulfilled: "badge-in", declined: "badge-out",
+  pending: "badge-partial", staging: "badge-staging",
+  fulfilled: "badge-in", declined: "badge-out",
 };
+const REQUEST_STATUS_LABEL = { staging: "staging for exit" };
 
 function updateSyncDetail() {
   const el = $("sync-detail");
@@ -2130,30 +2404,40 @@ function renderRequests(rows) {
       here when someone submits one on the cloud site.</p>`;
     return;
   }
+  const requestsById = {};
   const html = rows.map((r) => {
+    requestsById[r.id] = r;
     const badgeCls = REQUEST_BADGE[r.status] || "badge-partial";
+    const badgeTxt = REQUEST_STATUS_LABEL[r.status] || r.status;
     const who = [r.requester, r.jobsite && `Jobsite: ${r.jobsite}`,
                  r.building && `Bldg ${r.building}`, r.contact]
       .filter(Boolean).map(escapeHtml).join(" \u00b7 ");
     const note = r.note
       ? `<div class="request-note">\u201C${escapeHtml(r.note)}\u201D</div>` : "";
-    const handled = r.status !== "pending"
+    const handled = (r.status === "fulfilled" || r.status === "declined")
       ? `<div class="request-handled hint">${escapeHtml(r.status)}
            ${r.handled_at ? escapeHtml(fmtDateTime(r.handled_at)) : ""}
            ${r.handler_note ? `\u2014 ${escapeHtml(r.handler_note)}` : ""}</div>`
       : "";
-    const actions = r.status === "pending"
-      ? `<div class="request-actions">
+    let actions = "";
+    if (r.status === "pending") {
+      actions = `<div class="request-actions">
            <button class="primary-btn req-fulfill" data-id="${r.id}">Fulfill</button>
            <button class="danger-btn req-decline" data-id="${r.id}">Decline</button>
-         </div>`
-      : "";
-    return `<div class="request-card${r.status === "pending" ? " request-pending" : ""}">
+         </div>`;
+    } else if (r.status === "staging") {
+      actions = `<div class="request-actions">
+           <button class="primary-btn req-resume" data-id="${r.id}">Resume staging</button>
+           <button class="back-btn req-cancel" data-id="${r.id}">Cancel</button>
+         </div>`;
+    }
+    const open = r.status === "pending" || r.status === "staging";
+    return `<div class="request-card${open ? " request-pending" : ""}">
       <div class="request-main">
         <div class="request-title">
           <span class="request-qty">${r.quantity}\u00d7</span>
           <strong>${escapeHtml(r.item_type)}</strong>
-          <span class="badge ${badgeCls}">${escapeHtml(r.status)}</span>
+          <span class="badge ${badgeCls}">${escapeHtml(badgeTxt)}</span>
         </div>
         <div class="request-meta hint">#${r.id}
           \u00b7 ${escapeHtml(fmtDateTime(r.created_at))}
@@ -2163,25 +2447,28 @@ function renderRequests(rows) {
     </div>`;
   }).join("");
   wrap.innerHTML = html;
-  wrap.querySelectorAll(".req-fulfill").forEach((b) => {
-    b.onclick = () => confirmHandleRequest(parseInt(b.dataset.id, 10), "fulfilled");
+  wrap.querySelectorAll(".req-fulfill, .req-resume").forEach((b) => {
+    b.onclick = () => startRequestFulfillment(
+      requestsById[parseInt(b.dataset.id, 10)]);
   });
   wrap.querySelectorAll(".req-decline").forEach((b) => {
-    b.onclick = () => confirmHandleRequest(parseInt(b.dataset.id, 10), "declined");
+    b.onclick = () => confirmDeclineRequest(parseInt(b.dataset.id, 10));
+  });
+  wrap.querySelectorAll(".req-cancel").forEach((b) => {
+    b.onclick = () => cancelRequestStaging(parseInt(b.dataset.id, 10));
   });
 }
 
-function confirmHandleRequest(id, status) {
-  const verb = status === "fulfilled" ? "Fulfill" : "Decline";
-  showModal(`${verb} request #${id}?`,
+function confirmDeclineRequest(id) {
+  showModal(`Decline request #${id}?`,
     `<p>The requester sees this status (and your note) on the cloud site
         after the next sync.</p>
      <label class="edit-field"><span>Note (optional)</span>
        <input id="request-handle-note" type="text"
-         placeholder="e.g. Sent with Tuesday's truck" maxlength="200" />
+         placeholder="e.g. Out of stock until August" maxlength="200" />
      </label>`,
-    [{ label: verb, cls: status === "fulfilled" ? "primary-btn" : "danger-btn",
-       onClick: () => handleRequest(id, status) },
+    [{ label: "Decline", cls: "danger-btn",
+       onClick: () => handleRequest(id, "declined") },
      { label: "Cancel", cls: "back-btn" }]);
   const input = $("request-handle-note");
   if (input) input.focus();
@@ -2225,6 +2512,8 @@ const EVENT_LABELS = {
   NOTE: { label: "Note added", cls: "badge-in" },
   NOTE_DEL: { label: "Note deleted", cls: "badge-out" },
   REQUEST: { label: "Request received", cls: "badge-partial" },
+  REQUEST_STAGING: { label: "Staging for request", cls: "badge-partial" },
+  REQUEST_PENDING: { label: "Staging canceled", cls: "badge-partial" },
   REQUEST_FULFILLED: { label: "Request fulfilled", cls: "badge-in" },
   REQUEST_DECLINED: { label: "Request declined", cls: "badge-out" },
 };
@@ -2771,6 +3060,10 @@ function wireUI() {
   });
   $("bol-docs-refresh").onclick = loadBolDocs;
   $("requests-refresh").onclick = loadRequests;
+  $("request-confirm-btn").onclick = confirmRequestDelivery;
+  $("request-cancel-btn").onclick = () => {
+    if (state.activeRequest) cancelRequestStaging(state.activeRequest.id);
+  };
   $("sync-now-btn").onclick = syncNow;
   $("sync-pill").onclick = () => {
     if (state.sync && state.sync.enabled) syncNow();

@@ -27,7 +27,8 @@ from psycopg.rows import dict_row
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 REQUEST_PENDING = "pending"
-REQUEST_STATUSES = ("pending", "fulfilled", "declined")
+# staging = the warehouse manager is scanning boxes for the request right now.
+REQUEST_STATUSES = ("pending", "staging", "fulfilled", "declined")
 
 # Mirror-table columns, matching what the .exe's export_snapshot() sends
 # (db.py schema on the local side). Snapshot apply is a wholesale replace, so
@@ -328,13 +329,15 @@ class CloudDatabase:
         return self._run(work)
 
     def counts(self):
-        """Header numbers for the site: units in warehouse, pending requests."""
+        """Header numbers for the site: units in warehouse, open requests
+        (pending or being staged by the warehouse)."""
         def work(cur):
             cur.execute(
                 "SELECT COALESCE(SUM(remaining), 0) AS units FROM tags")
             units = cur.fetchone()["units"]
             cur.execute(
-                "SELECT COUNT(*) AS n FROM requests WHERE status='pending'")
+                "SELECT COUNT(*) AS n FROM requests "
+                "WHERE status IN ('pending', 'staging')")
             pending = cur.fetchone()["n"]
             return {"units": units, "requests_pending": pending}
         return self._run(work)
@@ -367,7 +370,7 @@ class CloudDatabase:
         def work(cur):
             cur.execute(
                 "SELECT * FROM requests ORDER BY "
-                "CASE WHEN status='pending' THEN 0 ELSE 1 END, id DESC "
-                "LIMIT %s", (limit,))
+                "CASE status WHEN 'staging' THEN 0 WHEN 'pending' THEN 0 "
+                "ELSE 1 END, id DESC LIMIT %s", (limit,))
             return cur.fetchall()
         return self._run(work)

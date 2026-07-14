@@ -68,7 +68,8 @@
           <td>{{ r.jobsite or r.building or "—" }}</td>
           <td>{{ r.requester }}<div class="sub">{{ (r.created_at or "")[:10] }}</div></td>
           <td>
-            <span class="badge badge-{{ r.status }}">{{ r.status }}</span>
+            <span class="badge badge-{{ r.status }}">{{
+              "staging for exit" if r.status == "staging" else r.status }}</span>
             {% if r.handler_note %}<div class="sub">“{{ r.handler_note }}”</div>{% endif %}
           </td>
         </tr>

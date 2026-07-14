@@ -172,6 +172,7 @@ form input:focus, form select:focus, form textarea:focus {
   text-transform: capitalize;
 }
 .badge-pending { color: #b25e00; border-color: rgba(178, 94, 0, 0.45); background: rgba(178, 94, 0, 0.07); }
+.badge-staging { color: #002070; border-color: rgba(0, 32, 112, 0.35); background: rgba(0, 32, 112, 0.06); }
 .badge-fulfilled { color: #1a7f4e; border-color: rgba(26, 127, 78, 0.45); background: rgba(26, 127, 78, 0.07); }
 .badge-declined { color: #c8102e; border-color: rgba(200, 16, 46, 0.35); background: rgba(200, 16, 46, 0.06); }
 

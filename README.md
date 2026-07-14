@@ -35,9 +35,13 @@ submit material requests that flow back into the app.
   sweep; a pulse speeds up as you get closer to the chosen tag (uses the reader's
   per-read RSSI).
 - **Requests** — material requests submitted on the cloud site, pulled in by
-  the sync worker (the mode card shows a pending-count badge). Fulfill or
-  decline each one with an optional note; the requester sees the outcome on
-  the site after the next sync.
+  the sync worker (the mode card shows an open-count badge). **Fulfill** opens
+  the Check Out screen in staging mode: scan each box for the request (nothing
+  is committed yet, and the site shows "staging for exit"), then **Confirm
+  delivery** checks the staged boxes out and marks the request fulfilled in
+  one step. Coming up short requires a note for the requester; canceling
+  staging returns the request to pending. Decline works from the panel as
+  before.
 
 ## Setup
 

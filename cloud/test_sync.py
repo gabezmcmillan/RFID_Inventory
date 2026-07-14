@@ -2,13 +2,16 @@
 End-to-end test of the .exe <-> cloud sync loop, all on this machine.
 
 Needs the Docker Postgres from README.md running (localhost:5433). The script
-starts its own cloud app on a scratch port, drives a real local SQLite
-Database + SyncWorker against it, and checks the full round trip:
+creates and uses a scratch database (warehouse_e2e) so it never touches the
+dev "warehouse" DB, starts its own cloud app on a scratch port, drives a real
+local SQLite Database + SyncWorker against it, and checks the full round trip:
 
   1. check-in on the "exe" side -> appears in the cloud inventory API/pages
   2. no-change cycles skip the snapshot (hash watermark)
   3. request submitted on the site -> lands in the exe as pending
-  4. exe fulfills it -> cloud shows fulfilled + the manager's note
+  4. staging round trip: Fulfill shows "staging for exit" on the site, cancel
+     reverts to pending, and fulfill_request commits the checkout draws +
+     fulfilled status together (short fulfillment requires a note)
   5. offline: exchanges against a dead port fail cleanly, changes queue up,
      and the next successful exchange catches the cloud up
   6. checkout (edit) and vendor add propagate via the snapshot
@@ -34,11 +37,27 @@ from db import Database                        # noqa: E402 (local SQLite side)
 from sync import (                             # noqa: E402
     K_EVENTS_PUSHED, K_SNAPSHOT_HASH, SyncWorker, snapshot_hash)
 
-PG_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/warehouse")
+# The test drops and rebuilds its whole database, so it must never point at
+# the "real" dev DB (the one the manually-run cloud app uses). Default to a
+# scratch DB inside the same Docker Postgres, created on first run.
+PG_URL = os.environ.get("DATABASE_URL", "")
+PG_ADMIN_URL = "postgresql://postgres:postgres@localhost:5433/postgres"
+PG_TEST_URL = "postgresql://postgres:postgres@localhost:5433/warehouse_e2e"
 TOKEN = "e2e-test-token"
 PORT = 8199
 BASE = f"http://127.0.0.1:{PORT}"
+
+
+def ensure_test_db():
+    global PG_URL
+    if PG_URL:
+        return                     # explicit override: caller knows best
+    with psycopg.connect(PG_ADMIN_URL, autocommit=True) as conn:
+        row = conn.execute("SELECT 1 FROM pg_database "
+                           "WHERE datname='warehouse_e2e'").fetchone()
+        if not row:
+            conn.execute("CREATE DATABASE warehouse_e2e")
+    PG_URL = PG_TEST_URL
 
 CHECKS = []
 
@@ -80,6 +99,7 @@ def start_cloud():
 
 def main():
     print("== E2E sync test ==")
+    ensure_test_db()
     wipe_cloud(full=True)
     cloud = start_cloud()
     events = []
@@ -132,18 +152,70 @@ def main():
         check("sync_requests event fired for the UI",
               any(e.get("event") == "sync_requests" for e in events))
 
-        # -- 4. fulfillment flows back ----------------------------------------
-        db.set_request_status(rid, "fulfilled", "sent on Tuesday truck")
+        # -- 4. staging + checkout-driven fulfillment --------------------------
+        def cloud_request():
+            rows = http.get(f"{BASE}/api/requests", timeout=5).json()["requests"]
+            return {x["id"]: x for x in rows}.get(rid, {})
+
+        # One-click fulfilled is gone: only pending<->staging/declined here.
+        res = db.set_request_status(rid, "fulfilled", "nope")
+        check("direct fulfilled transition is rejected", not res["ok"], str(res))
+
+        res = db.set_request_status(rid, "staging")
+        check("pending -> staging accepted", res["ok"], str(res))
         worker.exchange()
-        cloud_reqs = {x["id"]: x for x in
-                      http.get(f"{BASE}/api/requests", timeout=5).json()["requests"]}
+        check("cloud shows request staging",
+              cloud_request().get("status") == "staging", str(cloud_request()))
+        rpage = http.get(f"{BASE}/requests", timeout=5).text
+        check("site renders 'staging for exit' badge", "staging for exit" in rpage)
+
+        # Cancel: back to pending on both sides, nothing committed.
+        res = db.set_request_status(rid, "pending")
+        check("staging -> pending (cancel) accepted", res["ok"], str(res))
+        worker.exchange()
+        check("cloud back to pending after cancel",
+              cloud_request().get("status") == "pending")
+
+        # Fulfill for real: re-stage, then commit draws. The request asks for
+        # 3 TSC but only 2 get staged -> short, so a note is required and the
+        # handler note gets the "2 of 3 supplied" prefix.
+        db.set_request_status(rid, "staging")
+        short = db.fulfill_request(
+            rid, [{"epc": "E2E00001", "amount": 2, "building": "7"}], note="")
+        check("short fulfillment without a note is rejected",
+              not short["ok"] and short.get("note_required"), str(short))
+        tag = {t["epc"]: t for t in db.export_snapshot()["tags"]}["E2E00001"]
+        check("rejected fulfillment left the box untouched",
+              tag["remaining"] == 5, str(tag))
+
+        done = db.fulfill_request(
+            rid, [{"epc": "E2E00001", "amount": 2, "building": "7"}],
+            note="third unit ships next week")
+        check("fulfill_request commits the draws", done["ok"], str(done))
+        check("fulfill_request reports 2 of 3 delivered",
+              done.get("delivered") == 2 and done.get("short"), str(done))
+        tag = {t["epc"]: t for t in db.export_snapshot()["tags"]}["E2E00001"]
+        check("draw decremented the box (5 -> 3)",
+              tag["remaining"] == 3, str(tag))
+        check("request fulfilled locally",
+              {x["id"]: x for x in db.list_requests()}[rid]["status"] == "fulfilled")
+
+        worker.exchange()
         check("cloud shows request fulfilled",
-              cloud_reqs.get(rid, {}).get("status") == "fulfilled")
-        check("manager note visible on cloud",
-              cloud_reqs.get(rid, {}).get("handler_note") == "sent on Tuesday truck")
+              cloud_request().get("status") == "fulfilled")
+        check("shortfall note (with prefix) visible on cloud",
+              cloud_request().get("handler_note")
+              == "2 of 3 supplied -- third unit ships next week",
+              str(cloud_request()))
+        inv = http.get(f"{BASE}/api/inventory", timeout=5).json()
+        by_type = {t["item_type"]: t for t in inv["types"]}
+        check("cloud inventory reflects the fulfillment draw (8 TSC left)",
+              by_type.get("TSC", {}).get("units") == 8, str(by_type.get("TSC")))
         rpage = http.get(f"{BASE}/requests", timeout=5).text
         check("requests page renders status + form",
               "fulfilled" in rpage and "New request" in rpage)
+        check("already-fulfilled request cannot be re-fulfilled",
+              not db.fulfill_request(rid, [{"epc": "E2E00003"}], "x")["ok"])
 
         # -- 5. offline behavior ----------------------------------------------
         dead = SyncWorker(db, on_event=events.append,

@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 import bol_extract
 import config
+import db as db_mod
 import reader as reader_mod
 import scanner
 from reader import ReaderWorker
@@ -464,13 +465,25 @@ async def export_inventory_csv(bol: str = "", building: str = "",
 # ---------------------------------------------------------------------------
 class RequestHandleRequest(BaseModel):
     id: int
-    status: str          # "fulfilled" | "declined"
+    status: str          # "staging" | "pending" (cancel) | "declined"
+    note: str = ""
+
+
+class RequestDraw(BaseModel):
+    epc: str
+    amount: Optional[int] = None
+    building: Optional[str] = None
+
+
+class RequestFulfillRequest(BaseModel):
+    id: int
+    draws: List[RequestDraw]
     note: str = ""
 
 
 @app.get("/api/requests")
 async def get_requests(status: str = ""):
-    """Material requests for the Requests panel (pending first, newest first)."""
+    """Material requests for the Requests panel (open first, newest first)."""
     bad = _require_db()
     if bad:
         return bad
@@ -481,22 +494,49 @@ async def get_requests(status: str = ""):
     return {"requests": rows, "pending": pending}
 
 
+async def _broadcast_requests_update():
+    pending = await asyncio.get_running_loop().run_in_executor(
+        None, state.db.count_pending_requests)
+    await broadcast({"type": "requests_update", "added": 0, "pending": pending})
+
+
 @app.post("/api/requests/handle")
 async def handle_request(req: RequestHandleRequest):
-    """Manager resolves a request; the new status is pushed on the next sync."""
+    """Move a request between pending/staging/declined (fulfilling goes
+    through /api/requests/fulfill so inventory and status change together)."""
     bad = _require_db()
     if bad:
         return bad
+    if req.status not in (db_mod.REQUEST_PENDING, db_mod.REQUEST_STAGING,
+                          db_mod.REQUEST_DECLINED):
+        return JSONResponse(
+            {"ok": False, "message": f"Invalid request status: {req.status}"},
+            400)
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None, state.db.set_request_status, req.id, req.status, req.note)
     if result.get("ok"):
-        pending = await loop.run_in_executor(
-            None, state.db.count_pending_requests)
-        await broadcast({"type": "requests_update", "added": 0,
-                         "pending": pending})
+        await _broadcast_requests_update()
         if state.sync:
             state.sync.sync_now()   # tell the requester ASAP
+    return result
+
+
+@app.post("/api/requests/fulfill")
+async def fulfill_request(req: RequestFulfillRequest):
+    """Confirm delivery: commit the staged draws and mark the request
+    fulfilled in one transaction; the outcome is pushed on the next sync."""
+    bad = _require_db()
+    if bad:
+        return bad
+    draws = [d.model_dump() for d in req.draws]
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, state.db.fulfill_request, req.id, draws, req.note)
+    if result.get("ok"):
+        await _broadcast_requests_update()
+        if state.sync:
+            state.sync.sync_now()
     return result
 
 

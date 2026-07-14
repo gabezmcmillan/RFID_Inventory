@@ -39,11 +39,14 @@ STATUS_DELIVERED = "Delivered"
 STATUS_PARTIAL = "Partial"
 
 # Material-request lifecycle (rows are created by the cloud app; the manager
-# resolves them here).
+# resolves them here). staging = the manager is scanning boxes for it in the
+# checkout screen; fulfilled is only reachable through fulfill_request().
 REQUEST_PENDING = "pending"
+REQUEST_STAGING = "staging"
 REQUEST_FULFILLED = "fulfilled"
 REQUEST_DECLINED = "declined"
-REQUEST_STATUSES = (REQUEST_PENDING, REQUEST_FULFILLED, REQUEST_DECLINED)
+REQUEST_STATUSES = (REQUEST_PENDING, REQUEST_STAGING, REQUEST_FULFILLED,
+                    REQUEST_DECLINED)
 
 # group_by accepts these UI dimensions, mapped to tag columns.
 GROUP_COLUMNS = {"bol": "bol_number", "building": "building"}
@@ -695,69 +698,74 @@ class Database:
         chosen by the operator; if it differs from the building the box was
         received for, the tag is flagged.
         """
+        with self._lock:
+            result = self._deliver_units_locked(epc, amount, checkout_building)
+            self._conn.commit()
+        return result
+
+    def _deliver_units_locked(self, epc, amount=None, checkout_building=None):
+        """Core of one checkout draw. Caller holds self._lock and commits (so
+        fulfill_request can apply several draws in a single transaction)."""
         epc = epc.upper()
         ts = _now()
         delivered = _today()
         checkout_building = (checkout_building or "").strip()
 
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
+        row = self._conn.execute(
+            "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
 
-            if row is None:
-                self._log("OUT", epc, "UNKNOWN", detail="not registered")
-                self._conn.commit()
-                return {"ok": False, "message": f"{epc} is not registered.",
-                        "epc": epc}
+        if row is None:
+            self._log("OUT", epc, "UNKNOWN", detail="not registered")
+            return {"ok": False, "message": f"{epc} is not registered.",
+                    "epc": epc}
 
-            remaining = row["remaining"]
-            if remaining <= 0:
-                return {"ok": False,
-                        "message": f"{row['item_type']} ({epc}) is already fully delivered.",
-                        "epc": epc, "item_type": row["item_type"]}
+        remaining = row["remaining"]
+        if remaining <= 0:
+            return {"ok": False,
+                    "message": f"{row['item_type']} ({epc}) is already fully delivered.",
+                    "epc": epc, "item_type": row["item_type"]}
 
-            take = remaining if amount is None else _as_quantity(amount)
-            take = max(1, min(take, remaining))
-            new_remaining = remaining - take
+        take = remaining if amount is None else _as_quantity(amount)
+        take = max(1, min(take, remaining))
+        new_remaining = remaining - take
 
-            if new_remaining == 0:
-                new_status = STATUS_DELIVERED
-            else:
-                new_status = STATUS_PARTIAL
-            # Record the most recent checkout time on every draw (partial or
-            # full) so a partially delivered box still shows when it last went out.
-            delivered_at = ts
+        if new_remaining == 0:
+            new_status = STATUS_DELIVERED
+        else:
+            new_status = STATUS_PARTIAL
+        # Record the most recent checkout time on every draw (partial or
+        # full) so a partially delivered box still shows when it last went out.
+        delivered_at = ts
 
-            # Destination differs from the building the box came in for: flag it.
-            mismatch = bool(checkout_building and row["building"]
-                            and checkout_building != row["building"])
-            flag = ""
-            if mismatch:
-                flag = (f"Checked out to Bldg {checkout_building} but received "
-                        f"for Bldg {row['building']}")
+        # Destination differs from the building the box came in for: flag it.
+        mismatch = bool(checkout_building and row["building"]
+                        and checkout_building != row["building"])
+        flag = ""
+        if mismatch:
+            flag = (f"Checked out to Bldg {checkout_building} but received "
+                    f"for Bldg {row['building']}")
 
-            sets = ["remaining=?", "status=?", "delivered_at=?", "updated_at=?"]
-            params = [new_remaining, new_status, delivered_at, ts]
-            if checkout_building:
-                sets.append("checkout_building=?")
-                params.append(checkout_building)
-            if mismatch:
-                sets += ["flag=?", "flagged_at=?"]
-                params += [flag, ts]
-            params.append(epc)
-            self._conn.execute(
-                f"UPDATE tags SET {', '.join(sets)} WHERE epc=?", params)
+        sets = ["remaining=?", "status=?", "delivered_at=?", "updated_at=?"]
+        params = [new_remaining, new_status, delivered_at, ts]
+        if checkout_building:
+            sets.append("checkout_building=?")
+            params.append(checkout_building)
+        if mismatch:
+            sets += ["flag=?", "flagged_at=?"]
+            params += [flag, ts]
+        params.append(epc)
+        self._conn.execute(
+            f"UPDATE tags SET {', '.join(sets)} WHERE epc=?", params)
 
-            dest = f" to Bldg {checkout_building}" if checkout_building else ""
-            self._log("OUT", epc, row["item_type"], row["bol_number"],
-                      row["building"], row["vendor"],
-                      detail=f"delivered {take} unit(s){dest}, {new_remaining} left")
-            if mismatch:
-                self._log("FLAG", epc, row["item_type"], row["bol_number"],
-                          row["building"], row["vendor"], detail=flag)
-            qty_remaining = self._group_in_warehouse_qty(
-                row["item_type"], row["bol_number"], row["building"])
-            self._conn.commit()
+        dest = f" to Bldg {checkout_building}" if checkout_building else ""
+        self._log("OUT", epc, row["item_type"], row["bol_number"],
+                  row["building"], row["vendor"],
+                  detail=f"delivered {take} unit(s){dest}, {new_remaining} left")
+        if mismatch:
+            self._log("FLAG", epc, row["item_type"], row["bol_number"],
+                      row["building"], row["vendor"], detail=flag)
+        qty_remaining = self._group_in_warehouse_qty(
+            row["item_type"], row["bol_number"], row["building"])
 
         return {"ok": True,
                 "message": f"Delivered {take} unit(s) of {row['item_type']} ({epc}) to site.",
@@ -1317,29 +1325,40 @@ class Database:
         return added
 
     def list_requests(self, status=None):
-        """Requests, pending first then newest first (for the Requests panel)."""
+        """Requests, open ones (staging, then pending) first, then newest."""
         sql = "SELECT * FROM requests"
         params = ()
         if status:
             sql += " WHERE status=?"
             params = (status,)
-        sql += (" ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END,"
-                " id DESC")
+        sql += (" ORDER BY CASE status WHEN 'staging' THEN 0"
+                " WHEN 'pending' THEN 1 ELSE 2 END, id DESC")
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
         return [self._request_dict(r) for r in rows]
 
     def count_pending_requests(self):
+        """Open requests (pending or mid-staging) for the mode-card badge."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT COUNT(*) AS n FROM requests WHERE status=?",
-                (REQUEST_PENDING,)).fetchone()
+                "SELECT COUNT(*) AS n FROM requests WHERE status IN (?, ?)",
+                (REQUEST_PENDING, REQUEST_STAGING)).fetchone()
         return row["n"]
 
+    # Allowed manager transitions. fulfilled is deliberately absent: the only
+    # way there is fulfill_request(), which also commits the checkout draws.
+    _REQUEST_TRANSITIONS = {
+        REQUEST_PENDING: (REQUEST_STAGING, REQUEST_DECLINED),
+        REQUEST_STAGING: (REQUEST_PENDING, REQUEST_DECLINED),
+    }
+
     def set_request_status(self, req_id, status, note=""):
-        """Manager resolves a request (fulfilled/declined); pushed on next sync."""
-        if status not in (REQUEST_FULFILLED, REQUEST_DECLINED):
-            return {"ok": False, "message": f"Invalid request status: {status}"}
+        """Move a request between pending/staging/declined; pushed on next sync.
+
+        pending -> staging   Fulfill clicked (boxes being scanned for exit)
+        staging -> pending   staging canceled, nothing was committed
+        any     -> declined  manager turns the request down
+        """
         note = (note or "").strip()
         ts = _now()
         with self._lock:
@@ -1347,11 +1366,18 @@ class Database:
                 "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
             if row is None:
                 return {"ok": False, "message": f"Request #{req_id} not found."}
+            allowed = self._REQUEST_TRANSITIONS.get(row["status"], ())
+            if status not in allowed:
+                return {"ok": False,
+                        "message": (f"Request #{req_id} is {row['status']}; "
+                                    f"cannot mark it {status}.")}
             self._conn.execute(
                 "UPDATE requests SET status=?, handled_at=?, handler_note=?, "
                 "status_dirty=1 WHERE id=?",
                 (status, ts, note, req_id))
-            self._log("REQUEST_" + status.upper(), "", row["item_type"],
+            action = ("REQUEST_PENDING" if status == REQUEST_PENDING
+                      else "REQUEST_" + status.upper())
+            self._log(action, "", row["item_type"],
                       building=row["building"],
                       detail=(f"#{req_id}: {row['quantity']} x "
                               f"{row['item_type']}"
@@ -1360,6 +1386,83 @@ class Database:
             updated = self._conn.execute(
                 "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
         return {"ok": True, "message": f"Request #{req_id} {status}.",
+                "request": self._request_dict(updated)}
+
+    def fulfill_request(self, req_id, draws, note=""):
+        """Commit staged checkout draws and mark the request fulfilled, in one
+        transaction.
+
+        `draws` is a list of {"epc", "amount", "building"} built up in the
+        checkout screen. Each is applied via the normal checkout path (same
+        logging/flagging as a standalone checkout). Draws that fail (box gone,
+        already delivered) are reported but don't abort the rest. If the total
+        delivered comes up short of the requested quantity, `note` is required
+        so the requester learns why.
+        """
+        note = (note or "").strip()
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"Request #{req_id} not found."}
+            if row["status"] not in (REQUEST_PENDING, REQUEST_STAGING):
+                return {"ok": False,
+                        "message": (f"Request #{req_id} is already "
+                                    f"{row['status']}.")}
+
+            results, delivered_total = [], 0
+            for d in draws or []:
+                epc = str(d.get("epc") or "").strip()
+                if not epc:
+                    continue
+                result = self._deliver_units_locked(
+                    epc, d.get("amount"), d.get("building"))
+                results.append(result)
+                if result.get("ok"):
+                    delivered_total += result.get("delivered") or 0
+
+            requested = row["quantity"]
+            short = delivered_total < requested
+            if delivered_total <= 0:
+                self._conn.rollback()
+                failed = "; ".join(r.get("message", "") for r in results)
+                return {"ok": False,
+                        "message": ("Nothing was delivered"
+                                    + (f": {failed}" if failed else
+                                       ": no boxes staged.")),
+                        "results": results}
+            if short and not note:
+                self._conn.rollback()
+                return {"ok": False, "note_required": True,
+                        "message": (f"Only {delivered_total} of {requested} "
+                                    "unit(s) supplied -- add a note for the "
+                                    "requester explaining the shortfall."),
+                        "results": []}
+
+            handler_note = note
+            if short:
+                handler_note = (f"{delivered_total} of {requested} supplied"
+                                + (f" -- {note}" if note else ""))
+            self._conn.execute(
+                "UPDATE requests SET status=?, handled_at=?, handler_note=?, "
+                "status_dirty=1 WHERE id=?",
+                (REQUEST_FULFILLED, ts, handler_note, req_id))
+            boxes = sum(1 for r in results if r.get("ok"))
+            self._log("REQUEST_FULFILLED", "", row["item_type"],
+                      building=row["building"],
+                      detail=(f"#{req_id}: {delivered_total} of {requested} x "
+                              f"{row['item_type']} from {boxes} box(es)"
+                              + (f" -- {note}" if note else "")))
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+
+        return {"ok": True,
+                "message": (f"Request #{req_id} fulfilled: {delivered_total} "
+                            f"of {requested} unit(s) delivered."),
+                "delivered": delivered_total, "requested": requested,
+                "short": short, "results": results,
                 "request": self._request_dict(updated)}
 
     def dirty_request_statuses(self):
