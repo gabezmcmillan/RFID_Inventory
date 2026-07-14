@@ -24,6 +24,10 @@ from datetime import datetime
 import psycopg
 from psycopg.rows import dict_row
 
+# On serverless hosting (Vercel), each function instance opens its own
+# connection, so DATABASE_URL must be the POOLED connection string the
+# provider gives you (Vercel Postgres/Neon call it "pooled"); a direct URL
+# exhausts Postgres connection slots under concurrent requests.
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 REQUEST_PENDING = "pending"

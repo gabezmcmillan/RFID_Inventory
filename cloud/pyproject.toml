@@ -1,0 +1,7 @@
+# Read by Vercel at build time to pin the Python version of the serverless
+# function. Dependencies stay in requirements.txt (Vercel reads that too);
+# this file exists only for the version pin, so local tooling is unaffected.
+[project]
+name = "switch-warehouse-cloud"
+version = "0.1.0"
+requires-python = ">=3.12"

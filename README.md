@@ -133,9 +133,9 @@ never needs to be reachable from the internet.
   ```
 
 - Running the cloud app locally (Docker Postgres), the end-to-end test
-  (`cloud/test_sync.py`), and the full Azure deployment walkthrough (App
-  Service, Postgres, custom domain, Entra ID sign-in with `/sync/exchange`
-  excluded) live in [cloud/README.md](cloud/README.md).
+  (`cloud/test_sync.py`), and the deployment walkthroughs (Vercel — the
+  current plan — plus Azure App Service as an alternative) live in
+  [cloud/README.md](cloud/README.md).
 
 ## Database tables (auto-created)
 

@@ -10,8 +10,9 @@ The lightweight, employee-facing half of the RFID inventory system
 - **`POST /sync/exchange`** — the private, token-authenticated endpoint the
   .exe calls. The cloud never calls into the warehouse PC.
 
-Stack: FastAPI + Jinja2 on Azure App Service (Linux/Python), with Azure
-Database for PostgreSQL Flexible Server.
+Stack: FastAPI + Jinja2 + PostgreSQL. Current hosting plan is Vercel
+(serverless function + Vercel Postgres); the Azure App Service path is kept
+below as an alternative.
 
 ## Run locally (no Azure needed)
 
@@ -45,7 +46,39 @@ An automated end-to-end check of the whole loop lives at `test_sync.py`:
 python test_sync.py     # needs the Docker Postgres above; starts its own app
 ```
 
-## Deploy to Azure
+## Deploy to Vercel (current plan)
+
+The app deploys to the org's Vercel account as a single Python serverless
+function; `cloud/vercel.json` and `cloud/pyproject.toml` carry the config.
+Note: until sign-in is added, the site is public to anyone with the URL —
+accepted for the demo, revisit before real use.
+
+1. In the Vercel dashboard: **Add New > Project**, import the
+   `BG-BGI/RFID_Inventory` GitHub repo.
+2. **Set Root Directory to `cloud`** (Project Settings > General). This is
+   required — the repo root has its own `app.py` (the warehouse exe app),
+   which would fail to build on Vercel.
+3. Add the database: project **Storage** tab > Create Database > Postgres
+   (Neon). Connect it to the project; it injects `DATABASE_URL` as an env
+   var. Make sure it is the **pooled** connection string (Neon's default
+   `-pooler` URL) — serverless functions each open their own connection and
+   a direct URL runs Postgres out of slots.
+4. Add the sync secret: Project Settings > Environment Variables >
+   `SYNC_TOKEN` = the output of `openssl rand -hex 32`.
+5. Deploy (pushing to the tracked branch redeploys automatically). Then
+   check `https://<project>.vercel.app/healthz` → `{"ok": true, "db": "up"}`.
+   The schema auto-creates on the first connection, so no migration step.
+6. Point the warehouse exe at it, in `settings.ini` next to the exe:
+
+   ```ini
+   cloud_url = https://<project>.vercel.app
+   sync_token = <the same SYNC_TOKEN value>
+   ```
+
+Within ~30 s of the exe starting, the inventory appears on the site and
+requests submitted on `/requests` flow down to the exe.
+
+## Deploy to Azure (alternative)
 
 One-time provisioning (adjust names/region/subscription to fit; smallest
 tiers are plenty for this workload):
