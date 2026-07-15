@@ -35,7 +35,8 @@
   </div>
   <table>
     <thead>
-      <tr><th>#</th><th>Item</th><th class="num">Qty</th><th>Status</th></tr>
+      <tr><th>#</th><th>Item</th><th class="num">Qty</th>
+          <th>Deliver to</th><th>Status</th></tr>
     </thead>
     <tbody>
       {% for r in o.lines %}
@@ -43,6 +44,7 @@
         <td>{{ r.id }}</td>
         <td>{{ r.item_type }}</td>
         <td class="num">{{ r.quantity }}</td>
+        <td>{% if r.building %}Bldg {{ r.building }}{% else %}&mdash;{% endif %}</td>
         <td>
           <span class="badge badge-{{ r.status }}">{{
             "staging for exit" if r.status == "staging" else r.status }}</span>

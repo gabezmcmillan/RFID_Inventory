@@ -198,9 +198,10 @@ def main():
         cart = http.post(f"{BASE}/api/requests/cart", json={
             "requester": "E2E Bot", "contact": "e2e@example.com",
             "jobsite": "Switch 4", "note": "cart e2e",
-            "delivery_building": "7",
-            "lines": [{"item_type": "TSC", "building": "7", "quantity": 2},
-                      {"item_type": "CDU", "building": "8", "quantity": 1}]},
+            "lines": [{"item_type": "TSC", "building": "7", "quantity": 2,
+                       "delivery_building": "7"},
+                      {"item_type": "CDU", "building": "8", "quantity": 1,
+                       "delivery_building": "8"}]},
             timeout=5).json()
         check("valid cart accepted", cart.get("ok"), str(cart))
         check("cart returns an order_ref and one id per line",
@@ -211,6 +212,10 @@ def main():
         refs = {local[i]["order_ref"] for i in cart["ids"] if i in local}
         check("cart lines pulled into exe sharing the order_ref",
               refs == {cart["order_ref"]}, str(refs))
+        bldgs = {local[i]["item_type"]: local[i]["building"]
+                 for i in cart["ids"] if i in local}
+        check("per-line delivery buildings pulled into exe",
+              bldgs == {"TSC": "7", "CDU": "8"}, str(bldgs))
 
         # -- 4. staging + checkout-driven fulfillment --------------------------
         def cloud_request():

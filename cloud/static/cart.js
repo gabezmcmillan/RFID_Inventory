@@ -34,8 +34,9 @@ document.querySelectorAll("tbody.stock-group").forEach((tb) => {
 });
 
 // -- cart state ---------------------------------------------------------------
-// { key: qty } -- item identity lives in the stock map. Restored carts are
-// reconciled against current stock: vanished rows drop, quantities clamp.
+// { key: {qty, deliverTo} } -- item identity lives in the stock map. Restored
+// carts are reconciled against current stock: vanished rows drop, quantities
+// clamp. Older saved carts stored a bare qty; those get a default deliverTo.
 let cart = {};
 
 function loadCart() {
@@ -46,11 +47,16 @@ function loadCart() {
     saved = {};
   }
   cart = {};
-  for (const [key, qty] of Object.entries(saved)) {
+  for (const [key, val] of Object.entries(saved)) {
     const row = stock.get(key);
     if (!row || row.units <= 0) continue;
-    const n = Math.min(Math.max(parseInt(qty, 10) || 0, 0), row.units);
-    if (n > 0) cart[key] = n;
+    const isObj = val && typeof val === "object";
+    const n = Math.min(
+      Math.max(parseInt(isObj ? val.qty : val, 10) || 0, 0), row.units);
+    if (n > 0) {
+      cart[key] = { qty: n,
+                    deliverTo: (isObj && val.deliverTo) || row.building };
+    }
   }
 }
 
@@ -64,17 +70,33 @@ function cartTotals() {
   const keys = Object.keys(cart);
   return {
     items: keys.length,
-    units: keys.reduce((sum, k) => sum + cart[k], 0),
+    units: keys.reduce((sum, k) => sum + cart[k].qty, 0),
   };
+}
+
+function cartQty(key) {
+  return cart[key] ? cart[key].qty : 0;
 }
 
 function setCartLine(key, qty) {
   const row = stock.get(key);
   if (!row) return;
   const n = Math.min(Math.max(qty, 0), row.units);
-  if (n > 0) cart[key] = n; else delete cart[key];
+  if (n > 0) {
+    cart[key] = { qty: n,
+                  deliverTo: cart[key] ? cart[key].deliverTo : row.building };
+  } else {
+    delete cart[key];
+  }
   saveCart();
   refreshCartUi();
+}
+
+function setCartDelivery(key, building) {
+  if (!cart[key]) return;
+  cart[key].deliverTo = (building || "").trim();
+  saveCart();
+  refreshWarnings();   // no re-render: the operator may still be typing
 }
 
 // -- table interactions --------------------------------------------------------
@@ -111,11 +133,11 @@ function wireRows() {
 
 function refreshRowStates() {
   stock.forEach((row) => {
-    const inCart = cart[row.key] > 0;
+    const inCart = cartQty(row.key) > 0;
     row.el.classList.toggle("in-cart", inCart);
     const btn = row.el.querySelector(".add-btn");
     btn.textContent = inCart ? "Update" : "Add";
-    if (inCart) row.el.querySelector(".qty-input").value = cart[row.key];
+    if (inCart) row.el.querySelector(".qty-input").value = cart[row.key].qty;
   });
 }
 
@@ -189,16 +211,6 @@ function refreshCartUi() {
 // server's per-line errors ({line: i}) map back to rendered rows.
 let lineKeys = [];
 
-function defaultDeliveryBuilding() {
-  const counts = {};
-  Object.keys(cart).forEach((key) => {
-    const b = stock.get(key)?.building;
-    if (b) counts[b] = (counts[b] || 0) + 1;
-  });
-  return Object.keys(counts)
-    .sort((a, b) => counts[b] - counts[a])[0] || "";
-}
-
 function renderCartLines() {
   const wrap = $("cart-lines");
   lineKeys = Object.keys(cart);
@@ -213,11 +225,16 @@ function renderCartLines() {
           <strong>${escapeHtml(row.itemType)}</strong> ${bldg}
           <span class="hint">${row.units} available</span>
         </div>
+        <label class="cart-line-deliver">Deliver to building
+          <input type="text" class="line-deliver" maxlength="40"
+                 list="building-list" placeholder="e.g. 7"
+                 value="${escapeHtml(cart[key].deliverTo)}" />
+        </label>
         <div class="cart-line-issue" hidden></div>
       </div>
       <div class="stepper">
         <button type="button" class="step-btn line-down" aria-label="Less">&minus;</button>
-        <input type="number" class="qty-input line-qty" value="${cart[key]}"
+        <input type="number" class="qty-input line-qty" value="${cart[key].qty}"
                min="1" max="${row.units}" inputmode="numeric" />
         <button type="button" class="step-btn line-up" aria-label="More">+</button>
       </div>
@@ -234,27 +251,29 @@ function renderCartLines() {
       setCartLine(key, isNaN(n) ? 1 : n);
     });
     el.querySelector(".line-down").addEventListener("click",
-      () => setCartLine(key, cart[key] - 1));
+      () => setCartLine(key, cart[key].qty - 1));
     el.querySelector(".line-up").addEventListener("click",
-      () => setCartLine(key, Math.min(cart[key] + 1, row.units)));
+      () => setCartLine(key, Math.min(cart[key].qty + 1, row.units)));
     el.querySelector(".line-remove").addEventListener("click",
       () => setCartLine(key, 0));
+    el.querySelector(".line-deliver").addEventListener("input",
+      (ev) => setCartDelivery(key, ev.target.value));
   });
   refreshWarnings();
 }
 
 function refreshWarnings() {
-  const delivery =
-    ($("checkout-form").elements.delivery_building.value || "").trim();
   document.querySelectorAll("#cart-lines .cart-line").forEach((el) => {
     const row = stock.get(el.dataset.key);
+    const line = cart[el.dataset.key];
     const issue = el.querySelector(".cart-line-issue");
     if (issue.dataset.error) return;   // server errors outrank warnings
-    if (row.building && delivery && delivery !== row.building) {
+    const deliverTo = line ? line.deliverTo : "";
+    if (row.building && deliverTo && deliverTo !== row.building) {
       issue.hidden = false;
       issue.className = "cart-line-issue warn";
       issue.textContent = `This stock is assigned to Building ${row.building}; `
-        + `you're asking for delivery to Building ${delivery}. The warehouse `
+        + `you're asking for delivery to Building ${deliverTo}. The warehouse `
         + `manager will review.`;
     } else {
       issue.hidden = true;
@@ -299,7 +318,7 @@ async function refreshAvailability() {
     const cell = row.el.querySelector(".stock-row td.num");
     if (cell) cell.textContent = row.units;
     row.el.querySelector(".qty-input").max = Math.max(row.units, 1);
-    if (cart[key] > row.units) setCartLine(key, row.units);
+    if (cartQty(key) > row.units) setCartLine(key, row.units);
   });
 }
 
@@ -308,9 +327,6 @@ async function openCheckout() {
   if (!Object.keys(cart).length) return;
   const modal = $("checkout-modal");
   const form = $("checkout-form");
-  if (!form.elements.delivery_building.value) {
-    form.elements.delivery_building.value = defaultDeliveryBuilding();
-  }
   $("checkout-error").hidden = true;
   modal.hidden = false;
   renderCartLines();
@@ -332,11 +348,11 @@ async function submitCart(ev) {
     contact: form.elements.contact.value.trim(),
     jobsite: form.elements.jobsite.value.trim(),
     note: form.elements.note.value.trim(),
-    delivery_building: form.elements.delivery_building.value.trim(),
     lines: lineKeys.map((key) => ({
       item_type: stock.get(key).itemType,
       building: stock.get(key).building,
-      quantity: cart[key],
+      quantity: cart[key].qty,
+      delivery_building: cart[key].deliverTo,
     })),
   };
   btn.disabled = true;
@@ -394,8 +410,6 @@ function init() {
     if (ev.key === "Escape" && !$("checkout-modal").hidden) closeCheckout();
   });
   $("checkout-form").addEventListener("submit", submitCart);
-  $("checkout-form").elements.delivery_building
-    .addEventListener("input", refreshWarnings);
 }
 
 init();

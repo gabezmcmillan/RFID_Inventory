@@ -478,10 +478,13 @@ class CloudDatabase:
         """One submitted cart -> N request rows sharing an order_ref, in a
         single all-or-nothing transaction.
 
-        `lines` is a list of {item_type, building, quantity} where `building`
-        is the STOCK row the requester picked ('' = unassigned stock); every
-        line is checked against that stock's availability. `delivery_building`
-        is where the whole order should go (stored on each row).
+        `lines` is a list of {item_type, building, quantity,
+        delivery_building} where `building` is the STOCK row the requester
+        picked ('' = unassigned stock); every line is checked against that
+        stock's availability. Each line's `delivery_building` is where that
+        line should go (stored on its row); the order-level
+        `delivery_building` argument is a legacy fallback for lines that
+        don't carry their own.
 
         Returns {ok, order_ref, ids} or {ok: False, message, errors:
         [{line, message}]} with `line` an index into `lines`.
@@ -492,21 +495,21 @@ class CloudDatabase:
         if not requester:
             return {"ok": False, "message": "Your name is required.",
                     "errors": []}
-        if not delivery_building:
-            return {"ok": False, "message": "A delivery building is required.",
-                    "errors": []}
         if not lines:
             return {"ok": False, "message": "The cart is empty.", "errors": []}
 
         def work(cur):
             errors = []
-            # Per-line checks (shape, quantity), then per stock-row aggregate
-            # checks so two lines drawing on the same (type, building) can't
-            # each pass individually while jointly exceeding availability.
+            # Per-line checks (shape, quantity, delivery), then per stock-row
+            # aggregate checks so two lines drawing on the same (type,
+            # building) can't each pass individually while jointly exceeding
+            # availability.
             parsed = []
             for i, line in enumerate(lines):
                 item_type = str(line.get("item_type") or "").strip()
                 stock_building = str(line.get("building") or "").strip()
+                deliver_to = (str(line.get("delivery_building") or "").strip()
+                              or delivery_building)
                 qty = _parse_quantity(line.get("quantity"))
                 if not item_type:
                     errors.append({"line": i,
@@ -515,10 +518,15 @@ class CloudDatabase:
                     errors.append({"line": i, "message":
                                    "Quantity must be a whole number of 1 "
                                    "or more."})
+                elif not deliver_to:
+                    errors.append({"line": i, "message":
+                                   "A delivery building is required for "
+                                   "this item."})
                 else:
-                    parsed.append((i, item_type, stock_building, qty))
+                    parsed.append((i, item_type, stock_building, qty,
+                                   deliver_to))
             groups = {}
-            for i, item_type, stock_building, qty in parsed:
+            for i, item_type, stock_building, qty, deliver_to in parsed:
                 g = groups.setdefault((item_type, stock_building),
                                       {"total": 0, "lines": []})
                 g["total"] += qty
@@ -538,13 +546,13 @@ class CloudDatabase:
             order_ref = _new_order_ref()
             ts = _now()
             ids = []
-            for i, item_type, stock_building, qty in parsed:
+            for i, item_type, stock_building, qty, deliver_to in parsed:
                 cur.execute(
                     "INSERT INTO requests (item_type, quantity, building, "
                     "jobsite, requester, contact, note, status, created_at, "
                     "order_ref) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                     "RETURNING id",
-                    (item_type, qty, delivery_building,
+                    (item_type, qty, deliver_to,
                      (jobsite or "").strip(), requester,
                      (contact or "").strip(), (note or "").strip(),
                      REQUEST_PENDING, ts, order_ref))
@@ -583,5 +591,9 @@ class CloudDatabase:
         result = list(orders.values())
         for o in result:
             o["lines"].sort(key=lambda r: r["id"])
+            # Delivery building is per line; surface it on the order header
+            # only when every line agrees (lines show their own otherwise).
+            buildings = {r["building"] for r in o["lines"]}
+            o["building"] = buildings.pop() if len(buildings) == 1 else ""
         result.sort(key=lambda o: (not o["open"], -o["max_id"]))
         return result

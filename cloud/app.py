@@ -191,6 +191,7 @@ class CartLine(BaseModel):
     item_type: str
     building: str = ""     # the stock row's building ('' = unassigned)
     quantity: int = 1
+    delivery_building: str = ""   # where THIS line should go
 
 
 class CartBody(BaseModel):
@@ -198,6 +199,8 @@ class CartBody(BaseModel):
     contact: str = ""
     jobsite: str = ""
     note: str = ""
+    # Legacy order-wide destination; used as a fallback for lines that don't
+    # carry their own delivery_building (kept for raw API callers).
     delivery_building: str = ""
     lines: List[CartLine] = []
 
