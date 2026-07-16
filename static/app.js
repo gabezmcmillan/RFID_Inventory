@@ -1318,66 +1318,19 @@ function renderCheckinAmend(msg) {
 }
 
 // -- check out ---------------------------------------------------------------
-// A trigger pull only looks the box up; the operator confirms how many units to
-// draw down here (full box by default), then we commit via POST /api/checkout.
-// While a confirm card is showing, a second scan of the SAME tag also commits
-// (after a warning if the destination building differs from the tag's own);
-// scanning a DIFFERENT tag prompts the operator to switch or re-scan.
+// A trigger pull ONLY looks a box up — scans never commit anything. The
+// operator reviews the confirm card and commits with a button press: "Add to
+// staging" while fulfilling a request, "Confirm delivery" otherwise. Scanning
+// while a card is already showing simply switches the card to the scanned box.
 function handleCheckoutScan(msg) {
   // Scan events are broadcast to every open browser tab, but the checkout
   // confirmation state (pending card, active request, staged list) is
-  // per-tab. Only the tab the operator is actually looking at may act;
-  // otherwise a background tab builds its own full-box card and a re-scan
-  // "confirms" it, checking out the whole box behind the operator's back.
+  // per-tab. Only the tab the operator is actually looking at may act.
   if (state.mode !== "checkout" || document.visibilityState === "hidden") {
     return;
   }
   hideModal(); // a fresh scan supersedes any dialog still on screen
-  const pending = state.pendingCheckout;
-  const sameTag = pending && msg.epc &&
-    String(msg.epc).toUpperCase() === String(pending.epc).toUpperCase();
-
-  // No card pending (or the pending box's state changed underneath us):
-  // fall through to the normal lookup card.
-  if (!pending || (sameTag && !msg.ok)) {
-    onCheckoutPrompt(msg);
-    return;
-  }
-
-  if (!sameTag) {
-    // Case a: the confirming scan hit a different tag.
-    showModal("Tag mismatch",
-      `<p>The tag scanned does not match the tag selected for check-out.</p>
-       <table>
-         <tr><th>Selected</th><td><span class="epc">${escapeHtml(pending.epc)}</span></td></tr>
-         <tr><th>Scanned</th><td><span class="epc">${escapeHtml(msg.epc || "")}</span></td></tr>
-       </table>`,
-      [{ label: "Switch to scanned tag", cls: "primary-btn",
-         onClick: () => onCheckoutPrompt(msg) },
-       { label: "Scan correct tag again", cls: "back-btn" }]);
-    logActivity(`Checkout scan mismatch: expected ${pending.epc}, got ${msg.epc}`, "warn");
-    return;
-  }
-
-  // Same tag scanned again: this is the confirmation.
-  const group = $("checkout-bldg-group");
-  const dest = group ? (group.dataset.value || "") : "";
-  const home = String(pending.building || "");
-  // While fulfilling a request the destination is the requester's choice, so
-  // a mismatch with the box's home building is expected — skip the modal (the
-  // draw still gets flagged in the DB when it commits).
-  if (dest && home && dest !== home && !state.activeRequest) {
-    // Case b: destination differs from the building the box is assigned to.
-    showModal("Different building",
-      `<p>This box is assigned to Building <b>${escapeHtml(home)}</b> but is being
-         delivered to Building <b>${escapeHtml(dest)}</b>.</p>
-       <p>Are you sure you want to deliver it there?</p>`,
-      [{ label: "Yes, deliver", cls: "primary-btn",
-         onClick: () => confirmCheckout(pending.epc, pending.remaining) },
-       { label: "Cancel", cls: "back-btn" }]);
-    return;
-  }
-  confirmCheckout(pending.epc, pending.remaining);
+  onCheckoutPrompt(msg);
 }
 
 function onCheckoutPrompt(msg) {
@@ -1444,10 +1397,10 @@ function showCheckoutCard(msg) {
                     : "How many units leave?";
   const btnLabel = req ? "Add to staging" : "Confirm delivery";
   const hint = req
-    ? `Defaults to what the request still needs. Scan this tag again or press
-       Add to staging to add it to the list.`
-    : `Defaults to the whole box. Lower it to deliver part of the box.
-       Scan this tag again or press Confirm delivery to finish.`;
+    ? `Defaults to what the request still needs. Press Add to staging to add
+       it to the list — scanning again will not add it.`
+    : `Defaults to the whole box. Lower it to deliver part of the box, then
+       press Confirm delivery.`;
   showResult("ok", title,
     `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
        <span class="epc">${escapeHtml(msg.epc)}</span></p>
@@ -1469,8 +1422,8 @@ function showCheckoutCard(msg) {
        <button id="checkout-confirm-btn" class="primary-btn">${btnLabel}</button>
      </div>
      <p class="hint">${hint}</p>`);
-  showScanner(req ? "Scan the same tag again to add it to staging"
-                  : "Scan the same tag again to confirm delivery");
+  showScanner(req ? "Press Add to staging below, or scan a different box"
+                  : "Press Confirm delivery below, or scan a different box");
   const group = $("checkout-bldg-group");
   group.querySelectorAll(".checkout-bldg-btn").forEach((b) => {
     b.onclick = () => {
@@ -1490,7 +1443,7 @@ function showCheckoutCard(msg) {
   }
 }
 
-async function confirmCheckout(epc, remaining) {
+async function confirmCheckout(epc, remaining, bldgConfirmed = false) {
   const input = $("checkout-amount");
   // No confirm card on screen means there is nothing the operator has
   // reviewed — never fall back to committing the whole box.
@@ -1505,6 +1458,21 @@ async function confirmCheckout(epc, remaining) {
   const building = group ? (group.dataset.value || "") : "";
   if (state.activeRequest) {
     stageDraw({ epc, amount, building });
+    return;
+  }
+  // Destination differs from the building the box is assigned to: get an
+  // explicit go-ahead first. (While fulfilling a request the destination is
+  // the requester's choice, so this only applies to standalone checkouts;
+  // the draw still gets flagged in the DB when it commits.)
+  const home = String((state.pendingCheckout || {}).building || "");
+  if (!bldgConfirmed && building && home && building !== home) {
+    showModal("Different building",
+      `<p>This box is assigned to Building <b>${escapeHtml(home)}</b> but is being
+         delivered to Building <b>${escapeHtml(building)}</b>.</p>
+       <p>Are you sure you want to deliver it there?</p>`,
+      [{ label: "Yes, deliver", cls: "primary-btn",
+         onClick: () => confirmCheckout(epc, remaining, true) },
+       { label: "Cancel", cls: "back-btn" }]);
     return;
   }
   try {
