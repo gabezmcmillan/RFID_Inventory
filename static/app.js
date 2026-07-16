@@ -1324,6 +1324,14 @@ function renderCheckinAmend(msg) {
 // (after a warning if the destination building differs from the tag's own);
 // scanning a DIFFERENT tag prompts the operator to switch or re-scan.
 function handleCheckoutScan(msg) {
+  // Scan events are broadcast to every open browser tab, but the checkout
+  // confirmation state (pending card, active request, staged list) is
+  // per-tab. Only the tab the operator is actually looking at may act;
+  // otherwise a background tab builds its own full-box card and a re-scan
+  // "confirms" it, checking out the whole box behind the operator's back.
+  if (state.mode !== "checkout" || document.visibilityState === "hidden") {
+    return;
+  }
   hideModal(); // a fresh scan supersedes any dialog still on screen
   const pending = state.pendingCheckout;
   const sameTag = pending && msg.epc &&
@@ -1484,7 +1492,13 @@ function showCheckoutCard(msg) {
 
 async function confirmCheckout(epc, remaining) {
   const input = $("checkout-amount");
-  let amount = input ? parseInt(input.value, 10) : remaining;
+  // No confirm card on screen means there is nothing the operator has
+  // reviewed — never fall back to committing the whole box.
+  if (!input || $("result").classList.contains("hidden")) {
+    state.pendingCheckout = null;
+    return;
+  }
+  let amount = parseInt(input.value, 10);
   if (!Number.isFinite(amount) || amount < 1) amount = 1;
   if (amount > remaining) amount = remaining;
   const group = $("checkout-bldg-group");
