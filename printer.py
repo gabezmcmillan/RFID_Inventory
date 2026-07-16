@@ -56,9 +56,15 @@ LABEL_ZPL = """^XA
 ^FO70,1590^A0N,46,46^FDRECEIVED^FS
 ^FO440,1580^A0N,66,66^FDDate: {received_date}^FS
 ^FO440,1670^A0N,66,66^FDTime: {received_time}^FS
-^RFW,H^FD{epc}^FS
+{qr}^RFW,H^FD{epc}^FS
 ^XZ
 """
+
+# QR code linking to the box's cloud page (bottom-right, clear of the short
+# QTY/PO values in the left column). Magnification 6 keeps an ~80-char URL
+# inside the label's right margin at 300 dpi while staying easily phone-
+# scannable. Only included when a cloud URL is configured.
+QR_ZPL = "^FO950,1150^BQN,2,6^FDQA,{url}^FS\n"
 
 
 def enabled():
@@ -87,18 +93,22 @@ def _send(data, timeout=5):
 
 def print_label(epc, building="", sector="", description="", supplier="",
                 sku="", quantity="", po_number="", received_date="",
-                received_time=""):
+                received_time="", qr_url=""):
     """Print one 4x6 label and encode `epc` into its RFID inlay.
 
-    Raises PrintError if the EPC is malformed or the printer can't be
-    reached. A successful return means the job was accepted; encode failures
-    on bad inlays are handled by the printer itself (VOID + retry).
+    `qr_url` (optional) adds a QR code so a phone scan opens the box's cloud
+    page (which links the BOL PDF). Raises PrintError if the EPC is malformed
+    or the printer can't be reached. A successful return means the job was
+    accepted; encode failures on bad inlays are handled by the printer itself
+    (VOID + retry).
     """
     epc = str(epc or "").upper()
     if not EPC_HEX.match(epc):
         raise PrintError(f"Bad EPC for encoding (need 24 hex chars): {epc!r}")
+    qr = QR_ZPL.format(url=_zpl_safe(qr_url)) if qr_url else ""
     zpl = LABEL_ZPL.format(
         epc=epc,
+        qr=qr,
         building=_zpl_safe(building),
         sector=_zpl_safe(sector),
         description=_zpl_safe(description),

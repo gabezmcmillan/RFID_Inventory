@@ -488,3 +488,28 @@ tbody.in-cart .add-btn { background: var(--bg-blue-vivid, #0028F0); color: #fff;
 .order-title h3 { margin: 0; color: var(--bg-navy, #002070); font-size: 17px; }
 .order-meta { color: #565d6d; font-size: 13px; }
 .order-card table { margin-top: 10px; }
+
+/* ---- Tag page (QR-code landing from a printed label) ------------------------ */
+.tag-card {
+  background: #fff;
+  border: 1px solid #d8dae2;
+  border-radius: 14px;
+  padding: 16px 20px;
+  margin-top: 14px;
+  max-width: 560px;
+  box-shadow: 0 2px 10px rgba(0, 20, 60, 0.05);
+}
+.tag-table { width: 100%; border-collapse: collapse; }
+.tag-table th {
+  text-align: left;
+  color: #565d6d;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px 8px 0;
+  white-space: nowrap;
+  vertical-align: top;
+  width: 1%;
+}
+.tag-table td { padding: 8px 0; font-size: 15px; }
+.tag-table tr + tr th, .tag-table tr + tr td { border-top: 1px solid #eceef3; }
+.bol-cta { display: inline-block; margin-top: 16px; text-decoration: none; }

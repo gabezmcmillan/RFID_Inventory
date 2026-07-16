@@ -16,13 +16,22 @@ One exchange (POST {cloud_url}/sync/exchange, bearer token) per cycle:
         - status updates for requests the manager handled (status_dirty rows).
   pull  - material-request rows above the last-pulled id.
 
+BOL PDFs (the files, not the rows) ride separately: the ack lists the
+bol_docs ids whose PDF the cloud is missing (bol_files_wanted), and this
+worker follows up with POST /sync/bol_files carrying those files base64-
+encoded. The cloud asks again every cycle until it has them, so a failed
+upload self-heals; ids whose file is gone from scans/ are simply skipped
+(the cloud will keep listing them, which is harmless and bounded).
+
 The response acks advance watermarks stored in the sync_state table. Retries
 are safe: snapshot upserts are idempotent, events are keyed by id, request
 upserts are insert-or-ignore, and watermarks are row ids (never wall clocks).
 """
 
+import base64
 import hashlib
 import json
+import os
 import threading
 import time
 from datetime import datetime
@@ -36,6 +45,7 @@ EVENTS_BATCH = 1000          # max events pushed per exchange
 CONNECT_TIMEOUT = 5          # seconds to establish the HTTPS connection
 READ_TIMEOUT = 60            # seconds for the server to answer (big snapshots)
 BACKOFF_MAX = 300            # cap between retries after repeated failures
+BOL_FILE_MAX_BYTES = 20 * 1024 * 1024   # skip absurdly large PDFs
 
 # sync_state keys
 K_EVENTS_PUSHED = "events_pushed_id"      # last event id the cloud acked
@@ -178,6 +188,19 @@ class SyncWorker:
             if max_pulled > requests_after:
                 db.sync_set(K_REQUESTS_PULLED, max_pulled)
 
+        # BOL PDFs the cloud is missing (for the tag pages' "View bill of
+        # lading" link). Pushed after the acks: a failed upload leaves the
+        # watermarks correct and the cloud just asks again next cycle.
+        wanted = ack.get("bol_files_wanted") or []
+        if wanted:
+            files = self._collect_bol_files(wanted)
+            if files:
+                up = requests.post(
+                    f"{self.url}/sync/bol_files", json={"files": files},
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+                up.raise_for_status()
+
         self.online = True
         self.last_error = ""
         self.last_sync = _now()
@@ -187,6 +210,30 @@ class SyncWorker:
             self.on_event({"event": "sync_requests", "added": len(added),
                            "pending": db.count_pending_requests()})
         self._emit_status()
+
+    def _collect_bol_files(self, doc_ids):
+        """Read the requested BOL PDFs from scans/ as upload-ready dicts.
+
+        Ids without a doc row or file on disk are skipped (deleted PDFs, or
+        another machine did the scanning); the cloud keeps listing them,
+        which is harmless.
+        """
+        files = []
+        for doc_id in doc_ids:
+            doc = self.db.get_bol_doc(doc_id)
+            if doc is None:
+                continue
+            path = os.path.join(config.SCANS_DIR, doc["filename"])
+            try:
+                if os.path.getsize(path) > BOL_FILE_MAX_BYTES:
+                    continue
+                with open(path, "rb") as f:
+                    data = f.read()
+            except OSError:
+                continue
+            files.append({"id": doc["id"], "filename": doc["filename"],
+                          "data": base64.b64encode(data).decode("ascii")})
+        return files
 
     # -- status ------------------------------------------------------------------
     def _count_pending(self):

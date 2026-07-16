@@ -77,8 +77,8 @@ def wipe_cloud(full=True):
         if full:
             conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         else:
-            for t in ("tags", "vendors", "notes", "bol_docs", "events",
-                      "requests", "sync_meta"):
+            for t in ("tags", "vendors", "notes", "bol_docs", "bol_files",
+                      "events", "requests", "sync_meta"):
                 conn.execute(f"DELETE FROM {t}")
 
 
@@ -321,6 +321,31 @@ def main():
               by_type.get("TSC", {}).get("units") == 5, str(inv))
         check("events re-pushed after wipe",
               int(db.sync_get(K_EVENTS_PUSHED)) == db.last_event_id())
+
+        # -- 8. BOL PDF sync + tag page (label QR target) ----------------------
+        import config as exe_config              # noqa: E402
+        exe_config.SCANS_DIR = tempfile.mkdtemp()
+        with open(os.path.join(exe_config.SCANS_DIR, "bol_e2e.pdf"), "wb") as f:
+            f.write(b"%PDF-1.4\n% e2e test document\n%%EOF\n")
+        doc = db.create_bol_doc("BOL-99", "bol_e2e.pdf", "scan", 1)
+        db.receive_shipment(["E2E00005"], "TSC", "8", "BOL-99", "Acme Corp",
+                            {"quantity": 4}, bol_doc_id=doc["id"],
+                            po_number="PO-9", sector="8.1")
+        worker.exchange()   # snapshot + ack wants the file + follow-up upload
+        page = http.get(f"{BASE}/tag/e2e00005", timeout=5)  # case-insensitive
+        check("tag page renders box details",
+              page.status_code == 200 and "BOL-99" in page.text
+              and "8.1" in page.text, f"status {page.status_code}")
+        check("tag page links the BOL PDF", f'/bol/{doc["id"]}' in page.text)
+        pdf = http.get(f"{BASE}/bol/{doc['id']}", timeout=5)
+        check("BOL PDF served inline",
+              pdf.status_code == 200 and pdf.content.startswith(b"%PDF-")
+              and "application/pdf" in pdf.headers.get("content-type", ""))
+        check("unknown tag page 404s",
+              http.get(f"{BASE}/tag/DEADBEEFDEADBEEFDEADBEEF",
+                       timeout=5).status_code == 404)
+        check("missing BOL file 404s",
+              http.get(f"{BASE}/bol/999999", timeout=5).status_code == 404)
 
         db.close()
     finally:

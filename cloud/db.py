@@ -17,6 +17,8 @@ uses the same pattern); calls reconnect once if Postgres dropped an idle
 connection, which Azure does after a while.
 """
 
+import base64
+import binascii
 import os
 import secrets
 import threading
@@ -130,7 +132,20 @@ CREATE INDEX IF NOT EXISTS idx_requests_status ON requests (status);
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS order_ref TEXT NOT NULL DEFAULT '';
 -- Warehouse sector on a tag (mirrored from the .exe as of July 2026).
 ALTER TABLE tags ADD COLUMN IF NOT EXISTS sector TEXT;
+-- BOL PDF binaries, pushed separately from the row snapshot (the exchange
+-- ack lists which bol_docs ids are still missing their file). Keyed by the
+-- .exe's bol_docs id; label QR codes resolve through /tag/{epc} -> /bol/{id}.
+CREATE TABLE IF NOT EXISTS bol_files (
+    id          BIGINT PRIMARY KEY,
+    filename    TEXT NOT NULL DEFAULT '',
+    data        BYTEA NOT NULL,
+    uploaded_at TEXT NOT NULL DEFAULT ''
+);
 """
+
+# How many missing BOL PDFs to ask the .exe for per exchange (bounds the
+# follow-up upload's size; remaining ids are requested on later cycles).
+BOL_FILES_WANTED_LIMIT = 5
 
 
 def _now():
@@ -248,6 +263,9 @@ class CloudDatabase:
                                f"VALUES ({placeholders})")
                         cur.executemany(
                             sql, [tuple(r.get(c) for c in cols) for r in rows])
+                # Drop stored PDFs whose document was deleted on the .exe.
+                cur.execute("DELETE FROM bol_files WHERE id NOT IN "
+                            "(SELECT id FROM bol_docs)")
                 self._meta_set(cur, "snapshot_hash",
                                payload.get("snapshot_hash") or "")
 
@@ -298,6 +316,16 @@ class CloudDatabase:
                 (requests_after,))
             new_requests = cur.fetchall()
 
+            # 5. BOL PDFs this mirror is still missing; the .exe follows up
+            #    with POST /sync/bol_files (see sync.py). Asked for again on
+            #    every cycle until stored, so a failed upload self-heals.
+            cur.execute(
+                "SELECT d.id FROM bol_docs d "
+                "LEFT JOIN bol_files f ON f.id = d.id "
+                "WHERE f.id IS NULL ORDER BY d.id LIMIT %s",
+                (BOL_FILES_WANTED_LIMIT,))
+            bol_files_wanted = [r["id"] for r in cur.fetchall()]
+
             self._meta_set(cur, "last_exchange_at", _now())
             cur.execute("SELECT value FROM sync_meta WHERE key='snapshot_hash'")
             row = cur.fetchone()
@@ -307,7 +335,55 @@ class CloudDatabase:
                 "events_acked_to": events_acked_to,
                 "request_updates_acked": acked_updates,
                 "requests": new_requests,
+                "bol_files_wanted": bol_files_wanted,
             }
+        return self._run(work)
+
+    def store_bol_files(self, files):
+        """Store BOL PDFs pushed by the .exe ({id, filename, data} rows,
+        data base64). Idempotent upsert; malformed entries are skipped."""
+        def work(cur):
+            stored = []
+            for f in files or []:
+                try:
+                    doc_id = int(f["id"])
+                    data = base64.b64decode(f["data"], validate=True)
+                except (KeyError, TypeError, ValueError, binascii.Error):
+                    continue
+                if not data.startswith(b"%PDF-"):
+                    continue
+                cur.execute(
+                    "INSERT INTO bol_files (id, filename, data, uploaded_at) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (id) DO UPDATE SET filename=EXCLUDED.filename, "
+                    "data=EXCLUDED.data, uploaded_at=EXCLUDED.uploaded_at",
+                    (doc_id, str(f.get("filename") or ""), data, _now()))
+                stored.append(doc_id)
+            return {"ok": True, "stored": stored}
+        return self._run(work)
+
+    def get_bol_file(self, doc_id):
+        """One stored BOL PDF: {bol_number, filename, data} or None."""
+        def work(cur):
+            cur.execute(
+                "SELECT f.filename, f.data, COALESCE(d.bol_number, '') AS bol_number "
+                "FROM bol_files f LEFT JOIN bol_docs d ON d.id = f.id "
+                "WHERE f.id = %s", (doc_id,))
+            return cur.fetchone()
+        return self._run(work)
+
+    def tag_details(self, epc):
+        """One mirrored tag for the QR landing page, with its BOL document
+        reference and whether that document's PDF is stored here."""
+        def work(cur):
+            cur.execute(
+                "SELECT t.*, d.bol_number AS doc_bol_number, "
+                "       (f.id IS NOT NULL) AS bol_file_available "
+                "FROM tags t "
+                "LEFT JOIN bol_docs d ON d.id = t.bol_doc_id "
+                "LEFT JOIN bol_files f ON f.id = t.bol_doc_id "
+                "WHERE UPPER(t.epc) = UPPER(%s)", (str(epc or "").strip(),))
+            return cur.fetchone()
         return self._run(work)
 
     # -- site reads ---------------------------------------------------------------

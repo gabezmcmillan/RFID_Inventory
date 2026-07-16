@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 
 from fastapi import Body, FastAPI, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -112,6 +112,24 @@ def sync_exchange(payload: dict = Body(...),
     return ack
 
 
+@app.post("/sync/bol_files")
+def sync_bol_files(payload: dict = Body(...),
+                   authorization: Optional[str] = Header(None)):
+    """Follow-up upload of BOL PDFs the last exchange ack asked for
+    (bol_files_wanted). Same bearer auth as /sync/exchange."""
+    if not _token_ok(authorization):
+        return JSONResponse({"ok": False, "message": "Invalid sync token"},
+                            status_code=401)
+    db, err = _db_or_503()
+    if err:
+        return err
+    try:
+        return db.store_bol_files(payload.get("files") or [])
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"ok": False, "message": f"Upload failed: {exc}"},
+                            status_code=500)
+
+
 @app.get("/healthz")
 def healthz():
     db = get_db()
@@ -172,6 +190,48 @@ def requests_page(request: Request, ok: str = ""):
         "submitted": ok,
         "active": "requests",
     })
+
+
+@app.get("/tag/{epc}")
+def tag_page(request: Request, epc: str):
+    """QR-code landing page: box details + link to its BOL PDF. The EPC is
+    printed on the label, so this is what a warehouse phone scan opens."""
+    db, err = _db_or_503()
+    if err:
+        return templates.TemplateResponse(request, "error.html", {
+            "message": state.db_error}, status_code=503)
+    tag = db.tag_details(epc)
+    if tag is None:
+        return templates.TemplateResponse(request, "error.html", {
+            "message": (f"No box with tag {epc.upper()} is on file. It may "
+                        "not have synced from the warehouse yet.")},
+            status_code=404)
+    return templates.TemplateResponse(request, "tag.html", {
+        "tag": tag,
+        "counts": db.counts(),
+        "last_synced": _last_synced(db),
+        "active": "",
+    })
+
+
+@app.get("/bol/{doc_id}")
+def bol_pdf(doc_id: int):
+    """Serve a mirrored BOL PDF inline (linked from the tag page)."""
+    db, err = _db_or_503()
+    if err:
+        return err
+    row = db.get_bol_file(doc_id)
+    if row is None:
+        return JSONResponse(
+            {"ok": False, "message": ("This BOL document hasn't synced from "
+                                      "the warehouse yet -- try again in a "
+                                      "minute.")}, status_code=404)
+    name = (row["bol_number"] or row["filename"] or f"bol_{doc_id}").strip()
+    safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
+    return Response(
+        content=bytes(row["data"]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{safe}.pdf"'})
 
 
 # ---------------------------------------------------------------------------

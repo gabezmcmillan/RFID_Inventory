@@ -990,6 +990,9 @@ async def checkin_print(req: PrintLabelsRequest):
     loop = asyncio.get_running_loop()
 
     epcs = await loop.run_in_executor(None, state.db.allocate_epcs, count)
+    # QR on the label opens the box's page on the cloud site (BOL PDF and
+    # live status); printed only when this install has a cloud configured.
+    cloud_base = config.CLOUD_URL.rstrip("/")
     printed, print_error = [], ""
     for epc in epcs:
         job = lambda e=epc: printer.print_label(
@@ -1002,7 +1005,8 @@ async def checkin_print(req: PrintLabelsRequest):
             quantity=item_fields.get("quantity") or "1",
             po_number=fields.get("po_number", ""),
             received_date=now.strftime("%m/%d/%Y"),
-            received_time=now.strftime("%I:%M %p").lstrip("0"))
+            received_time=now.strftime("%I:%M %p").lstrip("0"),
+            qr_url=f"{cloud_base}/tag/{e}" if cloud_base else "")
         try:
             await loop.run_in_executor(None, job)
             printed.append(epc)
