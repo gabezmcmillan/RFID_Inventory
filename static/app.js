@@ -17,6 +17,7 @@ const EDIT_FIELDS = [
   { key: "bol_number", label: "BOL #", type: "text" },
   { key: "po_number", label: "PO #", type: "text" },
   { key: "building", label: "Building #", type: "building" },
+  { key: "sector", label: "Sector", type: "text" },
   { key: "vendor", label: "Vendor", type: "vendor" },
   { key: "sku", label: "SKU", type: "text" },
   { key: "mfc_date", label: "Mfc date", type: "date" },
@@ -1009,13 +1010,59 @@ function applyBolToForm() {
 
 function renderItemForm(type) {
   const form = $("item-form");
-  form.innerHTML = '<p class="hint">Fill in this unit\'s details, then pull the trigger to tag it.</p>';
+  const hint = state.config.printer_enabled
+    ? "Fill in this unit's details, then pull the trigger to tag it \u2014 or print &amp; encode a fresh label for it."
+    : "Fill in this unit's details, then pull the trigger to tag it.";
+  form.innerHTML = `<p class="hint">${hint}</p>`;
   fieldsForScope(type, "item").forEach((f) => {
     const field = buildField(f, "it_");
     const inp = field.querySelector("input, select");
     if (inp) inp.oninput = onItemInput;
     form.appendChild(field);
   });
+  if (state.config.printer_enabled) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "print-label-btn";
+    btn.className = "primary-btn";
+    btn.textContent = "Print & encode label";
+    btn.onclick = printAndEncodeLabel;
+    form.appendChild(btn);
+  }
+}
+
+// Check a box in via the label printer: the server mints an EPC, the ZD621R
+// prints the 4x6 label and encodes that EPC into its inlay. The result is
+// the same shape as a trigger-pull check-in, so it reuses that rendering.
+async function printAndEncodeLabel() {
+  if (!state.shipment) return;
+  const btn = $("print-label-btn");
+  btn.disabled = true;
+  btn.textContent = "Printing\u2026";
+  try {
+    const res = await fetch("/api/checkin/print", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        item_type: state.shipment.type,
+        fields: state.shipment.fields,
+        item_fields: collectItemFields(),
+        count: 1,
+      }),
+    });
+    const msg = await res.json();
+    if (msg.ok) {
+      logActivity(`Printed + encoded label ${msg.epc}`, "ok");
+      onCheckinResult(msg);
+    } else {
+      logActivity(msg.message || "Label print failed", "err");
+      showResult("warn", "Label not printed",
+        `<p>${escapeHtml(msg.message || "Unknown printer error")}</p>`);
+    }
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+  btn.disabled = false;
+  btn.textContent = "Print & encode label";
 }
 
 function collectItemFields() {
@@ -1204,12 +1251,15 @@ function renderCheckinSummary(msg) {
     ? `<button id="checkin-amend-btn" class="edit-btn checkin-amend-btn">Edit this box</button>` : "";
   const po = msg.po_number
     ? `<tr><th>PO Number</th><td>${escapeHtml(msg.po_number)}</td></tr>` : "";
+  const sector = msg.sector
+    ? `<tr><th>Sector</th><td>${escapeHtml(msg.sector)}</td></tr>` : "";
   showResult("ok", `Shipment: ${escapeHtml(msg.item_type)} \u00b7 Qty ${msg.qty} units`,
     `<table>
        ${epcRow}
        <tr><th>BOL Number</th><td>${escapeHtml(bol)}</td></tr>
        ${po}
        <tr><th>Building</th><td>${escapeHtml(bldg)}</td></tr>
+       ${sector}
        <tr><th>Vendor</th><td>${escapeHtml(msg.vendor || "")}</td></tr>
        ${sku}${mfc}
        <tr><th>This box</th><td>${boxUnits} unit(s)</td></tr>

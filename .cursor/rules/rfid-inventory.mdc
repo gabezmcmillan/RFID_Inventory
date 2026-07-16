@@ -40,9 +40,13 @@ only as reference; the old Google Sheets backend is gone.
   switch-warehouse.brasfieldgorrie.com) mirrors inventory read-only and
   queues material requests; the .exe syncs via an outbound
   `POST /sync/exchange` worker. Databricks is intentionally not used.
-- Later phases: label printing (Rollo X1040, 3"x2" labels) with EPC
-  encoding via the handheld's `.ws`; stale-stock aging flags; a staged
-  checkout state so exit staging and sweeps don't conflict.
+- Label printing: Zebra ZD621R (300 dpi, 4x6" RFID labels) prints and
+ encodes app-minted EPCs at check-in, raw ZPL over TCP 9100 (`printer.py`;
+ `printer_host` in settings.ini). Program position / write power live in
+ the printer via its RFID Calibrate — never send `^RS`/`^LL` from the app.
+ The handheld's `.ws` write path is no longer planned.
+- Later phases: stale-stock aging flags; a staged checkout state so exit
+ staging and sweeps don't conflict.
 
 ## Conventions
 - Raw SQL house style in `db.py` (no ORM); keep dependencies minimal.

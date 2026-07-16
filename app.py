@@ -29,6 +29,7 @@ from pydantic import BaseModel
 import bol_extract
 import config
 import db as db_mod
+import printer
 import reader as reader_mod
 import scanner
 from reader import ReaderWorker
@@ -189,11 +190,12 @@ async def _handle_event(event: dict):
         bol_number = fields.get("bol_number", "")
         po_number = fields.get("po_number", "")
         vendor = fields.get("vendor", "")
+        sector = fields.get("sector", "")
         bol_doc_id = _as_doc_id(fields.get("bol_doc_id"))
         result = await loop.run_in_executor(
             None, state.db.receive_shipment,
             epcs, item_type, building, bol_number, vendor, item_fields,
-            bol_doc_id, po_number)
+            bol_doc_id, po_number, sector)
         # Stay armed on this shipment so more units can be tagged in.
         await broadcast({"type": "checkin_result", **result})
         return
@@ -234,6 +236,7 @@ async def get_config():
         "building_options": config.BUILDING_OPTIONS,
         "power_min": config.READER_POWER_MIN_DBM,
         "power_max": config.READER_POWER_MAX_DBM,
+        "printer_enabled": printer.enabled(),
     }
 
 
@@ -407,6 +410,7 @@ EXPORT_COLUMNS = [
     ("BOL #", "bol_number"),
     ("PO #", "po_number"),
     ("Building #", "building"),
+    ("Sector", "sector"),
     ("Checked Out To", "checkout_building"),
     ("Vendor", "vendor"),
     ("SKU", "sku"),
@@ -950,6 +954,83 @@ async def set_checkin_item(req: CheckinItemRequest):
         return JSONResponse({"ok": False, "message": "Reader worker not ready"}, 503)
     state.worker.set_checkin_item_fields(req.fields or {})
     return {"ok": True}
+
+
+class PrintLabelsRequest(BaseModel):
+    item_type: str
+    fields: Optional[Dict[str, str]] = None        # shipment-scope fields
+    item_fields: Optional[Dict[str, str]] = None   # per-unit fields
+    count: int = 1                                 # one label per box
+
+
+@app.post("/api/checkin/print")
+async def checkin_print(req: PrintLabelsRequest):
+    """Check a box in by printing + encoding a fresh label for it.
+
+    The app mints the EPC (see db.allocate_epcs), the ZD621R burns it into
+    the label's inlay while printing (printer.py). Labels are printed first
+    and only the successfully sent ones are recorded, so a dead printer
+    never creates phantom inventory.
+    """
+    bad = _require_db()
+    if bad:
+        return bad
+    if not printer.enabled():
+        return {"ok": False,
+                "message": ("No label printer configured -- set printer_host "
+                            "in settings.ini")}
+    if req.item_type not in config.ITEM_TYPES:
+        return JSONResponse(
+            {"ok": False, "message": "A valid item_type is required"}, 400)
+
+    count = max(1, min(req.count or 1, 25))
+    fields = req.fields or {}
+    item_fields = req.item_fields or {}
+    now = datetime.now()
+    loop = asyncio.get_running_loop()
+
+    epcs = await loop.run_in_executor(None, state.db.allocate_epcs, count)
+    printed, print_error = [], ""
+    for epc in epcs:
+        job = lambda e=epc: printer.print_label(
+            epc=e,
+            building=fields.get("building_number", ""),
+            sector=fields.get("sector", ""),
+            description=req.item_type,
+            supplier=fields.get("vendor", ""),
+            sku=item_fields.get("sku", ""),
+            quantity=item_fields.get("quantity") or "1",
+            po_number=fields.get("po_number", ""),
+            received_date=now.strftime("%m/%d/%Y"),
+            received_time=now.strftime("%I:%M %p").lstrip("0"))
+        try:
+            await loop.run_in_executor(None, job)
+            printed.append(epc)
+        except printer.PrintError as exc:
+            print_error = str(exc)
+            break
+
+    if not printed:
+        return {"ok": False, "message": f"Label not printed: {print_error}"}
+
+    result = await loop.run_in_executor(
+        None, state.db.receive_shipment,
+        printed, req.item_type, fields.get("building_number", ""),
+        fields.get("bol_number", ""), fields.get("vendor", ""), item_fields,
+        _as_doc_id(fields.get("bol_doc_id")), fields.get("po_number", ""),
+        fields.get("sector", ""))
+    result["printed"] = len(printed)
+    if print_error:
+        result["message"] += (f" Printing stopped after {len(printed)} of "
+                              f"{count} labels: {print_error}")
+    return result
+
+
+@app.get("/api/printer/status")
+async def printer_status():
+    """Label-printer health check (configured? reachable? media/head OK?)."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, printer.status)
 
 
 class CheckinAmendRequest(BaseModel):

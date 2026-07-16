@@ -40,9 +40,9 @@ REQUEST_STATUSES = ("pending", "staging", "fulfilled", "declined")
 # types stay permissive TEXT/INTEGER -- the .exe owns validation.
 MIRROR_COLUMNS = {
     "tags": ("id", "epc", "item_type", "bol_number", "po_number", "building",
-             "vendor", "sku", "mfc_date", "quantity", "remaining", "status",
-             "received_at", "delivered_at", "checkout_building", "flag",
-             "flagged_at", "created_at", "updated_at", "bol_doc_id"),
+             "sector", "vendor", "sku", "mfc_date", "quantity", "remaining",
+             "status", "received_at", "delivered_at", "checkout_building",
+             "flag", "flagged_at", "created_at", "updated_at", "bol_doc_id"),
     "vendors": ("name",),
     "notes": ("id", "ts", "item_type", "bol_number", "building", "text"),
     "bol_docs": ("id", "bol_number", "filename", "source", "pages", "vendor",
@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS tags (
     bol_number        TEXT,
     po_number         TEXT,
     building          TEXT,
+    sector            TEXT,
     vendor            TEXT,
     sku               TEXT,
     mfc_date          TEXT,
@@ -127,6 +128,8 @@ CREATE INDEX IF NOT EXISTS idx_tags_type ON tags (item_type);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests (status);
 -- Cart orders: lines submitted together share an order_ref (short hex).
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS order_ref TEXT NOT NULL DEFAULT '';
+-- Warehouse sector on a tag (mirrored from the .exe as of July 2026).
+ALTER TABLE tags ADD COLUMN IF NOT EXISTS sector TEXT;
 """
 
 

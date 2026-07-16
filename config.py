@@ -117,6 +117,20 @@ OCR_ENABLED = True
 OCR_LANG = "eng"
 
 # ---------------------------------------------------------------------------
+# Label printer (Zebra ZD621R, raw ZPL over TCP -- see printer.py)
+# ---------------------------------------------------------------------------
+# Check-in can print + RFID-encode a 4x6 label for each box. An empty
+# PRINTER_HOST turns the feature off (the Print button is hidden). Set the
+# address per machine in settings.ini; the printer is on the warehouse LAN,
+# so every machine points at the same IP.
+PRINTER_HOST = ""            # e.g. "10.1.57.18"
+PRINTER_PORT = 9100          # Zebra raw-ZPL port; effectively never changes
+# Prefix of app-minted EPCs (hex: "42473031" is ASCII "BG01"); the remaining
+# 16 hex digits are a serial allocated by the local DB. Factory-encoded tags
+# checked in via the handheld keep whatever EPC they came with.
+PRINTER_EPC_PREFIX = "42473031"
+
+# ---------------------------------------------------------------------------
 # Local database (SQLite)
 # ---------------------------------------------------------------------------
 DB_PATH = os.path.join(BASE_DIR, "inventory.db")
@@ -157,6 +171,8 @@ _ini = configparser.ConfigParser()
 if _ini.read(os.path.join(BASE_DIR, "settings.ini")) and "settings" in _ini:
     _s = _ini["settings"]
     SERIAL_PORT = _s.get("serial_port", SERIAL_PORT).strip() or SERIAL_PORT
+    PRINTER_HOST = _s.get("printer_host", PRINTER_HOST).strip() or PRINTER_HOST
+    PRINTER_PORT = _s.getint("printer_port", fallback=PRINTER_PORT)
     ADMIN_PIN = _s.get("admin_pin", ADMIN_PIN).strip() or ADMIN_PIN
     HOST = _s.get("host", HOST).strip() or HOST
     PORT = _s.getint("port", fallback=PORT)
@@ -185,6 +201,7 @@ DEFAULT_VENDORS = []
 SHIPMENT_FIELDS = [
     {"key": "building_number", "label": "Building #", "type": "buttons",
      "options": BUILDING_OPTIONS, "scope": "shipment"},
+    {"key": "sector",          "label": "Sector",     "type": "text",   "scope": "shipment"},
     {"key": "bol_number",      "label": "BOL Number", "type": "text",   "scope": "shipment"},
     {"key": "po_number",       "label": "PO Number",  "type": "text",   "scope": "shipment"},
     {"key": "vendor",          "label": "Vendor",     "type": "select", "scope": "shipment"},

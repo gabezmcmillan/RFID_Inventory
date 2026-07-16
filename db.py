@@ -7,8 +7,8 @@ derived aggregation over tags grouped by (item_type, bol_number, building), so
 quantities are always a COUNT and can never drift out of sync.
 
 Tables (created on first run):
-  tags       EPC -> item_type, BOL#, Building#, Vendor, SKU, mfc date, status,
-             received_at, delivered_at. One row per physical tag.
+  tags       EPC -> item_type, BOL#, Building#, Sector, Vendor, SKU, mfc date,
+             status, received_at, delivered_at. One row per physical tag.
   events     Append-only audit log (IN / OUT / COUNT / ...).
   requests   Material requests pulled from the cloud app (cloud id == local id)
              plus the manager's handling status.
@@ -107,6 +107,7 @@ class Database:
                     bol_number    TEXT NOT NULL DEFAULT '',
                     po_number    TEXT NOT NULL DEFAULT '',
                     building     TEXT NOT NULL DEFAULT '',
+                    sector       TEXT NOT NULL DEFAULT '',
                     vendor       TEXT NOT NULL DEFAULT '',
                     sku          TEXT NOT NULL DEFAULT '',
                     mfc_date     TEXT NOT NULL DEFAULT '',
@@ -217,7 +218,8 @@ class Database:
                     f"ALTER TABLE {table} RENAME COLUMN po_number TO bol_number")
         have = {row["name"] for row in
                 self._conn.execute("PRAGMA table_info(tags)").fetchall()}
-        for col in ("flag", "flagged_at", "checkout_building", "po_number"):
+        for col in ("flag", "flagged_at", "checkout_building", "po_number",
+                    "sector"):
             if col not in have:
                 self._conn.execute(
                     f"ALTER TABLE tags ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
@@ -301,6 +303,7 @@ class Database:
             "po_number": row["po_number"],
             "bol_doc_id": row["bol_doc_id"],
             "building": row["building"],
+            "sector": row["sector"],
             "vendor": row["vendor"],
             "sku": row["sku"],
             "mfc_date": row["mfc_date"],
@@ -315,8 +318,40 @@ class Database:
         }
 
     # -- writes --------------------------------------------------------------
+    EPC_LENGTH = 24   # 96-bit EPC in hex characters
+
+    def allocate_epcs(self, count=1):
+        """Mint unique EPCs for printer-encoded labels.
+
+        EPC = PRINTER_EPC_PREFIX + zero-padded hex serial. The serial counter
+        persists in sync_state (key/value bookkeeping table), and any value
+        that somehow already exists in tags (e.g. a colliding factory EPC) is
+        skipped, so an allocated EPC is never a duplicate.
+        """
+        prefix = config.PRINTER_EPC_PREFIX.upper()
+        width = self.EPC_LENGTH - len(prefix)
+        epcs = []
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM sync_state WHERE key='epc_serial'"
+            ).fetchone()
+            serial = int(row["value"]) if row else 0
+            while len(epcs) < count:
+                serial += 1
+                epc = f"{prefix}{serial:0{width}X}"
+                if not self._conn.execute(
+                        "SELECT 1 FROM tags WHERE epc=?", (epc,)).fetchone():
+                    epcs.append(epc)
+            self._conn.execute(
+                "INSERT INTO sync_state (key, value) VALUES ('epc_serial', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(serial),))
+            self._conn.commit()
+        return epcs
+
     def receive_shipment(self, epcs, item_type, building, bol_number, vendor,
-                         item_fields=None, bol_doc_id=None, po_number=""):
+                         item_fields=None, bol_doc_id=None, po_number="",
+                         sector=""):
         """Check In: record a shipment's tags and report the group's quantity."""
         item_fields = item_fields or {}
         sku = (item_fields.get("sku") or "").strip()
@@ -341,12 +376,13 @@ class Database:
                     continue
                 self._conn.execute(
                     "INSERT INTO tags (epc, item_type, bol_number, po_number, "
-                    "bol_doc_id, building, vendor, sku, mfc_date, quantity, "
-                    "remaining, status, received_at, delivered_at, created_at, "
-                    "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "bol_doc_id, building, sector, vendor, sku, mfc_date, "
+                    "quantity, remaining, status, received_at, delivered_at, "
+                    "created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (epc, item_type, bol_number, po_number, bol_doc_id,
-                     building, vendor, sku, mfc_date, units, units, STATUS_IN,
-                     ts, "", ts, ts),
+                     building, sector, vendor, sku, mfc_date, units, units,
+                     STATUS_IN, ts, "", ts, ts),
                 )
                 detail = f"qty {units}"
                 if po_number:
@@ -372,7 +408,7 @@ class Database:
                 "qty": qty, "item_type": item_type,
                 "bol_number": bol_number, "po_number": po_number,
                 "bol_doc_id": bol_doc_id,
-                "building": building, "vendor": vendor,
+                "building": building, "sector": sector, "vendor": vendor,
                 "sku": sku, "mfc_date": mfc_date}
 
     def amend_checkin(self, epc, fields):
@@ -1097,8 +1133,8 @@ class Database:
                             f"({label} '{value or '(blank)'}').")}
 
     # Fields an admin may edit on a tag.
-    EDITABLE = ("item_type", "bol_number", "po_number", "building", "vendor",
-                "sku", "mfc_date", "quantity", "remaining", "status")
+    EDITABLE = ("item_type", "bol_number", "po_number", "building", "sector",
+                "vendor", "sku", "mfc_date", "quantity", "remaining", "status")
 
     def update_tag(self, epc, fields):
         """Admin: overwrite editable fields on a tag. Returns the updated tag."""
