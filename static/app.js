@@ -1423,6 +1423,23 @@ function onCheckoutPrompt(msg) {
                   `${msg.item_type}, requested ${req.item_type}`, "warn");
       return;
     }
+    // Right type, wrong component (W.I.F. accessory): same override flow.
+    if (req.item_name && (msg.item_name || "") !== req.item_name) {
+      const boxName = msg.item_name || "(no item name)";
+      showModal("Different item name",
+        `<p>Request #${req.id} asks for
+           <b>${escapeHtml(req.item_type)} | ${escapeHtml(req.item_name)}</b>,
+           but this box is
+           <b>${escapeHtml(msg.item_type)} | ${escapeHtml(boxName)}</b>
+           (<span class="epc">${escapeHtml(msg.epc)}</span>).</p>
+         <p>Stage it anyway?</p>`,
+        [{ label: "Stage anyway", cls: "primary-btn",
+           onClick: () => showCheckoutCard(msg) },
+         { label: "Skip this box", cls: "back-btn" }]);
+      logActivity(`Item name mismatch for request #${req.id}: scanned ` +
+                  `${boxName}, requested ${req.item_name}`, "warn");
+      return;
+    }
   }
   showCheckoutCard(msg);
 }
@@ -1574,6 +1591,7 @@ function renderRequestBanner() {
     .filter(Boolean).join(" \u00b7 ");
   $("request-banner-title").textContent =
     `#${req.id} \u2014 ${req.quantity} \u00d7 ${req.item_type}` +
+    (req.item_name ? ` | ${req.item_name}` : "") +
     (dest ? ` \u2192 ${dest}` : "");
   const total = stagedTotal();
   const progress = $("request-banner-progress");
@@ -1682,7 +1700,8 @@ function confirmRequestDelivery() {
     : "";
   showModal(`Confirm delivery for request #${req.id}?`,
     `${shortWarn}
-     <p>${total} unit(s) of <b>${escapeHtml(req.item_type)}</b> from
+     <p>${total} unit(s) of <b>${escapeHtml(req.item_type)}${req.item_name
+        ? ` | ${escapeHtml(req.item_name)}` : ""}</b> from
         ${state.stagedDraws.length} box(es) will be checked out, and the
         request marked fulfilled on the cloud site.</p>
      <label class="edit-field"><span>Note for the requester${short ? " (required)" : " (optional)"}</span>
@@ -2553,7 +2572,8 @@ function renderRequests(rows) {
       <div class="request-main">
         <div class="request-title">
           <span class="request-qty">${r.quantity}\u00d7</span>
-          <strong>${escapeHtml(r.item_type)}</strong>
+          <strong>${escapeHtml(r.item_type)}${r.item_name
+            ? ` | ${escapeHtml(r.item_name)}` : ""}</strong>
           <span class="badge ${badgeCls}">${escapeHtml(badgeTxt)}</span>
         </div>
         <div class="request-meta hint">#${r.id}${r.order_ref

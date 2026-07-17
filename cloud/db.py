@@ -135,6 +135,9 @@ ALTER TABLE requests ADD COLUMN IF NOT EXISTS order_ref TEXT NOT NULL DEFAULT ''
 ALTER TABLE tags ADD COLUMN IF NOT EXISTS sector TEXT;
 -- Per-box component name for W.I.F. (mirrored from the .exe as of July 2026).
 ALTER TABLE tags ADD COLUMN IF NOT EXISTS item_name TEXT;
+-- Requests carry the component name too, so W.I.F. accessories are requested
+-- (and stock-checked) per component rather than as one pooled type.
+ALTER TABLE requests ADD COLUMN IF NOT EXISTS item_name TEXT NOT NULL DEFAULT '';
 -- BOL PDF binaries, pushed separately from the row snapshot (the exchange
 -- ack lists which bol_docs ids are still missing their file). Keyed by the
 -- .exe's bol_docs id; label QR codes resolve through /tag/{epc} -> /bol/{id}.
@@ -429,13 +432,16 @@ class CloudDatabase:
 
     def stock_rows(self):
         """Requestable stock for the cart view: one row per item type x
-        building (units summed across BOLs), each with its BOL breakdown for
-        the drill-down. Only stock actually on hand appears -- an item type
-        with zero remaining units simply isn't requestable."""
+        component name x building (units summed across BOLs), each with its
+        BOL breakdown for the drill-down. item_name is '' except for named
+        types (W.I.F.), whose components each get their own requestable row.
+        Only stock actually on hand appears -- an item type with zero
+        remaining units simply isn't requestable."""
         def work(cur):
             cur.execute(
                 """
                 SELECT item_type,
+                       COALESCE(item_name, '')  AS item_name,
                        COALESCE(building, '')   AS building,
                        bol_number,
                        vendor,
@@ -444,16 +450,19 @@ class CloudDatabase:
                        MIN(received_at)            AS first_received
                 FROM tags
                 WHERE COALESCE(remaining, 0) > 0
-                GROUP BY item_type, COALESCE(building, ''), bol_number, vendor
-                ORDER BY item_type, COALESCE(building, ''), bol_number
+                GROUP BY item_type, COALESCE(item_name, ''),
+                         COALESCE(building, ''), bol_number, vendor
+                ORDER BY item_type, COALESCE(item_name, ''),
+                         COALESCE(building, ''), bol_number
                 """)
             return cur.fetchall()
         rows = self._run(work)
         stock = {}
         for r in rows:
-            key = (r["item_type"], r["building"])
+            key = (r["item_type"], r["item_name"], r["building"])
             row = stock.setdefault(key, {
-                "item_type": r["item_type"], "building": r["building"],
+                "item_type": r["item_type"], "item_name": r["item_name"],
+                "building": r["building"],
                 "units": 0, "boxes": 0, "vendors": [],
                 "oldest_received": "", "groups": []})
             row["units"] += r["units"] or 0
@@ -496,25 +505,25 @@ class CloudDatabase:
 
     # -- requests (cloud-owned) ------------------------------------------------
     @staticmethod
-    def _available_units(cur, item_type, stock_building=None):
-        """Units on hand for an item type, optionally scoped to the building
-        the stock is assigned to ('' = unassigned). Runs on the caller's
-        cursor so checks and inserts share one transaction."""
-        if stock_building is None:
-            cur.execute(
-                "SELECT COALESCE(SUM(remaining), 0) AS n FROM tags "
-                "WHERE item_type=%s AND COALESCE(remaining, 0) > 0",
-                (item_type,))
-        else:
-            cur.execute(
-                "SELECT COALESCE(SUM(remaining), 0) AS n FROM tags "
-                "WHERE item_type=%s AND COALESCE(building, '')=%s "
-                "AND COALESCE(remaining, 0) > 0",
-                (item_type, stock_building))
+    def _available_units(cur, item_type, item_name="", stock_building=None):
+        """Units on hand for an item type + component name ('' for types
+        without component names), optionally scoped to the building the stock
+        is assigned to ('' = unassigned). Runs on the caller's cursor so
+        checks and inserts share one transaction."""
+        where = ["item_type=%s", "COALESCE(item_name, '')=%s",
+                 "COALESCE(remaining, 0) > 0"]
+        params = [item_type, item_name or ""]
+        if stock_building is not None:
+            where.append("COALESCE(building, '')=%s")
+            params.append(stock_building)
+        cur.execute(
+            "SELECT COALESCE(SUM(remaining), 0) AS n FROM tags "
+            f"WHERE {' AND '.join(where)}", params)
         return cur.fetchone()["n"] or 0
 
     @classmethod
-    def _validate_line(cls, cur, item_type, quantity, stock_building=None):
+    def _validate_line(cls, cur, item_type, quantity, item_name="",
+                       stock_building=None):
         """One requested line against the mirrored stock. Returns an error
         message, or None when the line is fulfillable as asked."""
         if not item_type:
@@ -522,33 +531,37 @@ class CloudDatabase:
         qty = _parse_quantity(quantity)
         if qty is None:
             return "Quantity must be a whole number of 1 or more."
-        available = cls._available_units(cur, item_type, stock_building)
+        available = cls._available_units(cur, item_type, item_name,
+                                         stock_building)
+        label = f"{item_type} | {item_name}" if item_name else item_type
         where = (f" in Building {stock_building}" if stock_building else "")
         if available <= 0:
-            return f"No {item_type} in stock{where} right now."
+            return f"No {label} in stock{where} right now."
         if qty > available:
-            return (f"Only {available} unit(s) of {item_type} "
+            return (f"Only {available} unit(s) of {label} "
                     f"available{where}; requested {qty}.")
         return None
 
     def create_request(self, item_type, quantity, building="", jobsite="",
-                       requester="", contact="", note=""):
+                       requester="", contact="", note="", item_name=""):
         """Single-line request (legacy JSON API). Availability is checked
         across all buildings -- this path has no stock-row context."""
         item_type = (item_type or "").strip()
+        item_name = (item_name or "").strip()
         requester = (requester or "").strip()
         if not requester:
             return {"ok": False, "message": "Your name is required."}
 
         def work(cur):
-            error = self._validate_line(cur, item_type, quantity)
+            error = self._validate_line(cur, item_type, quantity, item_name)
             if error:
                 return {"ok": False, "message": error}
             cur.execute(
-                "INSERT INTO requests (item_type, quantity, building, jobsite,"
-                " requester, contact, note, status, created_at, order_ref) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-                (item_type, _parse_quantity(quantity),
+                "INSERT INTO requests (item_type, item_name, quantity, "
+                "building, jobsite, requester, contact, note, status, "
+                "created_at, order_ref) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+                (item_type, item_name, _parse_quantity(quantity),
                  (building or "").strip(), (jobsite or "").strip(),
                  requester, (contact or "").strip(), (note or "").strip(),
                  REQUEST_PENDING, _now(), _new_order_ref()))
@@ -565,11 +578,12 @@ class CloudDatabase:
         """One submitted cart -> N request rows sharing an order_ref, in a
         single all-or-nothing transaction.
 
-        `lines` is a list of {item_type, building, quantity,
+        `lines` is a list of {item_type, item_name, building, quantity,
         delivery_building} where `building` is the STOCK row the requester
-        picked ('' = unassigned stock); every line is checked against that
-        stock's availability. Each line's `delivery_building` is where that
-        line should go (stored on its row); the order-level
+        picked ('' = unassigned stock) and `item_name` is the component name
+        for named types like W.I.F. ('' otherwise); every line is checked
+        against that stock's availability. Each line's `delivery_building`
+        is where that line should go (stored on its row); the order-level
         `delivery_building` argument is a legacy fallback for lines that
         don't carry their own.
 
@@ -594,6 +608,7 @@ class CloudDatabase:
             parsed = []
             for i, line in enumerate(lines):
                 item_type = str(line.get("item_type") or "").strip()
+                item_name = str(line.get("item_name") or "").strip()
                 stock_building = str(line.get("building") or "").strip()
                 deliver_to = (str(line.get("delivery_building") or "").strip()
                               or delivery_building)
@@ -610,17 +625,17 @@ class CloudDatabase:
                                    "A delivery building is required for "
                                    "this item."})
                 else:
-                    parsed.append((i, item_type, stock_building, qty,
-                                   deliver_to))
+                    parsed.append((i, item_type, item_name, stock_building,
+                                   qty, deliver_to))
             groups = {}
-            for i, item_type, stock_building, qty, deliver_to in parsed:
-                g = groups.setdefault((item_type, stock_building),
+            for i, item_type, item_name, stock_building, qty, deliver_to in parsed:
+                g = groups.setdefault((item_type, item_name, stock_building),
                                       {"total": 0, "lines": []})
                 g["total"] += qty
                 g["lines"].append(i)
-            for (item_type, stock_building), g in groups.items():
+            for (item_type, item_name, stock_building), g in groups.items():
                 message = self._validate_line(cur, item_type, g["total"],
-                                              stock_building)
+                                              item_name, stock_building)
                 if message:
                     errors.extend({"line": i, "message": message}
                                   for i in g["lines"])
@@ -633,13 +648,13 @@ class CloudDatabase:
             order_ref = _new_order_ref()
             ts = _now()
             ids = []
-            for i, item_type, stock_building, qty, deliver_to in parsed:
+            for i, item_type, item_name, stock_building, qty, deliver_to in parsed:
                 cur.execute(
-                    "INSERT INTO requests (item_type, quantity, building, "
-                    "jobsite, requester, contact, note, status, created_at, "
-                    "order_ref) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                    "RETURNING id",
-                    (item_type, qty, deliver_to,
+                    "INSERT INTO requests (item_type, item_name, quantity, "
+                    "building, jobsite, requester, contact, note, status, "
+                    "created_at, order_ref) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                    (item_type, item_name, qty, deliver_to,
                      (jobsite or "").strip(), requester,
                      (contact or "").strip(), (note or "").strip(),
                      REQUEST_PENDING, ts, order_ref))

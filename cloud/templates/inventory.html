@@ -51,8 +51,9 @@
     </thead>
     {% for row in stock %}
     <tbody class="stock-group"
-           data-key="{{ row.item_type }}|{{ row.building }}"
+           data-key="{{ row.item_type }}|{{ row.item_name }}|{{ row.building }}"
            data-item-type="{{ row.item_type }}"
+           data-item-name="{{ row.item_name }}"
            data-building="{{ row.building }}"
            data-units="{{ row.units }}"
            data-boxes="{{ row.boxes }}"
@@ -60,7 +61,8 @@
            data-oldest="{{ (row.oldest_received or '')[:10] }}">
       <tr class="stock-row">
         <td class="stock-item"><span class="caret">&#9656;</span>
-          {{ row.item_type }}</td>
+          {{ row.item_type }}{% if row.item_name %}
+          <span class="item-name">| {{ row.item_name }}</span>{% endif %}</td>
         <td>{% if row.building %}<span class="bldg-badge">Bldg
             {{ row.building }}</span>{% else %}<span class="bldg-badge bldg-none">Unassigned</span>{% endif %}</td>
         <td class="num">{{ row.units }}</td>

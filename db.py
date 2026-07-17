@@ -164,6 +164,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS requests (
                     id           INTEGER PRIMARY KEY,
                     item_type    TEXT NOT NULL,
+                    item_name    TEXT NOT NULL DEFAULT '',
                     quantity     INTEGER NOT NULL DEFAULT 1,
                     building     TEXT NOT NULL DEFAULT '',
                     jobsite      TEXT NOT NULL DEFAULT '',
@@ -246,6 +247,11 @@ class Database:
         if "order_ref" not in have_req:
             self._conn.execute(
                 "ALTER TABLE requests ADD COLUMN order_ref TEXT NOT NULL DEFAULT ''")
+        # Component name on a request (W.I.F. accessories are requested per
+        # component, not as one pooled type).
+        if "item_name" not in have_req:
+            self._conn.execute(
+                "ALTER TABLE requests ADD COLUMN item_name TEXT NOT NULL DEFAULT ''")
         # Multi-unit columns: a tag (box) can represent N units. Older rows were
         # one-unit-per-tag, so they default to quantity = remaining = 1, except
         # already-delivered boxes which have nothing left (remaining = 0).
@@ -1364,6 +1370,7 @@ class Database:
     @staticmethod
     def _request_dict(row):
         return {"id": row["id"], "item_type": row["item_type"],
+                "item_name": row["item_name"],
                 "quantity": row["quantity"], "building": row["building"],
                 "jobsite": row["jobsite"], "requester": row["requester"],
                 "contact": row["contact"], "note": row["note"],
@@ -1391,20 +1398,24 @@ class Database:
                 if have:
                     continue
                 self._conn.execute(
-                    "INSERT INTO requests (id, item_type, quantity, building, "
-                    "jobsite, requester, contact, note, status, created_at, "
-                    "order_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO requests (id, item_type, item_name, quantity, "
+                    "building, jobsite, requester, contact, note, status, "
+                    "created_at, order_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (rid, str(r.get("item_type") or ""),
+                     str(r.get("item_name") or ""),
                      _as_quantity(r.get("quantity")),
                      str(r.get("building") or ""), str(r.get("jobsite") or ""),
                      str(r.get("requester") or ""), str(r.get("contact") or ""),
                      str(r.get("note") or ""), REQUEST_PENDING,
                      str(r.get("created_at") or _now()),
                      str(r.get("order_ref") or "")))
+                label = str(r.get("item_type") or "?")
+                if r.get("item_name"):
+                    label += f" | {r.get('item_name')}"
                 self._log("REQUEST", "", str(r.get("item_type") or ""),
                           building=str(r.get("building") or ""),
                           detail=(f"#{rid}: {r.get('quantity') or 1} x "
-                                  f"{r.get('item_type') or '?'} for "
+                                  f"{label} for "
                                   f"{r.get('jobsite') or r.get('requester') or 'jobsite'}"))
                 added.append(rid)
             if added:
@@ -1536,10 +1547,12 @@ class Database:
                 "status_dirty=1 WHERE id=?",
                 (REQUEST_FULFILLED, ts, handler_note, req_id))
             boxes = sum(1 for r in results if r.get("ok"))
+            label = row["item_type"] + (
+                f" | {row['item_name']}" if row["item_name"] else "")
             self._log("REQUEST_FULFILLED", "", row["item_type"],
                       building=row["building"],
                       detail=(f"#{req_id}: {delivered_total} of {requested} x "
-                              f"{row['item_type']} from {boxes} box(es)"
+                              f"{label} from {boxes} box(es)"
                               + (f" -- {note}" if note else "")))
             self._conn.commit()
             updated = self._conn.execute(

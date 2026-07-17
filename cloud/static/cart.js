@@ -9,7 +9,9 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const CART_KEY = "warehouse-cart-v1";
+// v2: keys became "itemType|itemName|building" when W.I.F. components got
+// their own stock rows (old carts don't translate; they just start empty).
+const CART_KEY = "warehouse-cart-v2";
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -18,12 +20,14 @@ function escapeHtml(s) {
 }
 
 // -- stock rows (from the server-rendered table) -----------------------------
-// key = "itemType|building"; building "" = unassigned stock.
+// key = "itemType|itemName|building"; itemName "" except for named types
+// (W.I.F. components), building "" = unassigned stock.
 const stock = new Map();
 document.querySelectorAll("tbody.stock-group").forEach((tb) => {
   stock.set(tb.dataset.key, {
     key: tb.dataset.key,
     itemType: tb.dataset.itemType,
+    itemName: tb.dataset.itemName || "",
     building: tb.dataset.building,
     units: parseInt(tb.dataset.units, 10) || 0,
     boxes: parseInt(tb.dataset.boxes, 10) || 0,
@@ -149,6 +153,7 @@ function applyFilters() {
   stock.forEach((row) => {
     const matchesText = !q
       || row.itemType.toLowerCase().includes(q)
+      || row.itemName.toLowerCase().includes(q)
       || row.vendors.toLowerCase().includes(q);
     const matchesBldg = !b || (b === "~" ? row.building === ""
                                          : row.building === b);
@@ -168,7 +173,7 @@ function sortRows(by) {
   sortState.dir = sortState.by === by ? -sortState.dir : 1;
   sortState.by = by;
   const val = (row) => ({
-    item_type: row.itemType.toLowerCase(),
+    item_type: `${row.itemType} ${row.itemName}`.toLowerCase(),
     building: row.building,
     units: row.units,
     boxes: row.boxes,
@@ -219,10 +224,12 @@ function renderCartLines() {
     const bldg = row.building
       ? `<span class="bldg-badge">Bldg ${escapeHtml(row.building)}</span>`
       : `<span class="bldg-badge bldg-none">Unassigned</span>`;
+    const name = row.itemName
+      ? ` <span class="item-name">| ${escapeHtml(row.itemName)}</span>` : "";
     return `<div class="cart-line" data-key="${escapeHtml(key)}" data-line="${i}">
       <div class="cart-line-main">
         <div class="cart-line-title">
-          <strong>${escapeHtml(row.itemType)}</strong> ${bldg}
+          <strong>${escapeHtml(row.itemType)}</strong>${name} ${bldg}
           <span class="hint">${row.units} available</span>
         </div>
         <label class="cart-line-deliver">Deliver to building
@@ -311,7 +318,8 @@ async function refreshAvailability() {
     return;   // offline/stale is fine -- the server re-validates on submit
   }
   const fresh = new Map(
-    (data.stock || []).map((r) => [`${r.item_type}|${r.building}`, r]));
+    (data.stock || []).map(
+      (r) => [`${r.item_type}|${r.item_name || ""}|${r.building}`, r]));
   stock.forEach((row, key) => {
     const now = fresh.get(key);
     row.units = now ? (now.units || 0) : 0;
@@ -350,6 +358,7 @@ async function submitCart(ev) {
     note: form.elements.note.value.trim(),
     lines: lineKeys.map((key) => ({
       item_type: stock.get(key).itemType,
+      item_name: stock.get(key).itemName,
       building: stock.get(key).building,
       quantity: cart[key].qty,
       delivery_building: cart[key].deliverTo,

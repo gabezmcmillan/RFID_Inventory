@@ -42,7 +42,8 @@
       {% for r in o.lines %}
       <tr>
         <td>{{ r.id }}</td>
-        <td>{{ r.item_type }}</td>
+        <td>{{ r.item_type }}{% if r.item_name %}
+          <span class="item-name">| {{ r.item_name }}</span>{% endif %}</td>
         <td class="num">{{ r.quantity }}</td>
         <td>{% if r.building %}Bldg {{ r.building }}{% else %}&mdash;{% endif %}</td>
         <td>

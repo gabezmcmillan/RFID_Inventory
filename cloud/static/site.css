@@ -259,7 +259,9 @@ table.stock-table { min-width: 760px; }
 .stock-row:hover td { background: #f2f5ff; }
 tbody.in-cart .stock-row td { background: rgba(0, 40, 240, 0.05); }
 .stock-row td { border-bottom: 1px solid #eef0f4; }
-.stock-item { font-weight: 600; color: var(--bg-navy, #002070); white-space: nowrap; }
+/* Long W.I.F. component names must be allowed to wrap. */
+.stock-item { font-weight: 600; color: var(--bg-navy, #002070); }
+.item-name { font-weight: 500; color: var(--ink-soft, #40506e); }
 .stock-vendors { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .caret {
   display: inline-block;

@@ -239,6 +239,7 @@ def bol_pdf(doc_id: int):
 # ---------------------------------------------------------------------------
 class RequestBody(BaseModel):
     item_type: str
+    item_name: str = ""    # component name for named types (W.I.F.)
     quantity: int = 1
     building: str = ""
     jobsite: str = ""
@@ -249,6 +250,7 @@ class RequestBody(BaseModel):
 
 class CartLine(BaseModel):
     item_type: str
+    item_name: str = ""    # component name for named types (W.I.F.)
     building: str = ""     # the stock row's building ('' = unassigned)
     quantity: int = 1
     delivery_building: str = ""   # where THIS line should go
@@ -299,7 +301,7 @@ def api_create_request(body: RequestBody):
         return err
     return db.create_request(body.item_type, body.quantity, body.building,
                              body.jobsite, body.requester, body.contact,
-                             body.note)
+                             body.note, body.item_name)
 
 
 @app.post("/api/requests/cart")
