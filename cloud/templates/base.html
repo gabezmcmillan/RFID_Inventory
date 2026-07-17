@@ -29,13 +29,33 @@
     <span>
       Live view of the Switch warehouse.
       {% if last_synced %}
-        Warehouse last reported in {{ last_synced | replace("T", " ") }}.
+        Warehouse last reported in
+        <time class="localtime" datetime="{{ last_synced }}">{{ last_synced | replace("T", " ") }}</time>.
       {% else %}
         Waiting for the warehouse's first sync.
       {% endif %}
     </span>
     <span>Questions about an order? Contact the warehouse manager.</span>
   </footer>
+  <script>
+    // Timestamps come from the cloud as UTC ISO strings with an offset
+    // (e.g. 2026-07-17T15:19:53+00:00). Rewrite every <time class="localtime">
+    // into the viewer's own timezone; the server-rendered text is the no-JS
+    // fallback.
+    (function () {
+      document.querySelectorAll("time.localtime").forEach(function (el) {
+        var iso = el.getAttribute("datetime");
+        if (!iso) return;
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return;
+        el.textContent = d.toLocaleString([], {
+          year: "numeric", month: "numeric", day: "numeric",
+          hour: "numeric", minute: "2-digit", second: "2-digit",
+          timeZoneName: "short",
+        });
+      });
+    })();
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

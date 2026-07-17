@@ -16,7 +16,7 @@
 
 <p class="hint">Pick items straight from the live stock table, set a
   quantity, and add them to your cart. Availability is as of the warehouse's
-  last sync{% if last_synced %} ({{ last_synced | replace("T", " ") }}){% endif %};
+  last sync{% if last_synced %} (<time class="localtime" datetime="{{ last_synced }}">{{ last_synced | replace("T", " ") }}</time>){% endif %};
   the warehouse manager confirms every order.</p>
 
 {% if not stock %}
@@ -148,7 +148,7 @@
           placeholder="e.g. Needed on site by Friday morning"></textarea>
       </label>
       <p class="hint">Availability shown is as of the warehouse's last
-        sync{% if last_synced %} ({{ last_synced | replace("T", " ") }}){% endif %}.
+        sync{% if last_synced %} (<time class="localtime" datetime="{{ last_synced }}">{{ last_synced | replace("T", " ") }}</time>){% endif %}.
         The warehouse manager gives final confirmation on every order.</p>
       <button type="submit" class="cta" id="checkout-submit">Submit
         request</button>
