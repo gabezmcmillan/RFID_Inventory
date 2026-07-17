@@ -104,6 +104,7 @@ class Database:
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
                     epc          TEXT UNIQUE NOT NULL,
                     item_type    TEXT NOT NULL,
+                    item_name    TEXT NOT NULL DEFAULT '',
                     bol_number    TEXT NOT NULL DEFAULT '',
                     po_number    TEXT NOT NULL DEFAULT '',
                     building     TEXT NOT NULL DEFAULT '',
@@ -219,7 +220,7 @@ class Database:
         have = {row["name"] for row in
                 self._conn.execute("PRAGMA table_info(tags)").fetchall()}
         for col in ("flag", "flagged_at", "checkout_building", "po_number",
-                    "sector"):
+                    "sector", "item_name"):
             if col not in have:
                 self._conn.execute(
                     f"ALTER TABLE tags ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
@@ -299,6 +300,7 @@ class Database:
         return {
             "epc": row["epc"],
             "item_type": row["item_type"],
+            "item_name": row["item_name"],
             "bol_number": row["bol_number"],
             "po_number": row["po_number"],
             "bol_doc_id": row["bol_doc_id"],
@@ -354,6 +356,7 @@ class Database:
                          sector=""):
         """Check In: record a shipment's tags and report the group's quantity."""
         item_fields = item_fields or {}
+        item_name = (item_fields.get("item_name") or "").strip()
         sku = (item_fields.get("sku") or "").strip()
         mfc_date = (item_fields.get("mfc_date") or "").strip()
         units = _as_quantity(item_fields.get("quantity"))
@@ -375,16 +378,18 @@ class Database:
                     duplicates.append(epc)
                     continue
                 self._conn.execute(
-                    "INSERT INTO tags (epc, item_type, bol_number, po_number, "
-                    "bol_doc_id, building, sector, vendor, sku, mfc_date, "
-                    "quantity, remaining, status, received_at, delivered_at, "
-                    "created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (epc, item_type, bol_number, po_number, bol_doc_id,
-                     building, sector, vendor, sku, mfc_date, units, units,
-                     STATUS_IN, ts, "", ts, ts),
+                    "INSERT INTO tags (epc, item_type, item_name, bol_number, "
+                    "po_number, bol_doc_id, building, sector, vendor, sku, "
+                    "mfc_date, quantity, remaining, status, received_at, "
+                    "delivered_at, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (epc, item_type, item_name, bol_number, po_number,
+                     bol_doc_id, building, sector, vendor, sku, mfc_date,
+                     units, units, STATUS_IN, ts, "", ts, ts),
                 )
                 detail = f"qty {units}"
+                if item_name:
+                    detail += f", name {item_name}"
                 if po_number:
                     detail += f", PO {po_number}"
                 self._log("IN", epc, item_type, bol_number, building, vendor,
@@ -405,14 +410,15 @@ class Database:
                 "added_units": added_units, "quantity": units,
                 "duplicates": duplicates, "epcs": added_epcs,
                 "epc": added_epcs[0] if added_epcs else "",
-                "qty": qty, "item_type": item_type,
+                "qty": qty, "item_type": item_type, "item_name": item_name,
                 "bol_number": bol_number, "po_number": po_number,
                 "bol_doc_id": bol_doc_id,
                 "building": building, "sector": sector, "vendor": vendor,
                 "sku": sku, "mfc_date": mfc_date}
 
     def amend_checkin(self, epc, fields):
-        """Operator correction of a just-checked-in box (SKU, mfc date, quantity).
+        """Operator correction of a just-checked-in box (item name, SKU,
+        mfc date, quantity).
 
         Not PIN-gated: this fixes typos right after a trigger pull, before the
         box has been touched. Quantity edits also reset `remaining` (nothing has
@@ -429,7 +435,7 @@ class Database:
                         "epc": epc}
 
             sets, params, changes = [], [], []
-            for key in ("sku", "mfc_date"):
+            for key in ("item_name", "sku", "mfc_date"):
                 if key not in fields:
                     continue
                 new_val = ("" if fields[key] is None else str(fields[key])).strip()
@@ -729,6 +735,7 @@ class Database:
                     "remaining": 0, "quantity": row["quantity"]}
 
         return {"ok": True, "epc": epc, "item_type": row["item_type"],
+                "item_name": row["item_name"],
                 "bol_number": row["bol_number"], "building": row["building"],
                 "vendor": row["vendor"], "sku": row["sku"],
                 "quantity": row["quantity"], "remaining": row["remaining"]}
@@ -926,17 +933,23 @@ class Database:
         delivered drops to qty 0 and status Delivered. Each group also carries
         the distinct values of the OTHER dimension (`other_values`) so grouping
         by building still shows which BOLs are involved, and vice versa.
-        `filters` narrows the tags considered (see _filter_where).
+        Named item types (config.NAMED_ITEM_TYPES, e.g. W.I.F.) group by the
+        per-box component name instead, with the toggled dimension shown as
+        the other values. `filters` narrows the tags considered.
         """
         gcol = GROUP_COLUMNS.get(group_by, "bol_number")
         ocol = "building" if gcol == "bol_number" else "bol_number"
+        named = list(config.NAMED_ITEM_TYPES)
+        named_in = ",".join("?" for _ in named) or "''"
         clause, params = self._filter_where(filters)
         with self._lock:
             rows = self._conn.execute(
                 f"""
                 SELECT item_type,
-                       {gcol}                              AS gval,
-                       {ocol}                              AS oval,
+                       CASE WHEN item_type IN ({named_in})
+                            THEN item_name ELSE {gcol} END  AS gval,
+                       CASE WHEN item_type IN ({named_in})
+                            THEN {gcol} ELSE {ocol} END     AS oval,
                        COALESCE(SUM(remaining), 0)         AS in_wh,
                        COALESCE(SUM(quantity), 0)          AS capacity,
                        COUNT(*)                            AS boxes,
@@ -944,31 +957,40 @@ class Database:
                        MAX(bol_doc_id)                     AS doc_id
                 FROM tags
                 {clause}
-                GROUP BY item_type, {gcol}, {ocol}
+                GROUP BY item_type, gval, oval
                 ORDER BY item_type, gval, oval
                 """,
-                params,
+                named + named + params,
             ).fetchall()
             note_rows = self._conn.execute(
                 f"SELECT item_type, {gcol} AS gval, COUNT(*) AS n "
                 "FROM notes GROUP BY item_type, gval").fetchall()
+            type_note_rows = self._conn.execute(
+                "SELECT item_type, COUNT(*) AS n FROM notes "
+                "GROUP BY item_type").fetchall()
 
         note_counts = {(r["item_type"], r["gval"] or ""): r["n"]
                        for r in note_rows}
+        # Named types group by item_name, which notes don't key on; every
+        # component row carries the type-wide note count instead.
+        type_note_counts = {r["item_type"]: r["n"] for r in type_note_rows}
 
         # SQL groups by (type, group, other) so the sub-rows are merged here,
         # accumulating the distinct other-dimension values along the way.
         types = {}
         groups = {}
         for r in rows:
+            is_named = r["item_type"] in named
             t = types.setdefault(r["item_type"], {"item_type": r["item_type"],
+                                                  "named": is_named,
                                                   "qty": 0, "groups": []})
             key = (r["item_type"], r["gval"] or "")
             g = groups.get(key)
             if g is None:
                 g = {"value": r["gval"] or "", "in_wh": 0, "capacity": 0,
                      "boxes": 0, "received_at": "", "bol_doc_id": None,
-                     "note_count": note_counts.get(key, 0),
+                     "note_count": (type_note_counts.get(r["item_type"], 0)
+                                    if is_named else note_counts.get(key, 0)),
                      "_others": set()}
                 groups[key] = g
                 t["groups"].append(g)
@@ -1004,8 +1026,13 @@ class Database:
         return {"group_by": group_by, "types": list(types.values())}
 
     def group_tags(self, item_type, group_by, value, filters=None):
-        """Individual tags within one (item_type, group) cell, for drill-down."""
-        gcol = GROUP_COLUMNS.get(group_by, "bol_number")
+        """Individual tags within one (item_type, group) cell, for drill-down.
+
+        Named item types drill down by component name (item_name) instead of
+        the BOL/Building toggle.
+        """
+        gcol = ("item_name" if item_type in config.NAMED_ITEM_TYPES
+                else GROUP_COLUMNS.get(group_by, "bol_number"))
         clause, fparams = self._filter_where(filters)
         clause = clause.replace(" WHERE ", " AND ", 1)
         with self._lock:
@@ -1035,6 +1062,16 @@ class Database:
             row = self._conn.execute(
                 "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
         return self._tag_dict(row) if row else None
+
+    def item_name_suggestions(self, item_type):
+        """Distinct component names already used for a type (autocomplete)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT item_name FROM tags "
+                "WHERE item_type=? AND item_name != '' "
+                "ORDER BY item_name COLLATE NOCASE",
+                (item_type,)).fetchall()
+        return [r["item_name"] for r in rows]
 
     # Event-log filter categories -> the action(s) they include.
     EVENT_FILTERS = {"checkin": ("IN",), "checkout": ("OUT",), "scan": ("COUNT",)}
@@ -1106,8 +1143,11 @@ class Database:
         Events are kept as an audit trail; a DELETE event records what was
         removed and how many boxes/units it covered.
         """
-        gcol = GROUP_COLUMNS.get(group_by, "bol_number")
-        label = "Building" if gcol == "building" else "BOL"
+        if item_type in config.NAMED_ITEM_TYPES:
+            gcol, label = "item_name", "Item Name"
+        else:
+            gcol = GROUP_COLUMNS.get(group_by, "bol_number")
+            label = "Building" if gcol == "building" else "BOL"
         with self._lock:
             row = self._conn.execute(
                 f"SELECT COUNT(*) AS boxes, COALESCE(SUM(remaining), 0) AS units "
@@ -1133,8 +1173,9 @@ class Database:
                             f"({label} '{value or '(blank)'}').")}
 
     # Fields an admin may edit on a tag.
-    EDITABLE = ("item_type", "bol_number", "po_number", "building", "sector",
-                "vendor", "sku", "mfc_date", "quantity", "remaining", "status")
+    EDITABLE = ("item_type", "item_name", "bol_number", "po_number",
+                "building", "sector", "vendor", "sku", "mfc_date", "quantity",
+                "remaining", "status")
 
     def update_tag(self, epc, fields):
         """Admin: overwrite editable fields on a tag. Returns the updated tag."""

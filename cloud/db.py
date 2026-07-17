@@ -41,10 +41,11 @@ REQUEST_STATUSES = ("pending", "staging", "fulfilled", "declined")
 # (db.py schema on the local side). Snapshot apply is a wholesale replace, so
 # types stay permissive TEXT/INTEGER -- the .exe owns validation.
 MIRROR_COLUMNS = {
-    "tags": ("id", "epc", "item_type", "bol_number", "po_number", "building",
-             "sector", "vendor", "sku", "mfc_date", "quantity", "remaining",
-             "status", "received_at", "delivered_at", "checkout_building",
-             "flag", "flagged_at", "created_at", "updated_at", "bol_doc_id"),
+    "tags": ("id", "epc", "item_type", "item_name", "bol_number", "po_number",
+             "building", "sector", "vendor", "sku", "mfc_date", "quantity",
+             "remaining", "status", "received_at", "delivered_at",
+             "checkout_building", "flag", "flagged_at", "created_at",
+             "updated_at", "bol_doc_id"),
     "vendors": ("name",),
     "notes": ("id", "ts", "item_type", "bol_number", "building", "text"),
     "bol_docs": ("id", "bol_number", "filename", "source", "pages", "vendor",
@@ -132,6 +133,8 @@ CREATE INDEX IF NOT EXISTS idx_requests_status ON requests (status);
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS order_ref TEXT NOT NULL DEFAULT '';
 -- Warehouse sector on a tag (mirrored from the .exe as of July 2026).
 ALTER TABLE tags ADD COLUMN IF NOT EXISTS sector TEXT;
+-- Per-box component name for W.I.F. (mirrored from the .exe as of July 2026).
+ALTER TABLE tags ADD COLUMN IF NOT EXISTS item_name TEXT;
 -- BOL PDF binaries, pushed separately from the row snapshot (the exchange
 -- ack lists which bol_docs ids are still missing their file). Keyed by the
 -- .exe's bol_docs id; label QR codes resolve through /tag/{epc} -> /bol/{id}.

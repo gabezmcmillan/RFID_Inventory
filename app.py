@@ -232,6 +232,7 @@ class ModeRequest(BaseModel):
 async def get_config():
     return {
         "item_types": config.ITEM_TYPES,
+        "named_item_types": config.NAMED_ITEM_TYPES,
         "type_fields": config.TYPE_FIELDS,
         "building_options": config.BUILDING_OPTIONS,
         "power_min": config.READER_POWER_MIN_DBM,
@@ -386,6 +387,18 @@ async def add_note(req: NoteRequest):
         req.text)
 
 
+@app.get("/api/item_names")
+async def get_item_names(item_type: str):
+    """Component names already used for a type (check-in autocomplete)."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    names = await loop.run_in_executor(
+        None, state.db.item_name_suggestions, item_type)
+    return {"names": names}
+
+
 @app.get("/api/inventory/group")
 async def get_inventory_group(item_type: str, value: str = "", group_by: str = "bol",
                               bol: str = "", building: str = "",
@@ -407,6 +420,7 @@ async def get_inventory_group(item_type: str, value: str = "", group_by: str = "
 EXPORT_COLUMNS = [
     ("EPC", "epc"),
     ("Item Type", "item_type"),
+    ("Item Name", "item_name"),
     ("BOL #", "bol_number"),
     ("PO #", "po_number"),
     ("Building #", "building"),
@@ -986,6 +1000,9 @@ async def checkin_print(req: PrintLabelsRequest):
     count = max(1, min(req.count or 1, 25))
     fields = req.fields or {}
     item_fields = req.item_fields or {}
+    # Named types (W.I.F.) print "TYPE | component name" as the description.
+    item_name = (item_fields.get("item_name") or "").strip()
+    description = f"{req.item_type} | {item_name}" if item_name else req.item_type
     now = datetime.now()
     loop = asyncio.get_running_loop()
 
@@ -999,7 +1016,7 @@ async def checkin_print(req: PrintLabelsRequest):
             epc=e,
             building=fields.get("building_number", ""),
             sector=fields.get("sector", ""),
-            description=req.item_type,
+            description=description,
             supplier=fields.get("vendor", ""),
             sku=item_fields.get("sku", ""),
             quantity=item_fields.get("quantity") or "1",
@@ -1052,7 +1069,7 @@ async def checkin_amend(req: CheckinAmendRequest):
     if state.db is None:
         return JSONResponse({"ok": False, "message": "Database not available"}, 503)
     allowed = {k: v for k, v in (req.fields or {}).items()
-               if k in ("sku", "mfc_date", "quantity")}
+               if k in ("item_name", "sku", "mfc_date", "quantity")}
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None, state.db.amend_checkin, req.epc, allowed)

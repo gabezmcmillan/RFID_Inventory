@@ -14,6 +14,7 @@ const VIEWS = ["checkin-view", "checkout-view", "inventory-view",
 // Tag fields an admin may edit (key, label, input type).
 const EDIT_FIELDS = [
   { key: "item_type", label: "Type", type: "text" },
+  { key: "item_name", label: "Item Name", type: "text" },
   { key: "bol_number", label: "BOL #", type: "text" },
   { key: "po_number", label: "PO #", type: "text" },
   { key: "building", label: "Building #", type: "building" },
@@ -820,6 +821,7 @@ function selectType(type, btn) {
   btn.classList.add("active");
   renderShipmentForm(type);
   renderItemForm(type);
+  loadItemNameSuggestions(type);
   setShipmentFormDisabled(false);
   show("checkin-form"); show("arm-btn");
   hide("finish-btn"); hide("item-form"); hide("result"); hide("scanner");
@@ -883,9 +885,30 @@ function buildField(f, idPrefix) {
     const input = document.createElement("input");
     input.type = f.type === "date" ? "date" : "text";
     input.id = `${idPrefix}${f.key}`;
+    if (f.suggest) {
+      // Autocomplete from previously used values (e.g. W.I.F. component
+      // names); the datalist is filled by loadItemNameSuggestions.
+      const listId = `${idPrefix}${f.key}-list`;
+      const datalist = document.createElement("datalist");
+      datalist.id = listId;
+      input.setAttribute("list", listId);
+      field.appendChild(datalist);
+    }
     field.appendChild(input);
   }
   return field;
+}
+
+// Fill the Item Name datalist with names already on file for this type.
+async function loadItemNameSuggestions(type) {
+  const list = $("it_item_name-list");
+  if (!list) return;
+  try {
+    const res = await fetch(`/api/item_names?item_type=${encodeURIComponent(type)}`);
+    const data = await res.json();
+    list.innerHTML = (data.names || []).map((n) =>
+      `<option value="${escapeHtml(n)}"></option>`).join("");
+  } catch (e) { /* suggestions are best effort */ }
 }
 
 function getFieldValue(key, prefix) {
@@ -1230,6 +1253,7 @@ function onCheckinResult(msg) {
   }
   const boxUnits = msg.quantity != null ? msg.quantity : msg.added_units;
   renderCheckinSummary(msg);
+  addItemNameSuggestion(msg.item_name);
   logActivity(`Received a box of ${boxUnits} ${msg.item_type} (BOL ${msg.bol_number || "n/a"}) \u2014 qty now ${msg.qty} units`, "ok");
   // Per-unit fields are unique; clear them for the next unit.
   clearItemInputs();
@@ -1237,11 +1261,26 @@ function onCheckinResult(msg) {
   showScanner(`Receiving ${msg.item_type} \u2014 enter the next unit, then pull the trigger`);
 }
 
+// A just-used component name becomes an autocomplete option right away,
+// without refetching the whole suggestion list.
+function addItemNameSuggestion(name) {
+  const list = $("it_item_name-list");
+  if (!list || !name) return;
+  const exists = Array.from(list.options).some((o) => o.value === name);
+  if (!exists) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    list.appendChild(opt);
+  }
+}
+
 function renderCheckinSummary(msg) {
   const bol = msg.bol_number || "n/a";
   const bldg = msg.building || "n/a";
   const dupNote = msg.duplicates && msg.duplicates.length
     ? `<p class="hint">${msg.duplicates.length} tag(s) were already on file (not re-counted).</p>` : "";
+  const itemName = msg.item_name
+    ? `<tr><th>Item Name</th><td>${escapeHtml(msg.item_name)}</td></tr>` : "";
   const sku = msg.sku ? `<tr><th>SKU</th><td>${escapeHtml(msg.sku)}</td></tr>` : "";
   const mfc = msg.mfc_date ? `<tr><th>Mfc date</th><td>${escapeHtml(msg.mfc_date)}</td></tr>` : "";
   const boxUnits = msg.quantity != null ? msg.quantity : msg.added_units;
@@ -1256,6 +1295,7 @@ function renderCheckinSummary(msg) {
   showResult("ok", `Shipment: ${escapeHtml(msg.item_type)} \u00b7 Qty ${msg.qty} units`,
     `<table>
        ${epcRow}
+       ${itemName}
        <tr><th>BOL Number</th><td>${escapeHtml(bol)}</td></tr>
        ${po}
        <tr><th>Building</th><td>${escapeHtml(bldg)}</td></tr>
@@ -1274,8 +1314,15 @@ function renderCheckinSummary(msg) {
 // Scanning stays armed the whole time, so the flow isn't interrupted.
 function renderCheckinAmend(msg) {
   const qty = msg.quantity != null ? msg.quantity : 1;
+  const named = (state.config.named_item_types || []).includes(msg.item_type);
+  const itemNameField = named
+    ? `<label class="edit-field"><span>Item Name</span>
+         <input id="amend-item-name" type="text" list="it_item_name-list"
+                value="${escapeHtml(msg.item_name || "")}" /></label>`
+    : "";
   showResult("ok", `Edit box ${msg.epc}`,
     `<div class="checkin-amend-form">
+       ${itemNameField}
        <label class="edit-field"><span>SKU</span>
          <input id="amend-sku" type="text" value="${escapeHtml(msg.sku || "")}" /></label>
        <label class="edit-field"><span>Manufactured Date</span>
@@ -1294,6 +1341,8 @@ function renderCheckinAmend(msg) {
       mfc_date: $("amend-mfc").value.trim(),
       quantity: $("amend-qty").value.trim(),
     };
+    const nameInput = $("amend-item-name");
+    if (nameInput) fields.item_name = nameInput.value.trim();
     try {
       const res = await fetch("/api/checkin/amend", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1302,11 +1351,13 @@ function renderCheckinAmend(msg) {
       const data = await res.json();
       if (data.ok) {
         const tag = data.tag || {};
+        msg.item_name = tag.item_name;
         msg.sku = tag.sku;
         msg.mfc_date = tag.mfc_date;
         msg.quantity = tag.quantity;
         if (data.qty != null) msg.qty = data.qty;
         logActivity(data.message || `Updated ${msg.epc}`, "ok");
+        addItemNameSuggestion(msg.item_name);
         renderCheckinSummary(msg);
       } else {
         logActivity(data.message || "Edit failed", "err");
@@ -1401,10 +1452,13 @@ function showCheckoutCard(msg) {
        it to the list — scanning again will not add it.`
     : `Defaults to the whole box. Lower it to deliver part of the box, then
        press Confirm delivery.`;
+  const itemNameRow = msg.item_name
+    ? `<tr><th>Item Name</th><td>${escapeHtml(msg.item_name)}</td></tr>` : "";
   showResult("ok", title,
     `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
        <span class="epc">${escapeHtml(msg.epc)}</span></p>
      <table>
+       ${itemNameRow}
        <tr><th>BOL Number</th><td>${escapeHtml(msg.bol_number || "n/a")}</td></tr>
        <tr><th>Building</th><td>${escapeHtml(msg.building || "n/a")}</td></tr>
        <tr><th>SKU</th><td>${escapeHtml(msg.sku || "")}</td></tr>
@@ -1495,7 +1549,8 @@ function stageDraw(draw) {
   const box = state.pendingCheckout || {};
   state.stagedDraws.push({
     epc: draw.epc, amount: draw.amount, building: draw.building,
-    item_type: box.item_type || "", bol_number: box.bol_number || "",
+    item_type: box.item_type || "", item_name: box.item_name || "",
+    bol_number: box.bol_number || "",
   });
   state.pendingCheckout = null;
   hide("result");
@@ -1533,6 +1588,7 @@ function renderRequestBanner() {
       <div class="staged-row">
         <span class="staged-qty">${d.amount}\u00d7</span>
         <span class="staged-desc"><b>${escapeHtml(d.item_type)}</b>
+          ${d.item_name ? `\u00b7 ${escapeHtml(d.item_name)}` : ""}
           <span class="epc">${escapeHtml(d.epc)}</span>
           ${d.bol_number ? `\u00b7 BOL ${escapeHtml(d.bol_number)}` : ""}
           ${d.building ? `\u2192 Bldg ${escapeHtml(d.building)}` : ""}</span>
@@ -1954,15 +2010,20 @@ function renderWarehouse(data) {
     const body = document.createElement("div");
     body.className = "wh-type-body";
 
+    // Named types (W.I.F.) group by component name; the BOL/Building toggle
+    // value moves to the second column.
+    const gLabel = t.named ? "Item Name" : groupLabel;
+    const oLabel = t.named ? groupLabel : otherLabel;
     const table = document.createElement("table");
     table.className = "wh-group-table";
     table.innerHTML = `<thead><tr>
-        <th>Units</th><th>${escapeHtml(groupLabel)}</th>
-        <th>${escapeHtml(otherLabel)}</th>
+        <th>Units</th><th>${escapeHtml(gLabel)}</th>
+        <th>${escapeHtml(oLabel)}</th>
         <th>Date Checked In</th><th>Status</th><th></th>
       </tr></thead>`;
     const tbody = document.createElement("tbody");
-    t.groups.forEach((g) => addGroupRows(tbody, t.item_type, data.group_by, g));
+    t.groups.forEach((g) =>
+      addGroupRows(tbody, t.item_type, data.group_by, g, t.named));
     table.appendChild(tbody);
     body.appendChild(table);
 
@@ -1995,7 +2056,7 @@ function otherValuesHtml(g) {
   return `<span title="${escapeHtml(vals.join(", "))}">${shown}${extra}</span>`;
 }
 
-function addGroupRows(tbody, itemType, groupBy, g) {
+function addGroupRows(tbody, itemType, groupBy, g, named) {
   const row = document.createElement("tr");
   row.className = "wh-group-row";
   const statusCls = STATUS_BADGE[g.status] || "badge-in";
@@ -2007,7 +2068,8 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   const deleteBtn = isEditing()
     ? ` <button class="danger-btn group-delete-btn" title="Delete every box in this group">Delete</button>`
     : "";
-  const pdfBtn = groupBy === "bol" && g.bol_doc_id
+  // Component rows (named types) can span several BOLs, so no single PDF.
+  const pdfBtn = !named && groupBy === "bol" && g.bol_doc_id
     ? ` <button class="bol-pdf-btn" title="View the scanned bill of lading">BOL PDF</button>`
     : "";
   const noteBadge = g.note_count
@@ -2032,7 +2094,7 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   if (delBtn) {
     delBtn.onclick = (ev) => {
       ev.stopPropagation();
-      deleteGroup(itemType, groupBy, g, boxes);
+      deleteGroup(itemType, groupBy, g, boxes, named);
     };
   }
 
@@ -2050,7 +2112,7 @@ function addGroupRows(tbody, itemType, groupBy, g) {
       detail.classList.contains("hidden") ? "&#9656;" : "&#9662;";
     if (!loaded && !detail.classList.contains("hidden")) {
       loaded = true;
-      await loadGroupTags(cell, itemType, groupBy, g.value, g);
+      await loadGroupTags(cell, itemType, groupBy, g.value, g, named);
     }
   };
 
@@ -2059,8 +2121,9 @@ function addGroupRows(tbody, itemType, groupBy, g) {
 }
 
 // Admin edit mode: delete every tag in one (item_type, group) cell.
-async function deleteGroup(itemType, groupBy, g, boxes) {
-  const groupLabel = groupBy === "building" ? "Building" : "BOL";
+async function deleteGroup(itemType, groupBy, g, boxes, named) {
+  const groupLabel = named ? "Item Name"
+    : (groupBy === "building" ? "Building" : "BOL");
   const ok = window.confirm(
     `Delete ALL ${itemType} under ${groupLabel} '${g.value || "(blank)"}'? ` +
     `This permanently removes ${boxes} box(es) (${g.qty} unit(s) in warehouse). ` +
@@ -2076,24 +2139,28 @@ async function deleteGroup(itemType, groupBy, g, boxes) {
   }
 }
 
-async function loadGroupTags(cell, itemType, groupBy, value, groupInfo) {
+async function loadGroupTags(cell, itemType, groupBy, value, groupInfo, named) {
   try {
     const q = whFilterParams(new URLSearchParams(
       { item_type: itemType, group_by: groupBy, value: value || "" }));
     const [data, notes] = await Promise.all([
       fetch(`/api/inventory/group?${q.toString()}`).then((r) => r.json()),
-      fetchNotes(groupNoteParams(itemType, groupBy, value)),
+      fetchNotes(groupNoteParams(itemType, groupBy, value, named)),
     ]);
     const editing = isEditing();
     let tableHtml;
     if (!data.tags || !data.tags.length) {
       tableHtml = `<p class="hint">No units.</p>`;
     } else {
-      const otherLabel = groupBy === "building" ? "BOL #" : "Building #";
+      // Component rows (named types) aren't pinned to a BOL or building, so
+      // their boxes show both dimensions.
+      const dimHeads = named
+        ? `<th>BOL #</th><th>Building #</th>`
+        : `<th>${escapeHtml(groupBy === "building" ? "BOL #" : "Building #")}</th>`;
       const rows = data.tags.map((tag) =>
-        tagRowHtml(tag, itemType, editing, groupBy)).join("");
+        tagRowHtml(tag, itemType, editing, groupBy, named)).join("");
       tableHtml = `<table class="wh-tag-table">
-        <thead><tr><th>EPC</th><th>${escapeHtml(otherLabel)}</th><th>PO #</th>
+        <thead><tr><th>EPC</th>${dimHeads}<th>PO #</th>
           <th>SKU</th><th>Qty</th><th>Mfc date</th>
           <th>Checked in</th><th>Checked out</th><th>Checked out to</th>
           <th>Status</th><th></th></tr></thead>
@@ -2101,7 +2168,7 @@ async function loadGroupTags(cell, itemType, groupBy, value, groupInfo) {
     }
     cell.innerHTML = `<div class="group-notes"></div>${tableHtml}`;
     renderGroupNotes(cell.querySelector(".group-notes"),
-                     itemType, groupBy, value, groupInfo, notes);
+                     itemType, groupBy, value, groupInfo, notes, named);
     cell.querySelectorAll(".find-btn").forEach((b) => {
       b.onclick = (ev) => { ev.stopPropagation(); openFinder(b.dataset.epc, b.dataset.label); };
     });
@@ -2119,9 +2186,12 @@ async function loadGroupTags(cell, itemType, groupBy, value, groupInfo) {
 
 // -- warehouse group notes -----------------------------------------------------
 // List params: only the row's grouped dimension (a BOL row spans buildings and
-// vice versa, and all of its notes should be readable from it).
-function groupNoteParams(itemType, groupBy, value) {
+// vice versa, and all of its notes should be readable from it). Notes key on
+// (item_type, bol, building) -- component rows of named types don't map to
+// that triple, so they list every note on the item type.
+function groupNoteParams(itemType, groupBy, value, named) {
   const p = { item_type: itemType };
+  if (named) return p;
   if (groupBy === "building") p.building = value || "";
   else p.bol_number = value || "";
   return p;
@@ -2129,15 +2199,23 @@ function groupNoteParams(itemType, groupBy, value) {
 
 // Add body: pin down the other dimension too when the group only spans one
 // value of it (the common case), so the note also shows up at check-in.
-function groupNoteAddBody(itemType, groupBy, value, groupInfo) {
+function groupNoteAddBody(itemType, groupBy, value, groupInfo, named) {
   const others = (groupInfo && groupInfo.other_values) || [];
   const other = others.length === 1 ? String(others[0]) : "";
+  if (named) {
+    // A component row's other_values hold the toggled dimension; pin it only
+    // when the component sits under a single BOL/building.
+    return groupBy === "building"
+      ? { item_type: itemType, building: other, bol_number: "" }
+      : { item_type: itemType, bol_number: other, building: "" };
+  }
   return groupBy === "building"
     ? { item_type: itemType, building: value || "", bol_number: other }
     : { item_type: itemType, bol_number: value || "", building: other };
 }
 
-function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes) {
+function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes,
+                          named) {
   if (!container) return;
   const editing = isEditing();
   const list = notes.length
@@ -2155,7 +2233,9 @@ function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes)
   const btn = container.querySelector(".group-note-add");
   const reload = async () => {
     renderGroupNotes(container, itemType, groupBy, value, groupInfo,
-                     await fetchNotes(groupNoteParams(itemType, groupBy, value)));
+                     await fetchNotes(groupNoteParams(itemType, groupBy, value,
+                                                      named)),
+                     named);
   };
   const submit = async () => {
     const text = ta.value.trim();
@@ -2165,7 +2245,8 @@ function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes)
       const res = await fetch("/api/notes", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          { ...groupNoteAddBody(itemType, groupBy, value, groupInfo), text }),
+          { ...groupNoteAddBody(itemType, groupBy, value, groupInfo, named),
+            text }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -2198,8 +2279,12 @@ function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes)
   });
 }
 
-function tagRowHtml(tag, itemType, editing, groupBy) {
-  const otherValue = groupBy === "building" ? tag.bol_number : tag.building;
+function tagRowHtml(tag, itemType, editing, groupBy, named) {
+  const dimCells = named
+    ? `<td>${escapeHtml(tag.bol_number || "")}</td>
+       <td>${escapeHtml(tag.building || "")}</td>`
+    : `<td>${escapeHtml((groupBy === "building"
+        ? tag.bol_number : tag.building) || "")}</td>`;
   const statusCls = STATUS_BADGE[tag.status] || "badge-in";
   const flagBadge = tag.flag
     ? `<span class="badge badge-flag" title="${escapeHtml(tag.flag)}">&#9888; Flagged</span>`
@@ -2214,7 +2299,7 @@ function tagRowHtml(tag, itemType, editing, groupBy) {
   let editorRow = "";
   if (editing) {
     editorRow = `<tr class="tag-editor-row hidden" data-editor="${escapeHtml(tag.epc)}">
-      <td colspan="11">${tagEditorHtml(tag)}</td></tr>`;
+      <td colspan="${named ? 12 : 11}">${tagEditorHtml(tag)}</td></tr>`;
   }
   const deliveredAt = tag.delivered_at ? fmtDateTime(tag.delivered_at) : "";
   const checkedOutTo = tag.checkout_building ? `Bldg ${tag.checkout_building}` : "";
@@ -2223,7 +2308,7 @@ function tagRowHtml(tag, itemType, editing, groupBy) {
   return `<tr>
       <td class="epc epc-link" data-epc="${escapeHtml(tag.epc)}"
           title="View this tag's event history">${escapeHtml(tag.epc)}</td>
-      <td>${escapeHtml(otherValue || "")}</td>
+      ${dimCells}
       <td>${escapeHtml(tag.po_number || "")}</td>
       <td>${escapeHtml(tag.sku || "")}</td>
       <td class="qty-cell">${escapeHtml(qty)}</td>

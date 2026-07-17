@@ -7,7 +7,7 @@
 
 <div class="tag-card">
   <table class="tag-table">
-    <tr><th>Item</th><td>{{ tag.item_type }}</td></tr>
+    <tr><th>Item</th><td>{{ tag.item_type }}{% if tag.item_name %} | {{ tag.item_name }}{% endif %}</td></tr>
     <tr><th>Status</th>
         <td><span class="badge">{{ tag.status or "Unknown" }}</span></td></tr>
     <tr><th>Units</th>

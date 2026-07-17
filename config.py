@@ -217,9 +217,23 @@ COMMON_FIELDS = SHIPMENT_FIELDS + ITEM_FIELDS
 # Item types double as the "Item Name" in the database.
 ITEM_TYPES = ["TSC", "CDU", "W.I.F."]
 
-# For now every type shares COMMON_FIELDS. To give a type unique fields later,
-# replace its value with a custom list of field dicts.
-TYPE_FIELDS = {item_type: COMMON_FIELDS for item_type in ITEM_TYPES}
+# W.I.F. (White Iron Forest) is a family of structural components, so each
+# box also carries the component's name. `suggest` makes the UI offer
+# previously used names as autocomplete options.
+ITEM_NAME_FIELD = {"key": "item_name", "label": "Item Name", "type": "text",
+                   "scope": "item", "suggest": True}
+
+# Types whose boxes carry a per-unit item_name (component name). These group
+# by item_name in the warehouse view and print "TYPE | name" on labels.
+NAMED_ITEM_TYPES = ["W.I.F."]
+
+# Every type shares COMMON_FIELDS; named types add the Item Name field ahead
+# of the other per-unit fields.
+TYPE_FIELDS = {
+    item_type: (SHIPMENT_FIELDS + [ITEM_NAME_FIELD] + ITEM_FIELDS
+                if item_type in NAMED_ITEM_TYPES else COMMON_FIELDS)
+    for item_type in ITEM_TYPES
+}
 
 
 def all_field_defs():
