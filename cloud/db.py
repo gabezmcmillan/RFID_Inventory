@@ -22,7 +22,7 @@ import binascii
 import os
 import secrets
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 import psycopg
 from psycopg.rows import dict_row
@@ -149,7 +149,12 @@ BOL_FILES_WANTED_LIMIT = 5
 
 
 def _now():
-    return datetime.now().isoformat(timespec="seconds")
+    # UTC with an explicit offset (e.g. 2026-07-17T15:12:00+00:00). The cloud
+    # host runs in UTC, so a naive datetime.now() would write UTC wall-clock
+    # digits with no marker; the .exe UI then reads them as local time and the
+    # clock appears hours ahead. Emitting the offset lets each viewer's
+    # new Date()/toLocaleString convert to their own zone correctly.
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _parse_quantity(value):
