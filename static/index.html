@@ -28,6 +28,7 @@
       <div class="status-pills">
         <span id="reader-pill" class="pill pill-off">Reader</span>
         <span id="db-pill" class="pill pill-off">Database</span>
+        <span id="sync-pill" class="pill pill-idle" title="Cloud sync">Sync</span>
       </div>
       <button id="theme-toggle" class="theme-toggle" type="button"
               aria-label="Switch to dark mode">&#x263E; Dark</button>
@@ -61,6 +62,12 @@
         <span class="mode-icon">&#x1F4C4;</span>
         <span class="mode-title">BOL Documents</span>
         <span class="mode-sub">All scanned bills of lading</span>
+      </button>
+      <button class="mode-card" data-mode="requests">
+        <span id="requests-card-badge" class="mode-card-badge hidden">0</span>
+        <span class="mode-icon">&#x1F4E8;</span>
+        <span class="mode-title">Requests</span>
+        <span class="mode-sub">Material requests from jobsites</span>
       </button>
       <button class="mode-card" data-mode="eventlog">
         <span class="mode-icon">&#x1F4DC;</span>
@@ -122,8 +129,24 @@
 
       <!-- Check Out (deliver to site) -->
       <div id="checkout-view" class="view hidden">
-        <p class="hint">Point the reader at a tag and pull the trigger to deliver it to site.
-          Scan the same tag a second time (or press Confirm delivery) to finalize.</p>
+        <!-- Shown while fulfilling a material request: staged boxes accumulate
+             here and nothing is committed until Confirm delivery. -->
+        <div id="request-banner" class="request-banner hidden">
+          <div class="request-banner-head">
+            <div>
+              <span class="request-banner-label">Fulfilling request</span>
+              <strong id="request-banner-title"></strong>
+            </div>
+            <span id="request-banner-progress" class="request-banner-progress"></span>
+          </div>
+          <div id="request-staged-list" class="request-staged-list"></div>
+          <div class="request-banner-actions">
+            <button id="request-cancel-btn" class="back-btn">Cancel staging</button>
+            <button id="request-confirm-btn" class="primary-btn" disabled>Confirm delivery</button>
+          </div>
+        </div>
+        <p class="hint" id="checkout-hint">Point the reader at a tag and pull the trigger to look the box up,
+          then press Confirm delivery to finalize.</p>
       </div>
 
       <!-- Inventory sweep -->
@@ -222,6 +245,21 @@
           <button id="bol-docs-refresh" class="back-btn">Refresh</button>
         </div>
         <div id="bol-docs-list" class="bol-docs-list"></div>
+      </div>
+
+      <!-- Material requests (pulled from the cloud site) -->
+      <div id="requests-view" class="view hidden">
+        <div class="wh-controls">
+          <span class="hint requests-hint">Jobsite users submit these on the
+            cloud site; they arrive here on each sync. Fulfill opens the
+            check-out screen to scan the boxes; the request completes when you
+            confirm delivery there.</span>
+          <span class="wh-controls-spacer"></span>
+          <span id="sync-detail" class="hint sync-detail"></span>
+          <button id="sync-now-btn" class="back-btn">Sync now</button>
+          <button id="requests-refresh" class="back-btn">Refresh</button>
+        </div>
+        <div id="requests-list" class="requests-list"></div>
       </div>
 
       <!-- Event Log -->

@@ -7,9 +7,12 @@ derived aggregation over tags grouped by (item_type, bol_number, building), so
 quantities are always a COUNT and can never drift out of sync.
 
 Tables (created on first run):
-  tags    EPC -> item_type, BOL#, Building#, Vendor, SKU, mfc date, status,
-          received_at, delivered_at. One row per physical tag.
-  events  Append-only audit log (IN / OUT / COUNT).
+  tags       EPC -> item_type, BOL#, Building#, Sector, Vendor, SKU, mfc date,
+             status, received_at, delivered_at. One row per physical tag.
+  events     Append-only audit log (IN / OUT / COUNT / ...).
+  requests   Material requests pulled from the cloud app (cloud id == local id)
+             plus the manager's handling status.
+  sync_state Key/value watermarks for the cloud sync worker (sync.py).
 
 A tag (box) can hold multiple units: `quantity` is the units it arrived with and
 `remaining` is the units left in it now. Group/item quantities are SUM(remaining)
@@ -34,6 +37,16 @@ import config
 STATUS_IN = "In Warehouse"
 STATUS_DELIVERED = "Delivered"
 STATUS_PARTIAL = "Partial"
+
+# Material-request lifecycle (rows are created by the cloud app; the manager
+# resolves them here). staging = the manager is scanning boxes for it in the
+# checkout screen; fulfilled is only reachable through fulfill_request().
+REQUEST_PENDING = "pending"
+REQUEST_STAGING = "staging"
+REQUEST_FULFILLED = "fulfilled"
+REQUEST_DECLINED = "declined"
+REQUEST_STATUSES = (REQUEST_PENDING, REQUEST_STAGING, REQUEST_FULFILLED,
+                    REQUEST_DECLINED)
 
 # group_by accepts these UI dimensions, mapped to tag columns.
 GROUP_COLUMNS = {"bol": "bol_number", "building": "building"}
@@ -91,9 +104,11 @@ class Database:
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
                     epc          TEXT UNIQUE NOT NULL,
                     item_type    TEXT NOT NULL,
+                    item_name    TEXT NOT NULL DEFAULT '',
                     bol_number    TEXT NOT NULL DEFAULT '',
                     po_number    TEXT NOT NULL DEFAULT '',
                     building     TEXT NOT NULL DEFAULT '',
+                    sector       TEXT NOT NULL DEFAULT '',
                     vendor       TEXT NOT NULL DEFAULT '',
                     sku          TEXT NOT NULL DEFAULT '',
                     mfc_date     TEXT NOT NULL DEFAULT '',
@@ -142,6 +157,33 @@ class Database:
                     building   TEXT NOT NULL DEFAULT '',
                     text       TEXT NOT NULL
                 );
+                -- Material requests pulled from the cloud. The cloud owns
+                -- creation, so its serial id is used as the local primary key
+                -- (making re-pulls idempotent). status_dirty marks rows whose
+                -- handling (fulfilled/declined) still has to be pushed back.
+                CREATE TABLE IF NOT EXISTS requests (
+                    id           INTEGER PRIMARY KEY,
+                    item_type    TEXT NOT NULL,
+                    item_name    TEXT NOT NULL DEFAULT '',
+                    quantity     INTEGER NOT NULL DEFAULT 1,
+                    building     TEXT NOT NULL DEFAULT '',
+                    jobsite      TEXT NOT NULL DEFAULT '',
+                    requester    TEXT NOT NULL DEFAULT '',
+                    contact      TEXT NOT NULL DEFAULT '',
+                    note         TEXT NOT NULL DEFAULT '',
+                    status       TEXT NOT NULL DEFAULT 'pending',
+                    created_at   TEXT NOT NULL DEFAULT '',
+                    handled_at   TEXT NOT NULL DEFAULT '',
+                    handler_note TEXT NOT NULL DEFAULT '',
+                    status_dirty INTEGER NOT NULL DEFAULT 0,
+                    -- Lines submitted together as one cart order share a ref.
+                    order_ref    TEXT NOT NULL DEFAULT ''
+                );
+                -- Sync watermarks / bookkeeping for sync.py (key/value).
+                CREATE TABLE IF NOT EXISTS sync_state (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_notes_group
                     ON notes (item_type, bol_number, building);
                 CREATE INDEX IF NOT EXISTS idx_tags_group
@@ -178,7 +220,8 @@ class Database:
                     f"ALTER TABLE {table} RENAME COLUMN po_number TO bol_number")
         have = {row["name"] for row in
                 self._conn.execute("PRAGMA table_info(tags)").fetchall()}
-        for col in ("flag", "flagged_at", "checkout_building", "po_number"):
+        for col in ("flag", "flagged_at", "checkout_building", "po_number",
+                    "sector", "item_name"):
             if col not in have:
                 self._conn.execute(
                     f"ALTER TABLE tags ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
@@ -198,6 +241,17 @@ class Database:
         # legacy rows and manual check-ins have no document.
         if "bol_doc_id" not in have:
             self._conn.execute("ALTER TABLE tags ADD COLUMN bol_doc_id INTEGER")
+        # Cart orders on the cloud site: lines of one order share an order_ref.
+        have_req = {row["name"] for row in
+                    self._conn.execute("PRAGMA table_info(requests)").fetchall()}
+        if "order_ref" not in have_req:
+            self._conn.execute(
+                "ALTER TABLE requests ADD COLUMN order_ref TEXT NOT NULL DEFAULT ''")
+        # Component name on a request (W.I.F. accessories are requested per
+        # component, not as one pooled type).
+        if "item_name" not in have_req:
+            self._conn.execute(
+                "ALTER TABLE requests ADD COLUMN item_name TEXT NOT NULL DEFAULT ''")
         # Multi-unit columns: a tag (box) can represent N units. Older rows were
         # one-unit-per-tag, so they default to quantity = remaining = 1, except
         # already-delivered boxes which have nothing left (remaining = 0).
@@ -252,10 +306,12 @@ class Database:
         return {
             "epc": row["epc"],
             "item_type": row["item_type"],
+            "item_name": row["item_name"],
             "bol_number": row["bol_number"],
             "po_number": row["po_number"],
             "bol_doc_id": row["bol_doc_id"],
             "building": row["building"],
+            "sector": row["sector"],
             "vendor": row["vendor"],
             "sku": row["sku"],
             "mfc_date": row["mfc_date"],
@@ -270,10 +326,43 @@ class Database:
         }
 
     # -- writes --------------------------------------------------------------
+    EPC_LENGTH = 24   # 96-bit EPC in hex characters
+
+    def allocate_epcs(self, count=1):
+        """Mint unique EPCs for printer-encoded labels.
+
+        EPC = PRINTER_EPC_PREFIX + zero-padded hex serial. The serial counter
+        persists in sync_state (key/value bookkeeping table), and any value
+        that somehow already exists in tags (e.g. a colliding factory EPC) is
+        skipped, so an allocated EPC is never a duplicate.
+        """
+        prefix = config.PRINTER_EPC_PREFIX.upper()
+        width = self.EPC_LENGTH - len(prefix)
+        epcs = []
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM sync_state WHERE key='epc_serial'"
+            ).fetchone()
+            serial = int(row["value"]) if row else 0
+            while len(epcs) < count:
+                serial += 1
+                epc = f"{prefix}{serial:0{width}X}"
+                if not self._conn.execute(
+                        "SELECT 1 FROM tags WHERE epc=?", (epc,)).fetchone():
+                    epcs.append(epc)
+            self._conn.execute(
+                "INSERT INTO sync_state (key, value) VALUES ('epc_serial', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(serial),))
+            self._conn.commit()
+        return epcs
+
     def receive_shipment(self, epcs, item_type, building, bol_number, vendor,
-                         item_fields=None, bol_doc_id=None, po_number=""):
+                         item_fields=None, bol_doc_id=None, po_number="",
+                         sector=""):
         """Check In: record a shipment's tags and report the group's quantity."""
         item_fields = item_fields or {}
+        item_name = (item_fields.get("item_name") or "").strip()
         sku = (item_fields.get("sku") or "").strip()
         mfc_date = (item_fields.get("mfc_date") or "").strip()
         units = _as_quantity(item_fields.get("quantity"))
@@ -295,15 +384,18 @@ class Database:
                     duplicates.append(epc)
                     continue
                 self._conn.execute(
-                    "INSERT INTO tags (epc, item_type, bol_number, po_number, "
-                    "bol_doc_id, building, vendor, sku, mfc_date, quantity, "
-                    "remaining, status, received_at, delivered_at, created_at, "
-                    "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (epc, item_type, bol_number, po_number, bol_doc_id,
-                     building, vendor, sku, mfc_date, units, units, STATUS_IN,
-                     ts, "", ts, ts),
+                    "INSERT INTO tags (epc, item_type, item_name, bol_number, "
+                    "po_number, bol_doc_id, building, sector, vendor, sku, "
+                    "mfc_date, quantity, remaining, status, received_at, "
+                    "delivered_at, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (epc, item_type, item_name, bol_number, po_number,
+                     bol_doc_id, building, sector, vendor, sku, mfc_date,
+                     units, units, STATUS_IN, ts, "", ts, ts),
                 )
                 detail = f"qty {units}"
+                if item_name:
+                    detail += f", name {item_name}"
                 if po_number:
                     detail += f", PO {po_number}"
                 self._log("IN", epc, item_type, bol_number, building, vendor,
@@ -324,14 +416,15 @@ class Database:
                 "added_units": added_units, "quantity": units,
                 "duplicates": duplicates, "epcs": added_epcs,
                 "epc": added_epcs[0] if added_epcs else "",
-                "qty": qty, "item_type": item_type,
+                "qty": qty, "item_type": item_type, "item_name": item_name,
                 "bol_number": bol_number, "po_number": po_number,
                 "bol_doc_id": bol_doc_id,
-                "building": building, "vendor": vendor,
+                "building": building, "sector": sector, "vendor": vendor,
                 "sku": sku, "mfc_date": mfc_date}
 
     def amend_checkin(self, epc, fields):
-        """Operator correction of a just-checked-in box (SKU, mfc date, quantity).
+        """Operator correction of a just-checked-in box (item name, SKU,
+        mfc date, quantity).
 
         Not PIN-gated: this fixes typos right after a trigger pull, before the
         box has been touched. Quantity edits also reset `remaining` (nothing has
@@ -348,7 +441,7 @@ class Database:
                         "epc": epc}
 
             sets, params, changes = [], [], []
-            for key in ("sku", "mfc_date"):
+            for key in ("item_name", "sku", "mfc_date"):
                 if key not in fields:
                     continue
                 new_val = ("" if fields[key] is None else str(fields[key])).strip()
@@ -648,6 +741,7 @@ class Database:
                     "remaining": 0, "quantity": row["quantity"]}
 
         return {"ok": True, "epc": epc, "item_type": row["item_type"],
+                "item_name": row["item_name"],
                 "bol_number": row["bol_number"], "building": row["building"],
                 "vendor": row["vendor"], "sku": row["sku"],
                 "quantity": row["quantity"], "remaining": row["remaining"]}
@@ -661,69 +755,74 @@ class Database:
         chosen by the operator; if it differs from the building the box was
         received for, the tag is flagged.
         """
+        with self._lock:
+            result = self._deliver_units_locked(epc, amount, checkout_building)
+            self._conn.commit()
+        return result
+
+    def _deliver_units_locked(self, epc, amount=None, checkout_building=None):
+        """Core of one checkout draw. Caller holds self._lock and commits (so
+        fulfill_request can apply several draws in a single transaction)."""
         epc = epc.upper()
         ts = _now()
         delivered = _today()
         checkout_building = (checkout_building or "").strip()
 
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
+        row = self._conn.execute(
+            "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
 
-            if row is None:
-                self._log("OUT", epc, "UNKNOWN", detail="not registered")
-                self._conn.commit()
-                return {"ok": False, "message": f"{epc} is not registered.",
-                        "epc": epc}
+        if row is None:
+            self._log("OUT", epc, "UNKNOWN", detail="not registered")
+            return {"ok": False, "message": f"{epc} is not registered.",
+                    "epc": epc}
 
-            remaining = row["remaining"]
-            if remaining <= 0:
-                return {"ok": False,
-                        "message": f"{row['item_type']} ({epc}) is already fully delivered.",
-                        "epc": epc, "item_type": row["item_type"]}
+        remaining = row["remaining"]
+        if remaining <= 0:
+            return {"ok": False,
+                    "message": f"{row['item_type']} ({epc}) is already fully delivered.",
+                    "epc": epc, "item_type": row["item_type"]}
 
-            take = remaining if amount is None else _as_quantity(amount)
-            take = max(1, min(take, remaining))
-            new_remaining = remaining - take
+        take = remaining if amount is None else _as_quantity(amount)
+        take = max(1, min(take, remaining))
+        new_remaining = remaining - take
 
-            if new_remaining == 0:
-                new_status = STATUS_DELIVERED
-            else:
-                new_status = STATUS_PARTIAL
-            # Record the most recent checkout time on every draw (partial or
-            # full) so a partially delivered box still shows when it last went out.
-            delivered_at = ts
+        if new_remaining == 0:
+            new_status = STATUS_DELIVERED
+        else:
+            new_status = STATUS_PARTIAL
+        # Record the most recent checkout time on every draw (partial or
+        # full) so a partially delivered box still shows when it last went out.
+        delivered_at = ts
 
-            # Destination differs from the building the box came in for: flag it.
-            mismatch = bool(checkout_building and row["building"]
-                            and checkout_building != row["building"])
-            flag = ""
-            if mismatch:
-                flag = (f"Checked out to Bldg {checkout_building} but received "
-                        f"for Bldg {row['building']}")
+        # Destination differs from the building the box came in for: flag it.
+        mismatch = bool(checkout_building and row["building"]
+                        and checkout_building != row["building"])
+        flag = ""
+        if mismatch:
+            flag = (f"Checked out to Bldg {checkout_building} but received "
+                    f"for Bldg {row['building']}")
 
-            sets = ["remaining=?", "status=?", "delivered_at=?", "updated_at=?"]
-            params = [new_remaining, new_status, delivered_at, ts]
-            if checkout_building:
-                sets.append("checkout_building=?")
-                params.append(checkout_building)
-            if mismatch:
-                sets += ["flag=?", "flagged_at=?"]
-                params += [flag, ts]
-            params.append(epc)
-            self._conn.execute(
-                f"UPDATE tags SET {', '.join(sets)} WHERE epc=?", params)
+        sets = ["remaining=?", "status=?", "delivered_at=?", "updated_at=?"]
+        params = [new_remaining, new_status, delivered_at, ts]
+        if checkout_building:
+            sets.append("checkout_building=?")
+            params.append(checkout_building)
+        if mismatch:
+            sets += ["flag=?", "flagged_at=?"]
+            params += [flag, ts]
+        params.append(epc)
+        self._conn.execute(
+            f"UPDATE tags SET {', '.join(sets)} WHERE epc=?", params)
 
-            dest = f" to Bldg {checkout_building}" if checkout_building else ""
-            self._log("OUT", epc, row["item_type"], row["bol_number"],
-                      row["building"], row["vendor"],
-                      detail=f"delivered {take} unit(s){dest}, {new_remaining} left")
-            if mismatch:
-                self._log("FLAG", epc, row["item_type"], row["bol_number"],
-                          row["building"], row["vendor"], detail=flag)
-            qty_remaining = self._group_in_warehouse_qty(
-                row["item_type"], row["bol_number"], row["building"])
-            self._conn.commit()
+        dest = f" to Bldg {checkout_building}" if checkout_building else ""
+        self._log("OUT", epc, row["item_type"], row["bol_number"],
+                  row["building"], row["vendor"],
+                  detail=f"delivered {take} unit(s){dest}, {new_remaining} left")
+        if mismatch:
+            self._log("FLAG", epc, row["item_type"], row["bol_number"],
+                      row["building"], row["vendor"], detail=flag)
+        qty_remaining = self._group_in_warehouse_qty(
+            row["item_type"], row["bol_number"], row["building"])
 
         return {"ok": True,
                 "message": f"Delivered {take} unit(s) of {row['item_type']} ({epc}) to site.",
@@ -840,17 +939,23 @@ class Database:
         delivered drops to qty 0 and status Delivered. Each group also carries
         the distinct values of the OTHER dimension (`other_values`) so grouping
         by building still shows which BOLs are involved, and vice versa.
-        `filters` narrows the tags considered (see _filter_where).
+        Named item types (config.NAMED_ITEM_TYPES, e.g. W.I.F.) group by the
+        per-box component name instead, with the toggled dimension shown as
+        the other values. `filters` narrows the tags considered.
         """
         gcol = GROUP_COLUMNS.get(group_by, "bol_number")
         ocol = "building" if gcol == "bol_number" else "bol_number"
+        named = list(config.NAMED_ITEM_TYPES)
+        named_in = ",".join("?" for _ in named) or "''"
         clause, params = self._filter_where(filters)
         with self._lock:
             rows = self._conn.execute(
                 f"""
                 SELECT item_type,
-                       {gcol}                              AS gval,
-                       {ocol}                              AS oval,
+                       CASE WHEN item_type IN ({named_in})
+                            THEN item_name ELSE {gcol} END  AS gval,
+                       CASE WHEN item_type IN ({named_in})
+                            THEN {gcol} ELSE {ocol} END     AS oval,
                        COALESCE(SUM(remaining), 0)         AS in_wh,
                        COALESCE(SUM(quantity), 0)          AS capacity,
                        COUNT(*)                            AS boxes,
@@ -858,31 +963,40 @@ class Database:
                        MAX(bol_doc_id)                     AS doc_id
                 FROM tags
                 {clause}
-                GROUP BY item_type, {gcol}, {ocol}
+                GROUP BY item_type, gval, oval
                 ORDER BY item_type, gval, oval
                 """,
-                params,
+                named + named + params,
             ).fetchall()
             note_rows = self._conn.execute(
                 f"SELECT item_type, {gcol} AS gval, COUNT(*) AS n "
                 "FROM notes GROUP BY item_type, gval").fetchall()
+            type_note_rows = self._conn.execute(
+                "SELECT item_type, COUNT(*) AS n FROM notes "
+                "GROUP BY item_type").fetchall()
 
         note_counts = {(r["item_type"], r["gval"] or ""): r["n"]
                        for r in note_rows}
+        # Named types group by item_name, which notes don't key on; every
+        # component row carries the type-wide note count instead.
+        type_note_counts = {r["item_type"]: r["n"] for r in type_note_rows}
 
         # SQL groups by (type, group, other) so the sub-rows are merged here,
         # accumulating the distinct other-dimension values along the way.
         types = {}
         groups = {}
         for r in rows:
+            is_named = r["item_type"] in named
             t = types.setdefault(r["item_type"], {"item_type": r["item_type"],
+                                                  "named": is_named,
                                                   "qty": 0, "groups": []})
             key = (r["item_type"], r["gval"] or "")
             g = groups.get(key)
             if g is None:
                 g = {"value": r["gval"] or "", "in_wh": 0, "capacity": 0,
                      "boxes": 0, "received_at": "", "bol_doc_id": None,
-                     "note_count": note_counts.get(key, 0),
+                     "note_count": (type_note_counts.get(r["item_type"], 0)
+                                    if is_named else note_counts.get(key, 0)),
                      "_others": set()}
                 groups[key] = g
                 t["groups"].append(g)
@@ -918,8 +1032,13 @@ class Database:
         return {"group_by": group_by, "types": list(types.values())}
 
     def group_tags(self, item_type, group_by, value, filters=None):
-        """Individual tags within one (item_type, group) cell, for drill-down."""
-        gcol = GROUP_COLUMNS.get(group_by, "bol_number")
+        """Individual tags within one (item_type, group) cell, for drill-down.
+
+        Named item types drill down by component name (item_name) instead of
+        the BOL/Building toggle.
+        """
+        gcol = ("item_name" if item_type in config.NAMED_ITEM_TYPES
+                else GROUP_COLUMNS.get(group_by, "bol_number"))
         clause, fparams = self._filter_where(filters)
         clause = clause.replace(" WHERE ", " AND ", 1)
         with self._lock:
@@ -949,6 +1068,16 @@ class Database:
             row = self._conn.execute(
                 "SELECT * FROM tags WHERE epc=?", (epc,)).fetchone()
         return self._tag_dict(row) if row else None
+
+    def item_name_suggestions(self, item_type):
+        """Distinct component names already used for a type (autocomplete)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT item_name FROM tags "
+                "WHERE item_type=? AND item_name != '' "
+                "ORDER BY item_name COLLATE NOCASE",
+                (item_type,)).fetchall()
+        return [r["item_name"] for r in rows]
 
     # Event-log filter categories -> the action(s) they include.
     EVENT_FILTERS = {"checkin": ("IN",), "checkout": ("OUT",), "scan": ("COUNT",)}
@@ -1020,8 +1149,11 @@ class Database:
         Events are kept as an audit trail; a DELETE event records what was
         removed and how many boxes/units it covered.
         """
-        gcol = GROUP_COLUMNS.get(group_by, "bol_number")
-        label = "Building" if gcol == "building" else "BOL"
+        if item_type in config.NAMED_ITEM_TYPES:
+            gcol, label = "item_name", "Item Name"
+        else:
+            gcol = GROUP_COLUMNS.get(group_by, "bol_number")
+            label = "Building" if gcol == "building" else "BOL"
         with self._lock:
             row = self._conn.execute(
                 f"SELECT COUNT(*) AS boxes, COALESCE(SUM(remaining), 0) AS units "
@@ -1047,8 +1179,9 @@ class Database:
                             f"({label} '{value or '(blank)'}').")}
 
     # Fields an admin may edit on a tag.
-    EDITABLE = ("item_type", "bol_number", "po_number", "building", "vendor",
-                "sku", "mfc_date", "quantity", "remaining", "status")
+    EDITABLE = ("item_type", "item_name", "bol_number", "po_number",
+                "building", "sector", "vendor", "sku", "mfc_date", "quantity",
+                "remaining", "status")
 
     def update_tag(self, epc, fields):
         """Admin: overwrite editable fields on a tag. Returns the updated tag."""
@@ -1177,6 +1310,280 @@ class Database:
             self._conn.commit()
         return {"ok": True, "message": f"Removed vendor '{name}'.",
                 "vendors": self.list_vendors()}
+
+    # -- cloud sync (used by sync.py) ------------------------------------------
+    # The .exe is the source of truth for warehouse data; the cloud app keeps a
+    # mirror. Small tables (tags/vendors/notes/bol_docs) are pushed as full
+    # snapshots -- which naturally carries edits and deletes -- and the
+    # append-only events table is pushed incrementally above a watermark.
+    SNAPSHOT_TABLES = ("tags", "vendors", "notes", "bol_docs")
+
+    def export_snapshot(self):
+        """Full dump of the mirrored tables, JSON-ready ({table: [rows...]}).
+
+        ocr_text is stripped from bol_docs: it can be hundreds of KB per doc
+        and the cloud view doesn't use it.
+        """
+        snap = {}
+        with self._lock:
+            for table in self.SNAPSHOT_TABLES:
+                rows = self._conn.execute(
+                    f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                snap[table] = [dict(r) for r in rows]
+        for doc in snap["bol_docs"]:
+            doc.pop("ocr_text", None)
+        return snap
+
+    def events_since(self, after_id, limit=1000):
+        """Events with id > after_id, oldest first, capped at `limit` rows.
+
+        The cap bounds one exchange payload; the next cycle picks up where the
+        ack left off.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT ?",
+                (after_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def last_event_id(self):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(id), 0) AS n FROM events").fetchone()
+        return row["n"]
+
+    def sync_get(self, key, default=""):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM sync_state WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def sync_set(self, key, value):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sync_state (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, str(value)))
+            self._conn.commit()
+
+    # -- material requests (pulled from the cloud) -----------------------------
+    @staticmethod
+    def _request_dict(row):
+        return {"id": row["id"], "item_type": row["item_type"],
+                "item_name": row["item_name"],
+                "quantity": row["quantity"], "building": row["building"],
+                "jobsite": row["jobsite"], "requester": row["requester"],
+                "contact": row["contact"], "note": row["note"],
+                "status": row["status"], "created_at": row["created_at"],
+                "handled_at": row["handled_at"],
+                "handler_note": row["handler_note"],
+                "order_ref": row["order_ref"]}
+
+    def upsert_pulled_requests(self, rows):
+        """Store request rows pulled from the cloud. Idempotent.
+
+        New ids are inserted as pending; ids already on file are left alone
+        (the manager's handling is the local truth once a row is here). Logs a
+        REQUEST event per new row so requests show in the audit trail.
+        """
+        added = []
+        with self._lock:
+            for r in rows or []:
+                try:
+                    rid = int(r["id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                have = self._conn.execute(
+                    "SELECT id FROM requests WHERE id=?", (rid,)).fetchone()
+                if have:
+                    continue
+                self._conn.execute(
+                    "INSERT INTO requests (id, item_type, item_name, quantity, "
+                    "building, jobsite, requester, contact, note, status, "
+                    "created_at, order_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (rid, str(r.get("item_type") or ""),
+                     str(r.get("item_name") or ""),
+                     _as_quantity(r.get("quantity")),
+                     str(r.get("building") or ""), str(r.get("jobsite") or ""),
+                     str(r.get("requester") or ""), str(r.get("contact") or ""),
+                     str(r.get("note") or ""), REQUEST_PENDING,
+                     str(r.get("created_at") or _now()),
+                     str(r.get("order_ref") or "")))
+                label = str(r.get("item_type") or "?")
+                if r.get("item_name"):
+                    label += f" | {r.get('item_name')}"
+                self._log("REQUEST", "", str(r.get("item_type") or ""),
+                          building=str(r.get("building") or ""),
+                          detail=(f"#{rid}: {r.get('quantity') or 1} x "
+                                  f"{label} for "
+                                  f"{r.get('jobsite') or r.get('requester') or 'jobsite'}"))
+                added.append(rid)
+            if added:
+                self._conn.commit()
+        return added
+
+    def list_requests(self, status=None):
+        """Requests, open ones (staging, then pending) first, then newest."""
+        sql = "SELECT * FROM requests"
+        params = ()
+        if status:
+            sql += " WHERE status=?"
+            params = (status,)
+        sql += (" ORDER BY CASE status WHEN 'staging' THEN 0"
+                " WHEN 'pending' THEN 1 ELSE 2 END, id DESC")
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [self._request_dict(r) for r in rows]
+
+    def count_pending_requests(self):
+        """Open requests (pending or mid-staging) for the mode-card badge."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM requests WHERE status IN (?, ?)",
+                (REQUEST_PENDING, REQUEST_STAGING)).fetchone()
+        return row["n"]
+
+    # Allowed manager transitions. fulfilled is deliberately absent: the only
+    # way there is fulfill_request(), which also commits the checkout draws.
+    _REQUEST_TRANSITIONS = {
+        REQUEST_PENDING: (REQUEST_STAGING, REQUEST_DECLINED),
+        REQUEST_STAGING: (REQUEST_PENDING, REQUEST_DECLINED),
+    }
+
+    def set_request_status(self, req_id, status, note=""):
+        """Move a request between pending/staging/declined; pushed on next sync.
+
+        pending -> staging   Fulfill clicked (boxes being scanned for exit)
+        staging -> pending   staging canceled, nothing was committed
+        any     -> declined  manager turns the request down
+        """
+        note = (note or "").strip()
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"Request #{req_id} not found."}
+            allowed = self._REQUEST_TRANSITIONS.get(row["status"], ())
+            if status not in allowed:
+                return {"ok": False,
+                        "message": (f"Request #{req_id} is {row['status']}; "
+                                    f"cannot mark it {status}.")}
+            self._conn.execute(
+                "UPDATE requests SET status=?, handled_at=?, handler_note=?, "
+                "status_dirty=1 WHERE id=?",
+                (status, ts, note, req_id))
+            action = ("REQUEST_PENDING" if status == REQUEST_PENDING
+                      else "REQUEST_" + status.upper())
+            self._log(action, "", row["item_type"],
+                      building=row["building"],
+                      detail=(f"#{req_id}: {row['quantity']} x "
+                              f"{row['item_type']}"
+                              + (f" -- {note}" if note else "")))
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+        return {"ok": True, "message": f"Request #{req_id} {status}.",
+                "request": self._request_dict(updated)}
+
+    def fulfill_request(self, req_id, draws, note=""):
+        """Commit staged checkout draws and mark the request fulfilled, in one
+        transaction.
+
+        `draws` is a list of {"epc", "amount", "building"} built up in the
+        checkout screen. Each is applied via the normal checkout path (same
+        logging/flagging as a standalone checkout). Draws that fail (box gone,
+        already delivered) are reported but don't abort the rest. If the total
+        delivered comes up short of the requested quantity, `note` is required
+        so the requester learns why.
+        """
+        note = (note or "").strip()
+        ts = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "message": f"Request #{req_id} not found."}
+            if row["status"] not in (REQUEST_PENDING, REQUEST_STAGING):
+                return {"ok": False,
+                        "message": (f"Request #{req_id} is already "
+                                    f"{row['status']}.")}
+
+            results, delivered_total = [], 0
+            for d in draws or []:
+                epc = str(d.get("epc") or "").strip()
+                if not epc:
+                    continue
+                result = self._deliver_units_locked(
+                    epc, d.get("amount"), d.get("building"))
+                results.append(result)
+                if result.get("ok"):
+                    delivered_total += result.get("delivered") or 0
+
+            requested = row["quantity"]
+            short = delivered_total < requested
+            if delivered_total <= 0:
+                self._conn.rollback()
+                failed = "; ".join(r.get("message", "") for r in results)
+                return {"ok": False,
+                        "message": ("Nothing was delivered"
+                                    + (f": {failed}" if failed else
+                                       ": no boxes staged.")),
+                        "results": results}
+            if short and not note:
+                self._conn.rollback()
+                return {"ok": False, "note_required": True,
+                        "message": (f"Only {delivered_total} of {requested} "
+                                    "unit(s) supplied -- add a note for the "
+                                    "requester explaining the shortfall."),
+                        "results": []}
+
+            handler_note = note
+            if short:
+                handler_note = (f"{delivered_total} of {requested} supplied"
+                                + (f" -- {note}" if note else ""))
+            self._conn.execute(
+                "UPDATE requests SET status=?, handled_at=?, handler_note=?, "
+                "status_dirty=1 WHERE id=?",
+                (REQUEST_FULFILLED, ts, handler_note, req_id))
+            boxes = sum(1 for r in results if r.get("ok"))
+            label = row["item_type"] + (
+                f" | {row['item_name']}" if row["item_name"] else "")
+            self._log("REQUEST_FULFILLED", "", row["item_type"],
+                      building=row["building"],
+                      detail=(f"#{req_id}: {delivered_total} of {requested} x "
+                              f"{label} from {boxes} box(es)"
+                              + (f" -- {note}" if note else "")))
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+
+        return {"ok": True,
+                "message": (f"Request #{req_id} fulfilled: {delivered_total} "
+                            f"of {requested} unit(s) delivered."),
+                "delivered": delivered_total, "requested": requested,
+                "short": short, "results": results,
+                "request": self._request_dict(updated)}
+
+    def dirty_request_statuses(self):
+        """Handled requests whose status the cloud hasn't acked yet."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM requests WHERE status_dirty=1").fetchall()
+        return [{"id": r["id"], "status": r["status"],
+                 "handled_at": r["handled_at"],
+                 "handler_note": r["handler_note"]} for r in rows]
+
+    def clear_request_dirty(self, ids):
+        """Ack from the cloud: stop re-pushing these request statuses."""
+        ids = [int(i) for i in ids or []]
+        if not ids:
+            return
+        with self._lock:
+            self._conn.execute(
+                "UPDATE requests SET status_dirty=0 WHERE id IN (%s)"
+                % ",".join("?" * len(ids)), ids)
+            self._conn.commit()
 
     def close(self):
         with self._lock:

@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h2>Browse &amp; request materials</h2>
+  <div class="stats">
+    <div class="stat">
+      <span class="stat-num">{{ counts.units }}</span>
+      <span class="stat-label">units in stock</span>
+    </div>
+    <div class="stat">
+      <span class="stat-num">{{ counts.requests_pending }}</span>
+      <span class="stat-label">requests waiting</span>
+    </div>
+  </div>
+</div>
+
+<p class="hint">Pick items straight from the live stock table, set a
+  quantity, and add them to your cart. Availability is as of the warehouse's
+  last sync{% if last_synced %} (<time class="localtime" datetime="{{ last_synced }}">{{ last_synced | replace("T", " ") }}</time>){% endif %};
+  the warehouse manager confirms every order.</p>
+
+{% if not stock %}
+  <div class="empty">Nothing on hand right now (or the warehouse hasn't
+    synced yet).</div>
+{% else %}
+
+<div class="stock-toolbar">
+  <input type="search" id="stock-search" placeholder="Search item types or vendors&hellip;"
+         autocomplete="off" />
+  <select id="stock-building-filter" aria-label="Filter by building">
+    <option value="">All buildings</option>
+    {% for b in buildings %}
+    <option value="{{ b }}">Building {{ b }}</option>
+    {% endfor %}
+    <option value="~">Unassigned</option>
+  </select>
+</div>
+
+<div class="stock-wrap">
+  <table class="stock-table" id="stock-table">
+    <thead>
+      <tr>
+        <th class="sortable" data-sort="item_type">Item type</th>
+        <th class="sortable" data-sort="building">Building</th>
+        <th class="num sortable" data-sort="units">Available</th>
+        <th class="num sortable" data-sort="boxes">Boxes</th>
+        <th class="sortable" data-sort="vendors">Vendors</th>
+        <th class="sortable" data-sort="oldest_received">Oldest received</th>
+        <th class="req-col">Request</th>
+      </tr>
+    </thead>
+    {% for row in stock %}
+    {% if row.named %}
+    {# Named type (W.I.F.): one row for the whole type; the drill-down lists
+       its components, and those are what get added to the cart. #}
+    <tbody class="stock-group stock-group-named"
+           data-item-type="{{ row.item_type }}"
+           data-item-names="{{ row.components | map(attribute='item_name') | join(' ') }}"
+           data-buildings="{{ row.components | map(attribute='building') | join('|') }}"
+           data-units="{{ row.units }}"
+           data-boxes="{{ row.boxes }}"
+           data-vendors="{{ row.vendors | join(', ') }}"
+           data-oldest="{{ (row.oldest_received or '')[:10] }}">
+      <tr class="stock-row">
+        <td class="stock-item"><span class="caret">&#9656;</span>
+          {{ row.item_type }}
+          <span class="item-name">({{ row.components | length }}
+            item{{ "s" if row.components | length != 1 }})</span></td>
+        <td>{% for b in row.buildings %}<span class="bldg-badge">Bldg
+            {{ b }}</span> {% else %}<span class="bldg-badge bldg-none">Unassigned</span>{% endfor %}</td>
+        <td class="num">{{ row.units }}</td>
+        <td class="num">{{ row.boxes }}</td>
+        <td class="stock-vendors">{{ row.vendors | join(", ") or "—" }}</td>
+        <td>{{ (row.oldest_received or "")[:10] or "—" }}</td>
+        <td class="req-col"><span class="expand-hint">Expand to pick
+            items</span></td>
+      </tr>
+      <tr class="stock-detail" hidden>
+        <td colspan="7">
+          <table class="bol-table component-table">
+            <thead>
+              <tr><th class="num">Units</th><th>Item name</th><th>BOL #</th>
+                  <th>Building</th><th>Checked in</th><th>Status</th>
+                  <th class="req-col">Request</th></tr>
+            </thead>
+            <tbody>
+              {% for c in row.components %}
+              <tr class="component-row"
+                  data-key="{{ row.item_type }}|{{ c.item_name }}|{{ c.building }}"
+                  data-item-type="{{ row.item_type }}"
+                  data-item-name="{{ c.item_name }}"
+                  data-building="{{ c.building }}"
+                  data-units="{{ c.units }}">
+                <td class="num">{{ c.units }}</td>
+                <td class="comp-name">{{ c.item_name or "(no item name)" }}</td>
+                <td>{{ c.bol_numbers | join(", ") or "—" }}</td>
+                <td>{% if c.building %}<span class="bldg-badge">Bldg
+                    {{ c.building }}</span>{% else %}<span class="bldg-badge bldg-none">Unassigned</span>{% endif %}</td>
+                <td>{% if c.first_received %}<time class="localtime"
+                    datetime="{{ c.first_received }}">{{ (c.first_received or "")[:10] }}</time>{% else %}—{% endif %}</td>
+                <td><span class="badge {{ 'badge-fulfilled' if c.status == 'In Warehouse' else 'badge-pending' }}">{{ c.status }}</span></td>
+                <td class="req-col">
+                  <div class="qty-add">
+                    <div class="stepper">
+                      <button type="button" class="step-btn step-down" aria-label="Less">&minus;</button>
+                      <input type="number" class="qty-input" value="1" min="1"
+                             max="{{ c.units }}" inputmode="numeric" />
+                      <button type="button" class="step-btn step-up" aria-label="More">+</button>
+                    </div>
+                    <button type="button" class="add-btn">Add</button>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </tbody>
+    {% else %}
+    <tbody class="stock-group"
+           data-key="{{ row.item_type }}|{{ row.item_name }}|{{ row.building }}"
+           data-item-type="{{ row.item_type }}"
+           data-item-name="{{ row.item_name }}"
+           data-building="{{ row.building }}"
+           data-buildings="{{ row.building }}"
+           data-units="{{ row.units }}"
+           data-boxes="{{ row.boxes }}"
+           data-vendors="{{ row.vendors | join(', ') }}"
+           data-oldest="{{ (row.oldest_received or '')[:10] }}">
+      <tr class="stock-row">
+        <td class="stock-item"><span class="caret">&#9656;</span>
+          {{ row.item_type }}{% if row.item_name %}
+          <span class="item-name">| {{ row.item_name }}</span>{% endif %}</td>
+        <td>{% if row.building %}<span class="bldg-badge">Bldg
+            {{ row.building }}</span>{% else %}<span class="bldg-badge bldg-none">Unassigned</span>{% endif %}</td>
+        <td class="num">{{ row.units }}</td>
+        <td class="num">{{ row.boxes }}</td>
+        <td class="stock-vendors">{{ row.vendors | join(", ") or "—" }}</td>
+        <td>{{ (row.oldest_received or "")[:10] or "—" }}</td>
+        <td class="req-col">
+          <div class="qty-add">
+            <div class="stepper">
+              <button type="button" class="step-btn step-down" aria-label="Less">&minus;</button>
+              <input type="number" class="qty-input" value="1" min="1"
+                     max="{{ row.units }}" inputmode="numeric" />
+              <button type="button" class="step-btn step-up" aria-label="More">+</button>
+            </div>
+            <button type="button" class="add-btn">Add</button>
+          </div>
+        </td>
+      </tr>
+      <tr class="stock-detail" hidden>
+        <td colspan="7">
+          <table class="bol-table">
+            <thead>
+              <tr><th>BOL #</th><th>Vendor</th><th class="num">Units</th>
+                  <th class="num">Boxes</th><th>First received</th></tr>
+            </thead>
+            <tbody>
+              {% for g in row.groups %}
+              <tr>
+                <td>{{ g.bol_number or "—" }}</td>
+                <td>{{ g.vendor or "—" }}</td>
+                <td class="num">{{ g.units }}</td>
+                <td class="num">{{ g.boxes }}</td>
+                <td>{{ (g.first_received or "")[:10] }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </tbody>
+    {% endif %}
+    {% endfor %}
+  </table>
+  <div class="empty" id="stock-no-match" hidden>No items match your search.</div>
+</div>
+{% endif %}
+
+<div class="cart-bar" id="cart-bar" hidden>
+  <span class="cart-summary" id="cart-summary"></span>
+  <div class="cart-bar-actions">
+    <button type="button" class="ghost-btn" id="cart-clear">Clear</button>
+    <button type="button" class="cta cart-cta" id="cart-review">Review &amp;
+      check out</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="checkout-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title">
+    <div class="modal-head">
+      <h3 id="checkout-title">Check out</h3>
+      <button type="button" class="modal-close" id="checkout-close"
+              aria-label="Close">&times;</button>
+    </div>
+    <div class="banner banner-err" id="checkout-error" hidden></div>
+    <div id="cart-lines"></div>
+    <datalist id="building-list">
+      {% for b in buildings %}<option value="{{ b }}"></option>{% endfor %}
+    </datalist>
+    <form id="checkout-form" autocomplete="off">
+      <div class="checkout-grid">
+        <label>Your name *
+          <input type="text" name="requester" maxlength="120" required
+                 value="{{ user.name or '' }}" />
+        </label>
+        <label>Contact (phone or email)
+          <input type="text" name="contact" maxlength="120"
+                 value="{{ user.email or '' }}" />
+        </label>
+        <label>Jobsite / project
+          <input type="text" name="jobsite" maxlength="120"
+                 placeholder="e.g. Switch 4" />
+        </label>
+      </div>
+      <label>Notes for the warehouse
+        <textarea name="note" rows="3" maxlength="500"
+          placeholder="e.g. Needed on site by Friday morning"></textarea>
+      </label>
+      <p class="hint">Availability shown is as of the warehouse's last
+        sync{% if last_synced %} (<time class="localtime" datetime="{{ last_synced }}">{{ last_synced | replace("T", " ") }}</time>){% endif %}.
+        The warehouse manager gives final confirmation on every order.</p>
+      <button type="submit" class="cta" id="checkout-submit">Submit
+        request</button>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/cart.js" defer></script>
+{% endblock %}

@@ -104,6 +104,9 @@ h1.brand-app {
 .pill-on::before { background: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
 .pill-off { color: #ff7b7b; border-color: rgba(255,123,123,0.55); }
 .pill-off::before { background: #ff7b7b; }
+/* Idle: feature not configured (e.g. cloud sync off) — quiet, not alarming */
+.pill-idle { color: rgba(255, 255, 255, 0.55); border-style: dashed; }
+#sync-pill { cursor: pointer; }
 
 main {
   max-width: 1200px;
@@ -143,6 +146,124 @@ main {
 .mode-icon { font-size: 34px; line-height: 1; color: var(--accent); }
 .mode-title { font-size: 18px; font-weight: 700; color: var(--heading); }
 .mode-sub { font-size: 13px; color: var(--muted); }
+
+/* Pending-count badge pinned to a mode card (Requests) */
+.mode-card { position: relative; }
+.mode-card-badge {
+  position: absolute;
+  top: 12px; right: 12px;
+  min-width: 24px; height: 24px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Material requests panel: one card per ORDER, holding its line items. */
+.requests-list { display: flex; flex-direction: column; gap: 12px; }
+.order-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.order-card.request-pending { border-left: 4px solid var(--amber); }
+.order-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.order-head .wh-caret { margin-top: 5px; }
+.order-count { font-weight: 400; }
+.order-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px 14px 38px;
+}
+/* The display: flex above would beat the browser's [hidden] rule. */
+.order-lines[hidden] { display: none; }
+.request-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface);
+}
+.request-card.request-pending { border-left: 4px solid var(--amber); }
+.request-title { display: flex; align-items: center; gap: 10px; font-size: 17px; }
+.request-qty { font-weight: 700; color: var(--accent-2); }
+.request-meta { margin-top: 4px; }
+.request-note { margin-top: 8px; font-style: italic; }
+.request-handled { margin-top: 8px; }
+.request-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.sync-detail { white-space: nowrap; }
+.badge-staging { color: var(--accent-2); border-color: rgba(0, 32, 112, 0.35); }
+
+/* Staging banner in the checkout view (fulfilling a material request) */
+.request-banner {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent-2);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.request-banner-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.request-banner-label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+}
+.request-banner-progress { font-weight: 700; color: var(--amber); }
+.request-banner-progress.request-progress-done { color: var(--green); }
+.request-staged-list { margin: 12px 0; display: flex; flex-direction: column; gap: 6px; }
+.staged-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 14px;
+}
+.staged-qty { font-weight: 700; color: var(--accent-2); }
+.staged-desc { flex: 1; }
+.staged-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  width: 26px; height: 26px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.staged-remove:hover { color: var(--red); border-color: var(--red); }
+.request-banner-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 
 /* Panel */
 .panel {

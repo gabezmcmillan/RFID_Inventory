@@ -4,18 +4,21 @@
 const MODE_TITLES = {
   checkin: "Check In", checkout: "Check Out",
   inventory: "Sweep & Count", warehouse: "Warehouse", finder: "Find a Tag",
-  boldocs: "BOL Documents", eventlog: "Event Log", admin: "Admin",
+  boldocs: "BOL Documents", requests: "Material Requests",
+  eventlog: "Event Log", admin: "Admin",
 };
 const VIEWS = ["checkin-view", "checkout-view", "inventory-view",
                "warehouse-view", "finder-view", "boldocs-view",
-               "eventlog-view", "admin-view"];
+               "requests-view", "eventlog-view", "admin-view"];
 
 // Tag fields an admin may edit (key, label, input type).
 const EDIT_FIELDS = [
   { key: "item_type", label: "Type", type: "text" },
+  { key: "item_name", label: "Item Name", type: "text" },
   { key: "bol_number", label: "BOL #", type: "text" },
   { key: "po_number", label: "PO #", type: "text" },
   { key: "building", label: "Building #", type: "building" },
+  { key: "sector", label: "Sector", type: "text" },
   { key: "vendor", label: "Vendor", type: "vendor" },
   { key: "sku", label: "SKU", type: "text" },
   { key: "mfc_date", label: "Mfc date", type: "date" },
@@ -47,10 +50,13 @@ const state = {
                checked_out_from: "", checked_out_to: "" },
   sweep: null,         // sweep session accumulator (see newSweepSession)
   pendingCheckout: null, // checkout_prompt currently awaiting confirmation
+  activeRequest: null, // material request being fulfilled in checkout mode
+  stagedDraws: [],     // staged checkout draws for it [{epc, amount, building, ...}]
   eventFilter: "all",  // event-log filter category
   finder: null,        // {epc, rssiMin, rssiMax, proxEma, samples, found}
   admin: { pin: null, editMode: false },
   vendors: [],         // dropdown options, managed in Admin
+  sync: null,          // last sync_status message {enabled, online, ...}
   readerConnected: null,          // last known connection state
   readerLastConnectedAt: null,    // Date of most recent connect
   readerLastDisconnectedAt: null, // Date of most recent disconnect
@@ -159,6 +165,8 @@ async function refreshStatus() {
     setReaderPill(s.reader_connected);
     setDbPill(s.db_connected, s.db_error);
     if (s.check_power != null) setPowerSlider(s.check_power);
+    if (s.sync) setSyncPill(s.sync);
+    if (s.requests_pending != null) updateRequestsBadge(s.requests_pending);
   } catch (e) { /* ignore */ }
 }
 
@@ -201,6 +209,8 @@ function handleMessage(msg) {
     case "inventory_result": onInventoryResult(msg); break;
     case "finder": onFinder(msg); break;
     case "finder_reset": onFinderReset(); break;
+    case "sync_status": onSyncStatus(msg); break;
+    case "requests_update": onRequestsUpdate(msg); break;
     case "error":
       logActivity(msg.message, "err");
       showResult("err", "Error", `<p>${escapeHtml(msg.message)}</p>`);
@@ -219,6 +229,63 @@ function setDbPill(on, err) {
   p.className = "pill " + (on ? "pill-on" : "pill-off");
   p.textContent = on ? "Database ready" : "Database offline";
   if (!on && err) p.title = err;
+}
+
+// Cloud-sync pill. Offline is normal for this app, so the pill stays calm:
+// gray when sync isn't configured, green when the last exchange worked, red
+// when the cloud is unreachable (with detail in the tooltip).
+function setSyncPill(sync) {
+  state.sync = sync;
+  const p = $("sync-pill");
+  if (!p) return;
+  if (!sync || !sync.enabled) {
+    p.className = "pill pill-idle";
+    p.textContent = "Sync off";
+    p.title = "Cloud sync is not configured (set cloud_url in settings.ini). " +
+      "The app works fully standalone.";
+    return;
+  }
+  const pending = sync.pending || 0;
+  const lastTxt = sync.last_sync
+    ? `Last synced ${fmtDateTime(sync.last_sync)}` : "Never synced yet";
+  const pendTxt = pending ? ` \u00b7 ${pending} change(s) pending` : "";
+  if (sync.online) {
+    p.className = "pill pill-on";
+    p.textContent = pending ? `Sync (${pending})` : "Sync ok";
+    p.title = `${lastTxt}${pendTxt} \u00b7 click to sync now`;
+  } else {
+    p.className = "pill pill-off";
+    p.textContent = pending ? `Sync offline (${pending})` : "Sync offline";
+    p.title = `${sync.error || "Cloud unreachable"} \u00b7 ${lastTxt}${pendTxt}` +
+      " \u00b7 changes are safe locally and will sync when back online";
+  }
+  updateSyncDetail();
+}
+
+function onSyncStatus(msg) {
+  const wasError = state.sync && state.sync.enabled && !state.sync.online;
+  setSyncPill(msg);
+  // Log transitions (not every 30s heartbeat): going offline / coming back.
+  if (msg.enabled && !msg.online && !wasError && msg.error) {
+    logActivity(`Cloud sync: ${msg.error}`, "warn");
+  } else if (msg.enabled && msg.online && wasError) {
+    logActivity("Cloud sync restored \u2014 caught up", "ok");
+  }
+}
+
+function onRequestsUpdate(msg) {
+  if (msg.pending != null) updateRequestsBadge(msg.pending);
+  if (msg.added) {
+    logActivity(`${msg.added} new material request(s) from the cloud`, "ok");
+  }
+  if (state.mode === "requests") loadRequests();
+}
+
+function updateRequestsBadge(n) {
+  const b = $("requests-card-badge");
+  if (!b) return;
+  b.textContent = n;
+  b.classList.toggle("hidden", !n);
 }
 
 // -- view helpers ------------------------------------------------------------
@@ -250,7 +317,10 @@ async function openMode(mode, opts = {}) {
     await setServerMode("idle");
   } else if (mode === "checkout") {
     await setServerMode("checkout");
-    showScanner("Ready \u2014 pull the trigger to deliver to site");
+    renderRequestBanner();
+    showScanner(state.activeRequest
+      ? "Scan a box to stage it for this request"
+      : "Ready \u2014 pull the trigger to deliver to site");
   } else if (mode === "inventory") {
     resetSweepSession();
     await setServerMode("inventory");
@@ -262,6 +332,10 @@ async function openMode(mode, opts = {}) {
   } else if (mode === "boldocs") {
     await setServerMode("idle");
     await loadBolDocs();
+  } else if (mode === "requests") {
+    await setServerMode("idle");
+    updateSyncDetail();
+    await loadRequests();
   } else if (mode === "eventlog") {
     await setServerMode("idle");
     state.eventFilter = "all";
@@ -747,6 +821,7 @@ function selectType(type, btn) {
   btn.classList.add("active");
   renderShipmentForm(type);
   renderItemForm(type);
+  loadItemNameSuggestions(type);
   setShipmentFormDisabled(false);
   show("checkin-form"); show("arm-btn");
   hide("finish-btn"); hide("item-form"); hide("result"); hide("scanner");
@@ -810,9 +885,30 @@ function buildField(f, idPrefix) {
     const input = document.createElement("input");
     input.type = f.type === "date" ? "date" : "text";
     input.id = `${idPrefix}${f.key}`;
+    if (f.suggest) {
+      // Autocomplete from previously used values (e.g. W.I.F. component
+      // names); the datalist is filled by loadItemNameSuggestions.
+      const listId = `${idPrefix}${f.key}-list`;
+      const datalist = document.createElement("datalist");
+      datalist.id = listId;
+      input.setAttribute("list", listId);
+      field.appendChild(datalist);
+    }
     field.appendChild(input);
   }
   return field;
+}
+
+// Fill the Item Name datalist with names already on file for this type.
+async function loadItemNameSuggestions(type) {
+  const list = $("it_item_name-list");
+  if (!list) return;
+  try {
+    const res = await fetch(`/api/item_names?item_type=${encodeURIComponent(type)}`);
+    const data = await res.json();
+    list.innerHTML = (data.names || []).map((n) =>
+      `<option value="${escapeHtml(n)}"></option>`).join("");
+  } catch (e) { /* suggestions are best effort */ }
 }
 
 function getFieldValue(key, prefix) {
@@ -937,13 +1033,59 @@ function applyBolToForm() {
 
 function renderItemForm(type) {
   const form = $("item-form");
-  form.innerHTML = '<p class="hint">Fill in this unit\'s details, then pull the trigger to tag it.</p>';
+  const hint = state.config.printer_enabled
+    ? "Fill in this unit's details, then pull the trigger to tag it \u2014 or print &amp; encode a fresh label for it."
+    : "Fill in this unit's details, then pull the trigger to tag it.";
+  form.innerHTML = `<p class="hint">${hint}</p>`;
   fieldsForScope(type, "item").forEach((f) => {
     const field = buildField(f, "it_");
     const inp = field.querySelector("input, select");
     if (inp) inp.oninput = onItemInput;
     form.appendChild(field);
   });
+  if (state.config.printer_enabled) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "print-label-btn";
+    btn.className = "primary-btn";
+    btn.textContent = "Print & encode label";
+    btn.onclick = printAndEncodeLabel;
+    form.appendChild(btn);
+  }
+}
+
+// Check a box in via the label printer: the server mints an EPC, the ZD621R
+// prints the 4x6 label and encodes that EPC into its inlay. The result is
+// the same shape as a trigger-pull check-in, so it reuses that rendering.
+async function printAndEncodeLabel() {
+  if (!state.shipment) return;
+  const btn = $("print-label-btn");
+  btn.disabled = true;
+  btn.textContent = "Printing\u2026";
+  try {
+    const res = await fetch("/api/checkin/print", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        item_type: state.shipment.type,
+        fields: state.shipment.fields,
+        item_fields: collectItemFields(),
+        count: 1,
+      }),
+    });
+    const msg = await res.json();
+    if (msg.ok) {
+      logActivity(`Printed + encoded label ${msg.epc}`, "ok");
+      onCheckinResult(msg);
+    } else {
+      logActivity(msg.message || "Label print failed", "err");
+      showResult("warn", "Label not printed",
+        `<p>${escapeHtml(msg.message || "Unknown printer error")}</p>`);
+    }
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+  btn.disabled = false;
+  btn.textContent = "Print & encode label";
 }
 
 function collectItemFields() {
@@ -1111,6 +1253,7 @@ function onCheckinResult(msg) {
   }
   const boxUnits = msg.quantity != null ? msg.quantity : msg.added_units;
   renderCheckinSummary(msg);
+  addItemNameSuggestion(msg.item_name);
   logActivity(`Received a box of ${boxUnits} ${msg.item_type} (BOL ${msg.bol_number || "n/a"}) \u2014 qty now ${msg.qty} units`, "ok");
   // Per-unit fields are unique; clear them for the next unit.
   clearItemInputs();
@@ -1118,11 +1261,26 @@ function onCheckinResult(msg) {
   showScanner(`Receiving ${msg.item_type} \u2014 enter the next unit, then pull the trigger`);
 }
 
+// A just-used component name becomes an autocomplete option right away,
+// without refetching the whole suggestion list.
+function addItemNameSuggestion(name) {
+  const list = $("it_item_name-list");
+  if (!list || !name) return;
+  const exists = Array.from(list.options).some((o) => o.value === name);
+  if (!exists) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    list.appendChild(opt);
+  }
+}
+
 function renderCheckinSummary(msg) {
   const bol = msg.bol_number || "n/a";
   const bldg = msg.building || "n/a";
   const dupNote = msg.duplicates && msg.duplicates.length
     ? `<p class="hint">${msg.duplicates.length} tag(s) were already on file (not re-counted).</p>` : "";
+  const itemName = msg.item_name
+    ? `<tr><th>Item Name</th><td>${escapeHtml(msg.item_name)}</td></tr>` : "";
   const sku = msg.sku ? `<tr><th>SKU</th><td>${escapeHtml(msg.sku)}</td></tr>` : "";
   const mfc = msg.mfc_date ? `<tr><th>Mfc date</th><td>${escapeHtml(msg.mfc_date)}</td></tr>` : "";
   const boxUnits = msg.quantity != null ? msg.quantity : msg.added_units;
@@ -1132,12 +1290,16 @@ function renderCheckinSummary(msg) {
     ? `<button id="checkin-amend-btn" class="edit-btn checkin-amend-btn">Edit this box</button>` : "";
   const po = msg.po_number
     ? `<tr><th>PO Number</th><td>${escapeHtml(msg.po_number)}</td></tr>` : "";
+  const sector = msg.sector
+    ? `<tr><th>Sector</th><td>${escapeHtml(msg.sector)}</td></tr>` : "";
   showResult("ok", `Shipment: ${escapeHtml(msg.item_type)} \u00b7 Qty ${msg.qty} units`,
     `<table>
        ${epcRow}
+       ${itemName}
        <tr><th>BOL Number</th><td>${escapeHtml(bol)}</td></tr>
        ${po}
        <tr><th>Building</th><td>${escapeHtml(bldg)}</td></tr>
+       ${sector}
        <tr><th>Vendor</th><td>${escapeHtml(msg.vendor || "")}</td></tr>
        ${sku}${mfc}
        <tr><th>This box</th><td>${boxUnits} unit(s)</td></tr>
@@ -1152,8 +1314,15 @@ function renderCheckinSummary(msg) {
 // Scanning stays armed the whole time, so the flow isn't interrupted.
 function renderCheckinAmend(msg) {
   const qty = msg.quantity != null ? msg.quantity : 1;
+  const named = (state.config.named_item_types || []).includes(msg.item_type);
+  const itemNameField = named
+    ? `<label class="edit-field"><span>Item Name</span>
+         <input id="amend-item-name" type="text" list="it_item_name-list"
+                value="${escapeHtml(msg.item_name || "")}" /></label>`
+    : "";
   showResult("ok", `Edit box ${msg.epc}`,
     `<div class="checkin-amend-form">
+       ${itemNameField}
        <label class="edit-field"><span>SKU</span>
          <input id="amend-sku" type="text" value="${escapeHtml(msg.sku || "")}" /></label>
        <label class="edit-field"><span>Manufactured Date</span>
@@ -1172,6 +1341,8 @@ function renderCheckinAmend(msg) {
       mfc_date: $("amend-mfc").value.trim(),
       quantity: $("amend-qty").value.trim(),
     };
+    const nameInput = $("amend-item-name");
+    if (nameInput) fields.item_name = nameInput.value.trim();
     try {
       const res = await fetch("/api/checkin/amend", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1180,11 +1351,13 @@ function renderCheckinAmend(msg) {
       const data = await res.json();
       if (data.ok) {
         const tag = data.tag || {};
+        msg.item_name = tag.item_name;
         msg.sku = tag.sku;
         msg.mfc_date = tag.mfc_date;
         msg.quantity = tag.quantity;
         if (data.qty != null) msg.qty = data.qty;
         logActivity(data.message || `Updated ${msg.epc}`, "ok");
+        addItemNameSuggestion(msg.item_name);
         renderCheckinSummary(msg);
       } else {
         logActivity(data.message || "Edit failed", "err");
@@ -1196,79 +1369,113 @@ function renderCheckinAmend(msg) {
 }
 
 // -- check out ---------------------------------------------------------------
-// A trigger pull only looks the box up; the operator confirms how many units to
-// draw down here (full box by default), then we commit via POST /api/checkout.
-// While a confirm card is showing, a second scan of the SAME tag also commits
-// (after a warning if the destination building differs from the tag's own);
-// scanning a DIFFERENT tag prompts the operator to switch or re-scan.
+// A trigger pull ONLY looks a box up — scans never commit anything. The
+// operator reviews the confirm card and commits with a button press: "Add to
+// staging" while fulfilling a request, "Confirm delivery" otherwise. Scanning
+// while a card is already showing simply switches the card to the scanned box.
 function handleCheckoutScan(msg) {
+  // Scan events are broadcast to every open browser tab, but the checkout
+  // confirmation state (pending card, active request, staged list) is
+  // per-tab. Only the tab the operator is actually looking at may act.
+  if (state.mode !== "checkout" || document.visibilityState === "hidden") {
+    return;
+  }
   hideModal(); // a fresh scan supersedes any dialog still on screen
-  const pending = state.pendingCheckout;
-  const sameTag = pending && msg.epc &&
-    String(msg.epc).toUpperCase() === String(pending.epc).toUpperCase();
-
-  // No card pending (or the pending box's state changed underneath us):
-  // fall through to the normal lookup card.
-  if (!pending || (sameTag && !msg.ok)) {
-    onCheckoutPrompt(msg);
-    return;
-  }
-
-  if (!sameTag) {
-    // Case a: the confirming scan hit a different tag.
-    showModal("Tag mismatch",
-      `<p>The tag scanned does not match the tag selected for check-out.</p>
-       <table>
-         <tr><th>Selected</th><td><span class="epc">${escapeHtml(pending.epc)}</span></td></tr>
-         <tr><th>Scanned</th><td><span class="epc">${escapeHtml(msg.epc || "")}</span></td></tr>
-       </table>`,
-      [{ label: "Switch to scanned tag", cls: "primary-btn",
-         onClick: () => onCheckoutPrompt(msg) },
-       { label: "Scan correct tag again", cls: "back-btn" }]);
-    logActivity(`Checkout scan mismatch: expected ${pending.epc}, got ${msg.epc}`, "warn");
-    return;
-  }
-
-  // Same tag scanned again: this is the confirmation.
-  const group = $("checkout-bldg-group");
-  const dest = group ? (group.dataset.value || "") : "";
-  const home = String(pending.building || "");
-  if (dest && home && dest !== home) {
-    // Case b: destination differs from the building the box is assigned to.
-    showModal("Different building",
-      `<p>This box is assigned to Building <b>${escapeHtml(home)}</b> but is being
-         delivered to Building <b>${escapeHtml(dest)}</b>.</p>
-       <p>Are you sure you want to deliver it there?</p>`,
-      [{ label: "Yes, deliver", cls: "primary-btn",
-         onClick: () => confirmCheckout(pending.epc, pending.remaining) },
-       { label: "Cancel", cls: "back-btn" }]);
-    return;
-  }
-  confirmCheckout(pending.epc, pending.remaining);
+  onCheckoutPrompt(msg);
 }
 
 function onCheckoutPrompt(msg) {
+  const req = state.activeRequest;
   if (!msg.ok) {
     state.pendingCheckout = null;
     showResult("warn", "Cannot deliver",
       `<p class="epc">${escapeHtml(msg.epc || "")}</p>
        <p>${escapeHtml(msg.message)}</p>`);
     logActivity(msg.message, "warn");
-    showScanner("Ready \u2014 pull the trigger to deliver to site");
+    showScanner(req ? "Scan a box to stage it for this request"
+                    : "Ready \u2014 pull the trigger to deliver to site");
     return;
   }
+
+  if (req) {
+    // Already in the staged list: point at the banner instead of re-adding.
+    if (state.stagedDraws.some((d) => d.epc === msg.epc)) {
+      state.pendingCheckout = null;
+      showResult("warn", "Already staged",
+        `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
+           <span class="epc">${escapeHtml(msg.epc)}</span></p>
+         <p>This box is already staged for request #${req.id}. Remove it from
+           the staged list above if you scanned it by mistake.</p>`);
+      showScanner("Scan a box to stage it for this request");
+      return;
+    }
+    // Wrong item type: allow it, but only with an explicit override.
+    if (req.item_type && msg.item_type && msg.item_type !== req.item_type) {
+      showModal("Different item type",
+        `<p>Request #${req.id} asks for <b>${escapeHtml(req.item_type)}</b>,
+           but this box is <b>${escapeHtml(msg.item_type)}</b>
+           (<span class="epc">${escapeHtml(msg.epc)}</span>).</p>
+         <p>Stage it anyway?</p>`,
+        [{ label: "Stage anyway", cls: "primary-btn",
+           onClick: () => showCheckoutCard(msg) },
+         { label: "Skip this box", cls: "back-btn" }]);
+      logActivity(`Type mismatch for request #${req.id}: scanned ` +
+                  `${msg.item_type}, requested ${req.item_type}`, "warn");
+      return;
+    }
+    // Right type, wrong component (W.I.F. accessory): same override flow.
+    if (req.item_name && (msg.item_name || "") !== req.item_name) {
+      const boxName = msg.item_name || "(no item name)";
+      showModal("Different item name",
+        `<p>Request #${req.id} asks for
+           <b>${escapeHtml(req.item_type)} | ${escapeHtml(req.item_name)}</b>,
+           but this box is
+           <b>${escapeHtml(msg.item_type)} | ${escapeHtml(boxName)}</b>
+           (<span class="epc">${escapeHtml(msg.epc)}</span>).</p>
+         <p>Stage it anyway?</p>`,
+        [{ label: "Stage anyway", cls: "primary-btn",
+           onClick: () => showCheckoutCard(msg) },
+         { label: "Skip this box", cls: "back-btn" }]);
+      logActivity(`Item name mismatch for request #${req.id}: scanned ` +
+                  `${boxName}, requested ${req.item_name}`, "warn");
+      return;
+    }
+  }
+  showCheckoutCard(msg);
+}
+
+// The per-box confirm card. Outside a request it commits a checkout draw
+// immediately; while fulfilling a request it only adds the draw to the
+// staged list (nothing hits the DB until Confirm delivery).
+function showCheckoutCard(msg) {
+  const req = state.activeRequest;
   state.pendingCheckout = msg;
   const remaining = msg.remaining;
   const quantity = msg.quantity;
   const buildings = state.config.building_options || [];
-  const defaultBldg = String(msg.building || "");
+  const needed = req ? Math.max(0, req.quantity - stagedTotal()) : 0;
+  const defaultAmount = req
+    ? Math.max(1, Math.min(remaining, needed || 1)) : remaining;
+  const defaultBldg = req && req.building
+    ? String(req.building) : String(msg.building || "");
   const bldgBtns = buildings.map((b) =>
     `<button type="button" class="opt-btn checkout-bldg-btn${String(b) === defaultBldg ? " active" : ""}"
        data-building="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join("");
-  showResult("ok", "How many units leave?",
+  const title = req ? `Add to staging (request #${req.id})`
+                    : "How many units leave?";
+  const btnLabel = req ? "Add to staging" : "Confirm delivery";
+  const hint = req
+    ? `Defaults to what the request still needs. Press Add to staging to add
+       it to the list — scanning again will not add it.`
+    : `Defaults to the whole box. Lower it to deliver part of the box, then
+       press Confirm delivery.`;
+  const itemNameRow = msg.item_name
+    ? `<tr><th>Item Name</th><td>${escapeHtml(msg.item_name)}</td></tr>` : "";
+  showResult("ok", title,
     `<p><b>${escapeHtml(msg.item_type || "")}</b> &middot;
        <span class="epc">${escapeHtml(msg.epc)}</span></p>
      <table>
+       ${itemNameRow}
        <tr><th>BOL Number</th><td>${escapeHtml(msg.bol_number || "n/a")}</td></tr>
        <tr><th>Building</th><td>${escapeHtml(msg.building || "n/a")}</td></tr>
        <tr><th>SKU</th><td>${escapeHtml(msg.sku || "")}</td></tr>
@@ -1280,14 +1487,14 @@ function onCheckoutPrompt(msg) {
             data-value="${escapeHtml(defaultBldg)}">${bldgBtns}</div>
      </div>
      <div class="checkout-confirm">
-       <label for="checkout-amount">Units to deliver</label>
+       <label for="checkout-amount">Units to ${req ? "stage" : "deliver"}</label>
        <input id="checkout-amount" type="number" min="1" max="${remaining}"
-              step="1" value="${remaining}" />
-       <button id="checkout-confirm-btn" class="primary-btn">Confirm delivery</button>
+              step="1" value="${defaultAmount}" />
+       <button id="checkout-confirm-btn" class="primary-btn">${btnLabel}</button>
      </div>
-     <p class="hint">Defaults to the whole box. Lower it to deliver part of the box.
-       Scan this tag again or press Confirm delivery to finish.</p>`);
-  showScanner("Scan the same tag again to confirm delivery");
+     <p class="hint">${hint}</p>`);
+  showScanner(req ? "Press Add to staging below, or scan a different box"
+                  : "Press Confirm delivery below, or scan a different box");
   const group = $("checkout-bldg-group");
   group.querySelectorAll(".checkout-bldg-btn").forEach((b) => {
     b.onclick = () => {
@@ -1307,13 +1514,38 @@ function onCheckoutPrompt(msg) {
   }
 }
 
-async function confirmCheckout(epc, remaining) {
+async function confirmCheckout(epc, remaining, bldgConfirmed = false) {
   const input = $("checkout-amount");
-  let amount = input ? parseInt(input.value, 10) : remaining;
+  // No confirm card on screen means there is nothing the operator has
+  // reviewed — never fall back to committing the whole box.
+  if (!input || $("result").classList.contains("hidden")) {
+    state.pendingCheckout = null;
+    return;
+  }
+  let amount = parseInt(input.value, 10);
   if (!Number.isFinite(amount) || amount < 1) amount = 1;
   if (amount > remaining) amount = remaining;
   const group = $("checkout-bldg-group");
   const building = group ? (group.dataset.value || "") : "";
+  if (state.activeRequest) {
+    stageDraw({ epc, amount, building });
+    return;
+  }
+  // Destination differs from the building the box is assigned to: get an
+  // explicit go-ahead first. (While fulfilling a request the destination is
+  // the requester's choice, so this only applies to standalone checkouts;
+  // the draw still gets flagged in the DB when it commits.)
+  const home = String((state.pendingCheckout || {}).building || "");
+  if (!bldgConfirmed && building && home && building !== home) {
+    showModal("Different building",
+      `<p>This box is assigned to Building <b>${escapeHtml(home)}</b> but is being
+         delivered to Building <b>${escapeHtml(building)}</b>.</p>
+       <p>Are you sure you want to deliver it there?</p>`,
+      [{ label: "Yes, deliver", cls: "primary-btn",
+         onClick: () => confirmCheckout(epc, remaining, true) },
+       { label: "Cancel", cls: "back-btn" }]);
+    return;
+  }
   try {
     const res = await fetch("/api/checkout", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -1323,6 +1555,220 @@ async function confirmCheckout(epc, remaining) {
   } catch (e) {
     logActivity("Cannot reach server", "err");
   }
+}
+
+// -- request staging (checkout mode driven from a material request) -----------
+function stagedTotal() {
+  return state.stagedDraws.reduce((sum, d) => sum + (d.amount || 0), 0);
+}
+
+function stageDraw(draw) {
+  const box = state.pendingCheckout || {};
+  state.stagedDraws.push({
+    epc: draw.epc, amount: draw.amount, building: draw.building,
+    item_type: box.item_type || "", item_name: box.item_name || "",
+    bol_number: box.bol_number || "",
+  });
+  state.pendingCheckout = null;
+  hide("result");
+  renderRequestBanner();
+  const req = state.activeRequest;
+  logActivity(`Staged ${draw.amount} unit(s) of ${box.item_type || draw.epc} ` +
+              `for request #${req.id}`, "ok");
+  showScanner("Scan the next box, or press Confirm delivery when done");
+}
+
+function renderRequestBanner() {
+  const banner = $("request-banner");
+  if (!banner) return;
+  const req = state.activeRequest;
+  if (!req || state.mode !== "checkout") {
+    banner.classList.add("hidden");
+    return;
+  }
+  banner.classList.remove("hidden");
+  const dest = [req.building && `Bldg ${req.building}`, req.jobsite]
+    .filter(Boolean).join(" \u00b7 ");
+  $("request-banner-title").textContent =
+    `#${req.id} \u2014 ${req.quantity} \u00d7 ${req.item_type}` +
+    (req.item_name ? ` | ${req.item_name}` : "") +
+    (dest ? ` \u2192 ${dest}` : "");
+  const total = stagedTotal();
+  const progress = $("request-banner-progress");
+  progress.textContent = `${total} of ${req.quantity} unit(s) staged`;
+  progress.classList.toggle("request-progress-done", total >= req.quantity);
+
+  const list = $("request-staged-list");
+  if (!state.stagedDraws.length) {
+    list.innerHTML = `<p class="hint">Nothing staged yet — scan a box to add it.</p>`;
+  } else {
+    list.innerHTML = state.stagedDraws.map((d, i) => `
+      <div class="staged-row">
+        <span class="staged-qty">${d.amount}\u00d7</span>
+        <span class="staged-desc"><b>${escapeHtml(d.item_type)}</b>
+          ${d.item_name ? `\u00b7 ${escapeHtml(d.item_name)}` : ""}
+          <span class="epc">${escapeHtml(d.epc)}</span>
+          ${d.bol_number ? `\u00b7 BOL ${escapeHtml(d.bol_number)}` : ""}
+          ${d.building ? `\u2192 Bldg ${escapeHtml(d.building)}` : ""}</span>
+        <button class="staged-remove" data-i="${i}" title="Remove">&times;</button>
+      </div>`).join("");
+    list.querySelectorAll(".staged-remove").forEach((b) => {
+      b.onclick = () => {
+        state.stagedDraws.splice(parseInt(b.dataset.i, 10), 1);
+        renderRequestBanner();
+      };
+    });
+  }
+  $("request-confirm-btn").disabled = !state.stagedDraws.length;
+}
+
+function clearRequestContext() {
+  state.activeRequest = null;
+  state.stagedDraws = [];
+  renderRequestBanner();
+}
+
+// Fulfill clicked on a pending card (moves it to staging on the cloud too),
+// or Resume clicked on a card already staging.
+async function startRequestFulfillment(r) {
+  if (r.status === "pending") {
+    try {
+      const res = await fetch("/api/requests/handle", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: r.id, status: "staging", note: "" }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        logActivity(data.message || "Could not start staging", "err");
+        await loadRequests();
+        return;
+      }
+      r = data.request || r;
+    } catch (e) {
+      logActivity("Cannot reach server", "err");
+      return;
+    }
+  }
+  // Keep the cart when resuming the same request; starting a different one
+  // (or starting fresh) begins empty.
+  if (!state.activeRequest || state.activeRequest.id !== r.id) {
+    state.stagedDraws = [];
+  }
+  state.activeRequest = r;
+  await openMode("checkout");
+}
+
+function cancelRequestStaging(id) {
+  showModal(`Cancel staging for request #${id}?`,
+    `<p>Nothing has been checked out yet — the request simply goes back to
+        pending.</p>`,
+    [{ label: "Cancel staging", cls: "danger-btn",
+       onClick: async () => {
+         try {
+           const res = await fetch("/api/requests/handle", {
+             method: "POST", headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({ id, status: "pending", note: "" }),
+           });
+           const data = await res.json();
+           logActivity(data.message || `Request #${id} back to pending`,
+                       data.ok ? "ok" : "err");
+         } catch (e) {
+           logActivity("Cannot reach server", "err");
+         }
+         if (state.activeRequest && state.activeRequest.id === id) {
+           clearRequestContext();
+         }
+         if (state.mode === "checkout") {
+           await openMode("requests");
+         } else {
+           await loadRequests();
+         }
+       } },
+     { label: "Keep staging", cls: "back-btn" }]);
+}
+
+// Confirm delivery pressed: summarize, collect the note (required when the
+// staged total is short of the request), then commit via /api/requests/fulfill.
+function confirmRequestDelivery() {
+  const req = state.activeRequest;
+  if (!req || !state.stagedDraws.length) return;
+  const total = stagedTotal();
+  const short = total < req.quantity;
+  const shortWarn = short
+    ? `<p class="flag-warning"><strong>&#9888; Only ${total} of ${req.quantity}
+         unit(s) staged.</strong> A note for the requester is required.</p>`
+    : "";
+  showModal(`Confirm delivery for request #${req.id}?`,
+    `${shortWarn}
+     <p>${total} unit(s) of <b>${escapeHtml(req.item_type)}${req.item_name
+        ? ` | ${escapeHtml(req.item_name)}` : ""}</b> from
+        ${state.stagedDraws.length} box(es) will be checked out, and the
+        request marked fulfilled on the cloud site.</p>
+     <label class="edit-field"><span>Note for the requester${short ? " (required)" : " (optional)"}</span>
+       <input id="request-fulfill-note" type="text" maxlength="200"
+         placeholder="${short ? "e.g. Remainder ships next week" : "e.g. On Tuesday's truck"}" />
+     </label>`,
+    [{ label: "Confirm delivery", cls: "primary-btn",
+       onClick: () => submitRequestFulfill() },
+     { label: "Back", cls: "back-btn" }]);
+  const input = $("request-fulfill-note");
+  if (input) input.focus();
+}
+
+async function submitRequestFulfill() {
+  const req = state.activeRequest;
+  const input = $("request-fulfill-note");
+  const note = input ? input.value.trim() : "";
+  const total = stagedTotal();
+  if (total < req.quantity && !note) {
+    logActivity("A note is required when fulfilling short", "warn");
+    confirmRequestDelivery();
+    return;
+  }
+  let data;
+  try {
+    const res = await fetch("/api/requests/fulfill", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: req.id,
+        draws: state.stagedDraws.map((d) => (
+          { epc: d.epc, amount: d.amount, building: d.building })),
+        note,
+      }),
+    });
+    data = await res.json();
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+    return;
+  }
+  if (!data.ok) {
+    logActivity(data.message || "Could not fulfill request", "err");
+    if (data.note_required) confirmRequestDelivery();
+    return;
+  }
+  const draws = data.results || [];
+  const okDraws = draws.filter((r) => r.ok);
+  const failed = draws.filter((r) => !r.ok);
+  const rows = okDraws.map((r) => `
+    <tr><td>${r.delivered}\u00d7 ${escapeHtml(r.item_type || "")}</td>
+        <td><span class="epc">${escapeHtml(r.epc)}</span></td>
+        <td>${r.checkout_building ? `Bldg ${escapeHtml(r.checkout_building)}` : ""}</td></tr>`).join("");
+  const failHtml = failed.length
+    ? `<p class="flag-warning"><strong>&#9888; ${failed.length} box(es) could not
+         be delivered:</strong> ${failed.map((r) => escapeHtml(r.message || r.epc)).join("; ")}</p>`
+    : "";
+  const flags = okDraws.filter((r) => r.flag);
+  const flagHtml = flags.length
+    ? `<p class="hint">${flags.map((r) => escapeHtml(r.flag)).join("<br>")}</p>` : "";
+  logActivity(data.message, data.short || failed.length ? "warn" : "ok");
+  clearRequestContext();
+  await openMode("requests");
+  showResult(data.short || failed.length ? "warn" : "ok",
+    `Request #${req.id} fulfilled`,
+    `${failHtml}
+     <p>${data.delivered} of ${data.requested} requested unit(s) delivered.
+        The requester sees the outcome after the next sync.</p>
+     ${rows ? `<table>${rows}</table>` : ""}${flagHtml}`);
 }
 
 function onCheckoutResult(msg) {
@@ -1583,15 +2029,20 @@ function renderWarehouse(data) {
     const body = document.createElement("div");
     body.className = "wh-type-body";
 
+    // Named types (W.I.F.) group by component name; the BOL/Building toggle
+    // value moves to the second column.
+    const gLabel = t.named ? "Item Name" : groupLabel;
+    const oLabel = t.named ? groupLabel : otherLabel;
     const table = document.createElement("table");
     table.className = "wh-group-table";
     table.innerHTML = `<thead><tr>
-        <th>Units</th><th>${escapeHtml(groupLabel)}</th>
-        <th>${escapeHtml(otherLabel)}</th>
+        <th>Units</th><th>${escapeHtml(gLabel)}</th>
+        <th>${escapeHtml(oLabel)}</th>
         <th>Date Checked In</th><th>Status</th><th></th>
       </tr></thead>`;
     const tbody = document.createElement("tbody");
-    t.groups.forEach((g) => addGroupRows(tbody, t.item_type, data.group_by, g));
+    t.groups.forEach((g) =>
+      addGroupRows(tbody, t.item_type, data.group_by, g, t.named));
     table.appendChild(tbody);
     body.appendChild(table);
 
@@ -1624,7 +2075,7 @@ function otherValuesHtml(g) {
   return `<span title="${escapeHtml(vals.join(", "))}">${shown}${extra}</span>`;
 }
 
-function addGroupRows(tbody, itemType, groupBy, g) {
+function addGroupRows(tbody, itemType, groupBy, g, named) {
   const row = document.createElement("tr");
   row.className = "wh-group-row";
   const statusCls = STATUS_BADGE[g.status] || "badge-in";
@@ -1636,7 +2087,8 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   const deleteBtn = isEditing()
     ? ` <button class="danger-btn group-delete-btn" title="Delete every box in this group">Delete</button>`
     : "";
-  const pdfBtn = groupBy === "bol" && g.bol_doc_id
+  // Component rows (named types) can span several BOLs, so no single PDF.
+  const pdfBtn = !named && groupBy === "bol" && g.bol_doc_id
     ? ` <button class="bol-pdf-btn" title="View the scanned bill of lading">BOL PDF</button>`
     : "";
   const noteBadge = g.note_count
@@ -1661,7 +2113,7 @@ function addGroupRows(tbody, itemType, groupBy, g) {
   if (delBtn) {
     delBtn.onclick = (ev) => {
       ev.stopPropagation();
-      deleteGroup(itemType, groupBy, g, boxes);
+      deleteGroup(itemType, groupBy, g, boxes, named);
     };
   }
 
@@ -1679,7 +2131,7 @@ function addGroupRows(tbody, itemType, groupBy, g) {
       detail.classList.contains("hidden") ? "&#9656;" : "&#9662;";
     if (!loaded && !detail.classList.contains("hidden")) {
       loaded = true;
-      await loadGroupTags(cell, itemType, groupBy, g.value, g);
+      await loadGroupTags(cell, itemType, groupBy, g.value, g, named);
     }
   };
 
@@ -1688,8 +2140,9 @@ function addGroupRows(tbody, itemType, groupBy, g) {
 }
 
 // Admin edit mode: delete every tag in one (item_type, group) cell.
-async function deleteGroup(itemType, groupBy, g, boxes) {
-  const groupLabel = groupBy === "building" ? "Building" : "BOL";
+async function deleteGroup(itemType, groupBy, g, boxes, named) {
+  const groupLabel = named ? "Item Name"
+    : (groupBy === "building" ? "Building" : "BOL");
   const ok = window.confirm(
     `Delete ALL ${itemType} under ${groupLabel} '${g.value || "(blank)"}'? ` +
     `This permanently removes ${boxes} box(es) (${g.qty} unit(s) in warehouse). ` +
@@ -1705,24 +2158,28 @@ async function deleteGroup(itemType, groupBy, g, boxes) {
   }
 }
 
-async function loadGroupTags(cell, itemType, groupBy, value, groupInfo) {
+async function loadGroupTags(cell, itemType, groupBy, value, groupInfo, named) {
   try {
     const q = whFilterParams(new URLSearchParams(
       { item_type: itemType, group_by: groupBy, value: value || "" }));
     const [data, notes] = await Promise.all([
       fetch(`/api/inventory/group?${q.toString()}`).then((r) => r.json()),
-      fetchNotes(groupNoteParams(itemType, groupBy, value)),
+      fetchNotes(groupNoteParams(itemType, groupBy, value, named)),
     ]);
     const editing = isEditing();
     let tableHtml;
     if (!data.tags || !data.tags.length) {
       tableHtml = `<p class="hint">No units.</p>`;
     } else {
-      const otherLabel = groupBy === "building" ? "BOL #" : "Building #";
+      // Component rows (named types) aren't pinned to a BOL or building, so
+      // their boxes show both dimensions.
+      const dimHeads = named
+        ? `<th>BOL #</th><th>Building #</th>`
+        : `<th>${escapeHtml(groupBy === "building" ? "BOL #" : "Building #")}</th>`;
       const rows = data.tags.map((tag) =>
-        tagRowHtml(tag, itemType, editing, groupBy)).join("");
+        tagRowHtml(tag, itemType, editing, groupBy, named)).join("");
       tableHtml = `<table class="wh-tag-table">
-        <thead><tr><th>EPC</th><th>${escapeHtml(otherLabel)}</th><th>PO #</th>
+        <thead><tr><th>EPC</th>${dimHeads}<th>PO #</th>
           <th>SKU</th><th>Qty</th><th>Mfc date</th>
           <th>Checked in</th><th>Checked out</th><th>Checked out to</th>
           <th>Status</th><th></th></tr></thead>
@@ -1730,7 +2187,7 @@ async function loadGroupTags(cell, itemType, groupBy, value, groupInfo) {
     }
     cell.innerHTML = `<div class="group-notes"></div>${tableHtml}`;
     renderGroupNotes(cell.querySelector(".group-notes"),
-                     itemType, groupBy, value, groupInfo, notes);
+                     itemType, groupBy, value, groupInfo, notes, named);
     cell.querySelectorAll(".find-btn").forEach((b) => {
       b.onclick = (ev) => { ev.stopPropagation(); openFinder(b.dataset.epc, b.dataset.label); };
     });
@@ -1748,9 +2205,12 @@ async function loadGroupTags(cell, itemType, groupBy, value, groupInfo) {
 
 // -- warehouse group notes -----------------------------------------------------
 // List params: only the row's grouped dimension (a BOL row spans buildings and
-// vice versa, and all of its notes should be readable from it).
-function groupNoteParams(itemType, groupBy, value) {
+// vice versa, and all of its notes should be readable from it). Notes key on
+// (item_type, bol, building) -- component rows of named types don't map to
+// that triple, so they list every note on the item type.
+function groupNoteParams(itemType, groupBy, value, named) {
   const p = { item_type: itemType };
+  if (named) return p;
   if (groupBy === "building") p.building = value || "";
   else p.bol_number = value || "";
   return p;
@@ -1758,15 +2218,23 @@ function groupNoteParams(itemType, groupBy, value) {
 
 // Add body: pin down the other dimension too when the group only spans one
 // value of it (the common case), so the note also shows up at check-in.
-function groupNoteAddBody(itemType, groupBy, value, groupInfo) {
+function groupNoteAddBody(itemType, groupBy, value, groupInfo, named) {
   const others = (groupInfo && groupInfo.other_values) || [];
   const other = others.length === 1 ? String(others[0]) : "";
+  if (named) {
+    // A component row's other_values hold the toggled dimension; pin it only
+    // when the component sits under a single BOL/building.
+    return groupBy === "building"
+      ? { item_type: itemType, building: other, bol_number: "" }
+      : { item_type: itemType, bol_number: other, building: "" };
+  }
   return groupBy === "building"
     ? { item_type: itemType, building: value || "", bol_number: other }
     : { item_type: itemType, bol_number: value || "", building: other };
 }
 
-function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes) {
+function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes,
+                          named) {
   if (!container) return;
   const editing = isEditing();
   const list = notes.length
@@ -1784,7 +2252,9 @@ function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes)
   const btn = container.querySelector(".group-note-add");
   const reload = async () => {
     renderGroupNotes(container, itemType, groupBy, value, groupInfo,
-                     await fetchNotes(groupNoteParams(itemType, groupBy, value)));
+                     await fetchNotes(groupNoteParams(itemType, groupBy, value,
+                                                      named)),
+                     named);
   };
   const submit = async () => {
     const text = ta.value.trim();
@@ -1794,7 +2264,8 @@ function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes)
       const res = await fetch("/api/notes", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          { ...groupNoteAddBody(itemType, groupBy, value, groupInfo), text }),
+          { ...groupNoteAddBody(itemType, groupBy, value, groupInfo, named),
+            text }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -1827,8 +2298,12 @@ function renderGroupNotes(container, itemType, groupBy, value, groupInfo, notes)
   });
 }
 
-function tagRowHtml(tag, itemType, editing, groupBy) {
-  const otherValue = groupBy === "building" ? tag.bol_number : tag.building;
+function tagRowHtml(tag, itemType, editing, groupBy, named) {
+  const dimCells = named
+    ? `<td>${escapeHtml(tag.bol_number || "")}</td>
+       <td>${escapeHtml(tag.building || "")}</td>`
+    : `<td>${escapeHtml((groupBy === "building"
+        ? tag.bol_number : tag.building) || "")}</td>`;
   const statusCls = STATUS_BADGE[tag.status] || "badge-in";
   const flagBadge = tag.flag
     ? `<span class="badge badge-flag" title="${escapeHtml(tag.flag)}">&#9888; Flagged</span>`
@@ -1843,7 +2318,7 @@ function tagRowHtml(tag, itemType, editing, groupBy) {
   let editorRow = "";
   if (editing) {
     editorRow = `<tr class="tag-editor-row hidden" data-editor="${escapeHtml(tag.epc)}">
-      <td colspan="11">${tagEditorHtml(tag)}</td></tr>`;
+      <td colspan="${named ? 12 : 11}">${tagEditorHtml(tag)}</td></tr>`;
   }
   const deliveredAt = tag.delivered_at ? fmtDateTime(tag.delivered_at) : "";
   const checkedOutTo = tag.checkout_building ? `Bldg ${tag.checkout_building}` : "";
@@ -1852,7 +2327,7 @@ function tagRowHtml(tag, itemType, editing, groupBy) {
   return `<tr>
       <td class="epc epc-link" data-epc="${escapeHtml(tag.epc)}"
           title="View this tag's event history">${escapeHtml(tag.epc)}</td>
-      <td>${escapeHtml(otherValue || "")}</td>
+      ${dimCells}
       <td>${escapeHtml(tag.po_number || "")}</td>
       <td>${escapeHtml(tag.sku || "")}</td>
       <td class="qty-cell">${escapeHtml(qty)}</td>
@@ -2009,6 +2484,229 @@ async function exportWarehousePdf() {
   window.print();
 }
 
+// -- material requests ---------------------------------------------------------
+// Jobsite users submit requests on the cloud site; the sync worker pulls them
+// here. Fulfill/decline updates local state immediately and is pushed back to
+// the cloud on the next sync (which /api/requests/handle kicks off).
+const REQUEST_BADGE = {
+  pending: "badge-partial", staging: "badge-staging",
+  fulfilled: "badge-in", declined: "badge-out",
+};
+const REQUEST_STATUS_LABEL = { staging: "staging for exit" };
+
+// Order key -> user's expand/collapse choice, surviving the re-render after
+// every action. Orders without a choice default to expanded while any line
+// still needs handling.
+const orderExpanded = new Map();
+
+function updateSyncDetail() {
+  const el = $("sync-detail");
+  if (!el) return;
+  const s = state.sync;
+  if (!s || !s.enabled) {
+    el.textContent = "Cloud sync is off (set cloud_url in settings.ini).";
+    return;
+  }
+  const last = s.last_sync
+    ? `Last synced ${fmtDateTime(s.last_sync)}` : "Never synced yet";
+  const pending = s.pending ? ` \u00b7 ${s.pending} change(s) pending` : "";
+  const err = s.online ? "" : ` \u00b7 offline: ${s.error || "cloud unreachable"}`;
+  el.textContent = `${last}${pending}${err}`;
+}
+
+async function syncNow() {
+  try {
+    const data = await (await fetch("/api/sync/now", { method: "POST" })).json();
+    logActivity(data.message || (data.ok ? "Sync started" : "Sync failed"),
+                data.ok ? "ok" : "warn");
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+}
+
+async function loadRequests() {
+  const wrap = $("requests-list");
+  wrap.innerHTML = `<p class="hint">Loading\u2026</p>`;
+  let data;
+  try {
+    data = await (await fetch("/api/requests")).json();
+  } catch (e) {
+    wrap.innerHTML = `<p class="hint">Could not load requests.</p>`;
+    return;
+  }
+  updateRequestsBadge(data.pending || 0);
+  renderRequests(data.requests || []);
+}
+
+// One card per ORDER (lines submitted together share an order_ref), with a
+// collapsible list of its line items; every line keeps its own
+// fulfill/decline/resume/cancel actions and status. Rows arrive from the
+// server open-first/newest-first; grouping preserves that order, so an order
+// with any staging or pending line surfaces before completed ones.
+function groupRequestOrders(rows) {
+  const orders = new Map();
+  rows.forEach((r) => {
+    const key = r.order_ref || `request-${r.id}`;
+    let o = orders.get(key);
+    if (!o) {
+      o = { key, ref: r.order_ref, lines: [] };
+      orders.set(key, o);
+    }
+    o.lines.push(r);
+  });
+  orders.forEach((o) => o.lines.sort((a, b) => a.id - b.id));
+  return [...orders.values()];
+}
+
+function renderRequestLine(r) {
+  const badgeCls = REQUEST_BADGE[r.status] || "badge-partial";
+  const badgeTxt = REQUEST_STATUS_LABEL[r.status] || r.status;
+  const handled = (r.status === "fulfilled" || r.status === "declined")
+    ? `<div class="request-handled hint">${escapeHtml(r.status)}
+         ${r.handled_at ? escapeHtml(fmtDateTime(r.handled_at)) : ""}
+         ${r.handler_note ? `\u2014 ${escapeHtml(r.handler_note)}` : ""}</div>`
+    : "";
+  let actions = "";
+  if (r.status === "pending") {
+    actions = `<div class="request-actions">
+         <button class="primary-btn req-fulfill" data-id="${r.id}">Fulfill</button>
+         <button class="danger-btn req-decline" data-id="${r.id}">Decline</button>
+       </div>`;
+  } else if (r.status === "staging") {
+    actions = `<div class="request-actions">
+         <button class="primary-btn req-resume" data-id="${r.id}">Resume staging</button>
+         <button class="back-btn req-cancel" data-id="${r.id}">Cancel</button>
+       </div>`;
+  }
+  const open = r.status === "pending" || r.status === "staging";
+  return `<div class="request-card${open ? " request-pending" : ""}">
+    <div class="request-main">
+      <div class="request-title">
+        <span class="request-qty">${r.quantity}\u00d7</span>
+        <strong>${escapeHtml(r.item_type)}${r.item_name
+          ? ` | ${escapeHtml(r.item_name)}` : ""}</strong>
+        <span class="badge ${badgeCls}">${escapeHtml(badgeTxt)}</span>
+      </div>
+      <div class="request-meta hint">#${r.id}${r.building
+          ? ` \u00b7 Deliver to Bldg ${escapeHtml(r.building)}` : ""}</div>
+      ${handled}
+    </div>${actions}
+  </div>`;
+}
+
+function renderRequests(rows) {
+  const wrap = $("requests-list");
+  if (!rows.length) {
+    wrap.innerHTML = `<p class="hint">No material requests yet. They appear
+      here when someone submits one on the cloud site.</p>`;
+    return;
+  }
+  const requestsById = {};
+  rows.forEach((r) => { requestsById[r.id] = r; });
+
+  const html = groupRequestOrders(rows).map((o) => {
+    const first = o.lines[0];
+    const openCount = o.lines.filter(
+      (r) => r.status === "pending" || r.status === "staging").length;
+    const expanded = orderExpanded.has(o.key)
+      ? orderExpanded.get(o.key) : openCount > 0;
+    // Status roll-up for the collapsed view, e.g. "2 pending · 1 fulfilled".
+    const counts = {};
+    o.lines.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+    const summary = Object.entries(counts).map(([status, n]) =>
+      `<span class="badge ${REQUEST_BADGE[status] || "badge-partial"}">
+         ${n} ${escapeHtml(status)}</span>`).join(" ");
+    const units = o.lines.reduce((sum, r) => sum + (r.quantity || 0), 0);
+    const who = [first.requester, first.jobsite && `Jobsite: ${first.jobsite}`,
+                 first.contact]
+      .filter(Boolean).map(escapeHtml).join(" \u00b7 ");
+    // requester/jobsite/contact/note are order-level (identical on every
+    // line of a cart); delivery building is per line.
+    const note = first.note
+      ? `<div class="request-note">\u201C${escapeHtml(first.note)}\u201D</div>`
+      : "";
+    const title = o.ref ? `Order ${escapeHtml(o.ref)}`
+                        : `Request #${first.id}`;
+    return `<div class="order-card${openCount ? " request-pending" : ""}"
+                 data-key="${escapeHtml(o.key)}">
+      <div class="order-head">
+        <span class="wh-caret">${expanded ? "&#9662;" : "&#9656;"}</span>
+        <div class="request-main">
+          <div class="request-title">
+            <strong>${title}</strong>
+            <span class="order-count hint">${o.lines.length}
+              item${o.lines.length === 1 ? "" : "s"} \u00b7 ${units} unit(s)</span>
+            ${summary}
+          </div>
+          <div class="request-meta hint">${escapeHtml(fmtDateTime(first.created_at))}
+            ${who ? `\u00b7 ${who}` : ""}</div>
+          ${note}
+        </div>
+      </div>
+      <div class="order-lines"${expanded ? "" : " hidden"}>
+        ${o.lines.map(renderRequestLine).join("")}
+      </div>
+    </div>`;
+  }).join("");
+  wrap.innerHTML = html;
+
+  wrap.querySelectorAll(".order-card .order-head").forEach((head) => {
+    head.onclick = () => {
+      const card = head.closest(".order-card");
+      const lines = card.querySelector(".order-lines");
+      lines.hidden = !lines.hidden;
+      head.querySelector(".wh-caret").innerHTML =
+        lines.hidden ? "&#9656;" : "&#9662;";
+      orderExpanded.set(card.dataset.key, !lines.hidden);
+    };
+  });
+  wrap.querySelectorAll(".req-fulfill, .req-resume").forEach((b) => {
+    b.onclick = () => startRequestFulfillment(
+      requestsById[parseInt(b.dataset.id, 10)]);
+  });
+  wrap.querySelectorAll(".req-decline").forEach((b) => {
+    b.onclick = () => confirmDeclineRequest(parseInt(b.dataset.id, 10));
+  });
+  wrap.querySelectorAll(".req-cancel").forEach((b) => {
+    b.onclick = () => cancelRequestStaging(parseInt(b.dataset.id, 10));
+  });
+}
+
+function confirmDeclineRequest(id) {
+  showModal(`Decline request #${id}?`,
+    `<p>The requester sees this status (and your note) on the cloud site
+        after the next sync.</p>
+     <label class="edit-field"><span>Note (optional)</span>
+       <input id="request-handle-note" type="text"
+         placeholder="e.g. Out of stock until August" maxlength="200" />
+     </label>`,
+    [{ label: "Decline", cls: "danger-btn",
+       onClick: () => handleRequest(id, "declined") },
+     { label: "Cancel", cls: "back-btn" }]);
+  const input = $("request-handle-note");
+  if (input) input.focus();
+}
+
+async function handleRequest(id, status) {
+  const input = $("request-handle-note");
+  const note = input ? input.value.trim() : "";
+  try {
+    const res = await fetch("/api/requests/handle", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status, note }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      logActivity(data.message || `Request #${id} ${status}`, "ok");
+    } else {
+      logActivity(data.message || "Could not update request", "err");
+    }
+  } catch (e) {
+    logActivity("Cannot reach server", "err");
+  }
+  await loadRequests();
+}
+
 // -- event log ---------------------------------------------------------------
 // Raw audit actions -> friendly label + badge class for the log table.
 const EVENT_LABELS = {
@@ -2026,6 +2724,11 @@ const EVENT_LABELS = {
   BOL_RENAME: { label: "BOL renamed", cls: "badge-partial" },
   NOTE: { label: "Note added", cls: "badge-in" },
   NOTE_DEL: { label: "Note deleted", cls: "badge-out" },
+  REQUEST: { label: "Request received", cls: "badge-partial" },
+  REQUEST_STAGING: { label: "Staging for request", cls: "badge-partial" },
+  REQUEST_PENDING: { label: "Staging canceled", cls: "badge-partial" },
+  REQUEST_FULFILLED: { label: "Request fulfilled", cls: "badge-in" },
+  REQUEST_DECLINED: { label: "Request declined", cls: "badge-out" },
 };
 
 let eventSearchTimer = null;
@@ -2569,6 +3272,15 @@ function wireUI() {
     };
   });
   $("bol-docs-refresh").onclick = loadBolDocs;
+  $("requests-refresh").onclick = loadRequests;
+  $("request-confirm-btn").onclick = confirmRequestDelivery;
+  $("request-cancel-btn").onclick = () => {
+    if (state.activeRequest) cancelRequestStaging(state.activeRequest.id);
+  };
+  $("sync-now-btn").onclick = syncNow;
+  $("sync-pill").onclick = () => {
+    if (state.sync && state.sync.enabled) syncNow();
+  };
   $("event-refresh").onclick = loadEvents;
   $("event-epc").oninput = () => {
     clearTimeout(eventSearchTimer);

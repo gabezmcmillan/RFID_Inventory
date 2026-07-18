@@ -28,9 +28,12 @@ from pydantic import BaseModel
 
 import bol_extract
 import config
+import db as db_mod
+import printer
 import reader as reader_mod
 import scanner
 from reader import ReaderWorker
+from sync import SyncWorker
 
 # ---------------------------------------------------------------------------
 # Shared state
@@ -39,6 +42,7 @@ class AppState:
     def __init__(self):
         self.raw_events: "queue.Queue[dict]" = queue.Queue()
         self.worker: Optional[ReaderWorker] = None
+        self.sync: Optional[SyncWorker] = None
         self.db = None
         self.db_error: Optional[str] = None
         self.clients: set[WebSocket] = set()
@@ -72,6 +76,13 @@ async def lifespan(app: FastAPI):
     state.worker = ReaderWorker(on_event=lambda e: state.raw_events.put(e))
     state.worker.start()
 
+    # Cloud sync runs alongside the reader (needs the DB; no-op when
+    # cloud_url isn't configured -- the app is fully usable offline).
+    if state.db is not None:
+        state.sync = SyncWorker(state.db,
+                                on_event=lambda e: state.raw_events.put(e))
+        state.sync.start()
+
     pump = asyncio.create_task(_event_pump())
     try:
         yield
@@ -79,6 +90,8 @@ async def lifespan(app: FastAPI):
         pump.cancel()
         if state.worker:
             state.worker.stop()
+        if state.sync:
+            state.sync.stop()
         if state.db:
             state.db.close()
 
@@ -147,6 +160,22 @@ async def _handle_event(event: dict):
         await broadcast({"type": "finder_reset"})
         return
 
+    if kind == "sync_status":
+        await broadcast({"type": "sync_status",
+                         "enabled": event.get("enabled"),
+                         "online": event.get("online"),
+                         "last_sync": event.get("last_sync"),
+                         "error": event.get("error"),
+                         "pending": event.get("pending")})
+        return
+
+    if kind == "sync_requests":
+        # New material requests arrived from the cloud on the last sync.
+        await broadcast({"type": "requests_update",
+                         "added": event.get("added", 0),
+                         "pending": event.get("pending", 0)})
+        return
+
     if state.db is None:
         await broadcast({"type": "error",
                          "message": f"Database not available: {state.db_error}"})
@@ -161,11 +190,12 @@ async def _handle_event(event: dict):
         bol_number = fields.get("bol_number", "")
         po_number = fields.get("po_number", "")
         vendor = fields.get("vendor", "")
+        sector = fields.get("sector", "")
         bol_doc_id = _as_doc_id(fields.get("bol_doc_id"))
         result = await loop.run_in_executor(
             None, state.db.receive_shipment,
             epcs, item_type, building, bol_number, vendor, item_fields,
-            bol_doc_id, po_number)
+            bol_doc_id, po_number, sector)
         # Stay armed on this shipment so more units can be tagged in.
         await broadcast({"type": "checkin_result", **result})
         return
@@ -202,21 +232,33 @@ class ModeRequest(BaseModel):
 async def get_config():
     return {
         "item_types": config.ITEM_TYPES,
+        "named_item_types": config.NAMED_ITEM_TYPES,
         "type_fields": config.TYPE_FIELDS,
         "building_options": config.BUILDING_OPTIONS,
         "power_min": config.READER_POWER_MIN_DBM,
         "power_max": config.READER_POWER_MAX_DBM,
+        "printer_enabled": printer.enabled(),
     }
 
 
 @app.get("/api/status")
 async def get_status():
+    loop = asyncio.get_running_loop()
+    requests_pending = 0
+    if state.db is not None:
+        requests_pending = await loop.run_in_executor(
+            None, state.db.count_pending_requests)
+    # status() recounts pending changes from the DB, so keep it off the loop.
+    sync_status = (await loop.run_in_executor(None, state.sync.status)
+                   if state.sync else {"enabled": False})
     return {
         "reader_connected": bool(state.worker and state.worker.connected),
         "db_connected": state.db is not None,
         "db_error": state.db_error,
         "mode": state.worker.mode if state.worker else reader_mod.IDLE,
         "check_power": state.worker.check_power if state.worker else config.CHECK_POWER_DBM,
+        "sync": sync_status,
+        "requests_pending": requests_pending,
     }
 
 
@@ -345,6 +387,18 @@ async def add_note(req: NoteRequest):
         req.text)
 
 
+@app.get("/api/item_names")
+async def get_item_names(item_type: str):
+    """Component names already used for a type (check-in autocomplete)."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    names = await loop.run_in_executor(
+        None, state.db.item_name_suggestions, item_type)
+    return {"names": names}
+
+
 @app.get("/api/inventory/group")
 async def get_inventory_group(item_type: str, value: str = "", group_by: str = "bol",
                               bol: str = "", building: str = "",
@@ -366,9 +420,11 @@ async def get_inventory_group(item_type: str, value: str = "", group_by: str = "
 EXPORT_COLUMNS = [
     ("EPC", "epc"),
     ("Item Type", "item_type"),
+    ("Item Name", "item_name"),
     ("BOL #", "bol_number"),
     ("PO #", "po_number"),
     ("Building #", "building"),
+    ("Sector", "sector"),
     ("Checked Out To", "checkout_building"),
     ("Vendor", "vendor"),
     ("SKU", "sku"),
@@ -420,6 +476,96 @@ async def export_inventory_csv(bol: str = "", building: str = "",
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Material requests (pulled from the cloud) + cloud sync
+# ---------------------------------------------------------------------------
+class RequestHandleRequest(BaseModel):
+    id: int
+    status: str          # "staging" | "pending" (cancel) | "declined"
+    note: str = ""
+
+
+class RequestDraw(BaseModel):
+    epc: str
+    amount: Optional[int] = None
+    building: Optional[str] = None
+
+
+class RequestFulfillRequest(BaseModel):
+    id: int
+    draws: List[RequestDraw]
+    note: str = ""
+
+
+@app.get("/api/requests")
+async def get_requests(status: str = ""):
+    """Material requests for the Requests panel (open first, newest first)."""
+    bad = _require_db()
+    if bad:
+        return bad
+    loop = asyncio.get_running_loop()
+    rows = await loop.run_in_executor(
+        None, state.db.list_requests, status or None)
+    pending = await loop.run_in_executor(None, state.db.count_pending_requests)
+    return {"requests": rows, "pending": pending}
+
+
+async def _broadcast_requests_update():
+    pending = await asyncio.get_running_loop().run_in_executor(
+        None, state.db.count_pending_requests)
+    await broadcast({"type": "requests_update", "added": 0, "pending": pending})
+
+
+@app.post("/api/requests/handle")
+async def handle_request(req: RequestHandleRequest):
+    """Move a request between pending/staging/declined (fulfilling goes
+    through /api/requests/fulfill so inventory and status change together)."""
+    bad = _require_db()
+    if bad:
+        return bad
+    if req.status not in (db_mod.REQUEST_PENDING, db_mod.REQUEST_STAGING,
+                          db_mod.REQUEST_DECLINED):
+        return JSONResponse(
+            {"ok": False, "message": f"Invalid request status: {req.status}"},
+            400)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, state.db.set_request_status, req.id, req.status, req.note)
+    if result.get("ok"):
+        await _broadcast_requests_update()
+        if state.sync:
+            state.sync.sync_now()   # tell the requester ASAP
+    return result
+
+
+@app.post("/api/requests/fulfill")
+async def fulfill_request(req: RequestFulfillRequest):
+    """Confirm delivery: commit the staged draws and mark the request
+    fulfilled in one transaction; the outcome is pushed on the next sync."""
+    bad = _require_db()
+    if bad:
+        return bad
+    draws = [d.model_dump() for d in req.draws]
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, state.db.fulfill_request, req.id, draws, req.note)
+    if result.get("ok"):
+        await _broadcast_requests_update()
+        if state.sync:
+            state.sync.sync_now()
+    return result
+
+
+@app.post("/api/sync/now")
+async def sync_now():
+    """Manual 'Sync now' (the worker also runs on its own timer)."""
+    if state.sync is None or not state.sync.enabled:
+        return {"ok": False,
+                "message": "Sync is off — set cloud_url in settings.ini"}
+    state.sync.sync_now()
+    return {"ok": True, "message": "Sync started"}
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +970,90 @@ async def set_checkin_item(req: CheckinItemRequest):
     return {"ok": True}
 
 
+class PrintLabelsRequest(BaseModel):
+    item_type: str
+    fields: Optional[Dict[str, str]] = None        # shipment-scope fields
+    item_fields: Optional[Dict[str, str]] = None   # per-unit fields
+    count: int = 1                                 # one label per box
+
+
+@app.post("/api/checkin/print")
+async def checkin_print(req: PrintLabelsRequest):
+    """Check a box in by printing + encoding a fresh label for it.
+
+    The app mints the EPC (see db.allocate_epcs), the ZD621R burns it into
+    the label's inlay while printing (printer.py). Labels are printed first
+    and only the successfully sent ones are recorded, so a dead printer
+    never creates phantom inventory.
+    """
+    bad = _require_db()
+    if bad:
+        return bad
+    if not printer.enabled():
+        return {"ok": False,
+                "message": ("No label printer configured -- set printer_host "
+                            "in settings.ini")}
+    if req.item_type not in config.ITEM_TYPES:
+        return JSONResponse(
+            {"ok": False, "message": "A valid item_type is required"}, 400)
+
+    count = max(1, min(req.count or 1, 25))
+    fields = req.fields or {}
+    item_fields = req.item_fields or {}
+    # Named types (W.I.F.) print "TYPE | component name" as the description.
+    item_name = (item_fields.get("item_name") or "").strip()
+    description = f"{req.item_type} | {item_name}" if item_name else req.item_type
+    now = datetime.now()
+    loop = asyncio.get_running_loop()
+
+    epcs = await loop.run_in_executor(None, state.db.allocate_epcs, count)
+    # QR on the label opens the box's page on the cloud site (BOL PDF and
+    # live status); printed only when this install has a cloud configured.
+    cloud_base = config.CLOUD_URL.rstrip("/")
+    printed, print_error = [], ""
+    for epc in epcs:
+        job = lambda e=epc: printer.print_label(
+            epc=e,
+            building=fields.get("building_number", ""),
+            sector=fields.get("sector", ""),
+            description=description,
+            supplier=fields.get("vendor", ""),
+            sku=item_fields.get("sku", ""),
+            quantity=item_fields.get("quantity") or "1",
+            po_number=fields.get("po_number", ""),
+            received_date=now.strftime("%m/%d/%Y"),
+            received_time=now.strftime("%I:%M %p").lstrip("0"),
+            qr_url=f"{cloud_base}/tag/{e}" if cloud_base else "")
+        try:
+            await loop.run_in_executor(None, job)
+            printed.append(epc)
+        except printer.PrintError as exc:
+            print_error = str(exc)
+            break
+
+    if not printed:
+        return {"ok": False, "message": f"Label not printed: {print_error}"}
+
+    result = await loop.run_in_executor(
+        None, state.db.receive_shipment,
+        printed, req.item_type, fields.get("building_number", ""),
+        fields.get("bol_number", ""), fields.get("vendor", ""), item_fields,
+        _as_doc_id(fields.get("bol_doc_id")), fields.get("po_number", ""),
+        fields.get("sector", ""))
+    result["printed"] = len(printed)
+    if print_error:
+        result["message"] += (f" Printing stopped after {len(printed)} of "
+                              f"{count} labels: {print_error}")
+    return result
+
+
+@app.get("/api/printer/status")
+async def printer_status():
+    """Label-printer health check (configured? reachable? media/head OK?)."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, printer.status)
+
+
 class CheckinAmendRequest(BaseModel):
     epc: str
     fields: Optional[Dict[str, str]] = None
@@ -839,7 +1069,7 @@ async def checkin_amend(req: CheckinAmendRequest):
     if state.db is None:
         return JSONResponse({"ok": False, "message": "Database not available"}, 503)
     allowed = {k: v for k, v in (req.fields or {}).items()
-               if k in ("sku", "mfc_date", "quantity")}
+               if k in ("item_name", "sku", "mfc_date", "quantity")}
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None, state.db.amend_checkin, req.epc, allowed)
@@ -922,12 +1152,24 @@ async def websocket_endpoint(ws: WebSocket):
 # ---------------------------------------------------------------------------
 @app.get("/")
 async def index():
-    return FileResponse("static/index.html")
+    return FileResponse(os.path.join(config.STATIC_DIR, "index.html"))
 
 
-app.mount("/", StaticFiles(directory="static"), name="static")
+app.mount("/", StaticFiles(directory=config.STATIC_DIR), name="static")
 
 
 if __name__ == "__main__":
+    import threading
+    import webbrowser
+
     import uvicorn
-    uvicorn.run("app:app", host=config.HOST, port=config.PORT, reload=False)
+
+    if config.FROZEN:
+        # Double-clicked .exe: pop the UI open once the server is up. (From
+        # source, developers open/reload the browser themselves.)
+        threading.Timer(
+            1.5, webbrowser.open, args=(f"http://{config.HOST}:{config.PORT}",)
+        ).start()
+    # Pass the app object, not the "app:app" import string: a frozen bundle
+    # can't re-import this module by name.
+    uvicorn.run(app, host=config.HOST, port=config.PORT)

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h2>Orders</h2>
+</div>
+
+{% if submitted %}
+<div class="banner banner-ok">Order {{ submitted }} submitted. The warehouse
+  manager will see it on their next sync.</div>
+{% endif %}
+
+<p class="hint">Every order placed from the
+  <a href="/">browse &amp; request</a> page shows up here with its current
+  status. The warehouse works offline much of the day; orders are picked up
+  on its next sync, usually within a minute of it coming online.</p>
+
+{% if not orders %}
+  <div class="empty">No orders yet. Pick items on the
+    <a href="/">browse &amp; request</a> page to place one.</div>
+{% endif %}
+
+{% for o in orders %}
+<section class="order-card">
+  <div class="order-head">
+    <div class="order-title">
+      {% if o.order_ref %}<h3>Order {{ o.order_ref }}</h3>{% else %}
+      <h3>Request #{{ o.lines[0].id }}</h3>{% endif %}
+      <span class="order-meta">{{ o.requester }}
+        &middot; {{ (o.created_at or "")[:10] }}</span>
+    </div>
+    <span class="order-meta">
+      {% if o.jobsite %}Jobsite: {{ o.jobsite }} &middot; {% endif %}
+      {% if o.building %}Deliver to Bldg {{ o.building }}{% endif %}
+    </span>
+  </div>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Item</th><th class="num">Qty</th>
+          <th>Deliver to</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for r in o.lines %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ r.item_type }}{% if r.item_name %}
+          <span class="item-name">| {{ r.item_name }}</span>{% endif %}</td>
+        <td class="num">{{ r.quantity }}</td>
+        <td>{% if r.building %}Bldg {{ r.building }}{% else %}&mdash;{% endif %}</td>
+        <td>
+          <span class="badge badge-{{ r.status }}">{{
+            "staging for exit" if r.status == "staging" else r.status }}</span>
+          {% if r.handler_note %}<div class="sub">&ldquo;{{ r.handler_note }}&rdquo;</div>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+{% endblock %}

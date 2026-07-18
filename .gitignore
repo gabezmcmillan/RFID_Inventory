@@ -13,5 +13,15 @@ __pycache__/
 .venv/
 venv/
 
+# PyInstaller output
+build/
+dist/
+
+# Cloud app deploy bundle (generated; see cloud/README.md)
+cloud/deploy.zip
+
 # OS
 .DS_Store
+
+# Cursor plan files (local working notes; rules stay tracked)
+.cursor/plans/
