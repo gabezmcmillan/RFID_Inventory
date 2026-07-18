@@ -25,6 +25,7 @@ Public API (all blocking; call from an executor thread):
 
 import re
 import socket
+import textwrap
 
 import config
 
@@ -44,7 +45,7 @@ LABEL_ZPL = """^XA
 ^FO0,380^A0N,150,150^FB1218,1,0,C^FDSector: {sector}^FS
 ^FO70,570^GB1078,4,4^FS
 ^FO70,640^A0N,46,46^FDDESCRIPTION^FS
-^FO440,630^A0N,66,66^FB740,2,0,L^FD{description}^FS
+^FO440,630^A0N,{desc_font},{desc_font}^FB740,{desc_lines},0,L^FD{description}^FS
 ^FO70,830^A0N,46,46^FDSUPPLIER^FS
 ^FO440,820^A0N,66,66^FB740,1,0,L^FD{supplier}^FS
 ^FO70,1020^A0N,46,46^FDPART / SKU^FS
@@ -65,6 +66,44 @@ LABEL_ZPL = """^XA
 # inside the label's right margin at 300 dpi while staying easily phone-
 # scannable. Only included when a cloud URL is configured.
 QR_ZPL = "^FO950,1150^BQN,2,6^FDQA,{url}^FS\n"
+
+# Description block: 740 dots wide, and the ~200 dots above the SUPPLIER
+# label fit at most 2 lines at the standard 66-dot font. ZPL's ^FB handles
+# overflow by re-printing the remainder OVER the block's last line, which is
+# exactly the mess long W.I.F. component names caused -- so the font steps
+# down (more, smaller lines in the same vertical space) until the text fits.
+DESC_WIDTH = 740
+DESC_TIERS = (        # (font height in dots, max lines)
+    (66, 2),
+    (50, 3),
+    (40, 4),
+)
+# Conservative average glyph advance relative to font height for the ^A0
+# font (CG Triumvirate Bold Condensed). Overestimating width just makes the
+# font step down a little early; underestimating would overprint.
+DESC_CHAR_W = 0.55
+
+
+def _desc_layout(text):
+    """Pick (font, max_lines, text) so `text` fits the description block.
+
+    Largest tier that holds the whole text wins, estimating ^FB's greedy
+    word-wrap with textwrap at a conservative characters-per-line. If even
+    the smallest tier can't, the text is cut at its last full line with a
+    trailing ellipsis rather than letting ^FB overprint the last line.
+    """
+    for font, max_lines in DESC_TIERS:
+        per_line = int(DESC_WIDTH / (font * DESC_CHAR_W))
+        if len(textwrap.wrap(text, per_line)) <= max_lines:
+            return font, max_lines, text
+    font, max_lines = DESC_TIERS[-1]
+    per_line = int(DESC_WIDTH / (font * DESC_CHAR_W))
+    while text:
+        candidate = text.rstrip(" .") + "..."
+        if len(textwrap.wrap(candidate, per_line)) <= max_lines:
+            return font, max_lines, candidate
+        text = text[:-1]
+    return font, max_lines, "..."
 
 
 def enabled():
@@ -106,12 +145,15 @@ def print_label(epc, building="", sector="", description="", supplier="",
     if not EPC_HEX.match(epc):
         raise PrintError(f"Bad EPC for encoding (need 24 hex chars): {epc!r}")
     qr = QR_ZPL.format(url=_zpl_safe(qr_url)) if qr_url else ""
+    desc_font, desc_lines, desc_text = _desc_layout(_zpl_safe(description))
     zpl = LABEL_ZPL.format(
         epc=epc,
         qr=qr,
         building=_zpl_safe(building),
         sector=_zpl_safe(sector),
-        description=_zpl_safe(description),
+        description=desc_text,
+        desc_font=desc_font,
+        desc_lines=desc_lines,
         supplier=_zpl_safe(supplier),
         sku=_zpl_safe(sku),
         quantity=_zpl_safe(quantity),
