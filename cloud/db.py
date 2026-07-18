@@ -431,12 +431,19 @@ class CloudDatabase:
         return list(types.values())
 
     def stock_rows(self):
-        """Requestable stock for the cart view: one row per item type x
-        component name x building (units summed across BOLs), each with its
-        BOL breakdown for the drill-down. item_name is '' except for named
-        types (W.I.F.), whose components each get their own requestable row.
-        Only stock actually on hand appears -- an item type with zero
-        remaining units simply isn't requestable."""
+        """Requestable stock for the cart view. Only stock actually on hand
+        appears -- an item type with zero remaining units simply isn't
+        requestable.
+
+        Plain types: one row per item type x building (units summed across
+        BOLs), each with its BOL breakdown ("groups") for the drill-down.
+
+        Named types (any type whose in-stock boxes carry a per-box component
+        name, e.g. W.I.F.): ONE row for the whole type, mirroring the .exe's
+        warehouse view. Its drill-down is "components" -- one entry per
+        component name x building with units, BOLs, first check-in and
+        status -- and each component (not the type row) is what gets
+        requested, so requests keep carrying item_name."""
         def work(cur):
             cur.execute(
                 """
@@ -446,6 +453,7 @@ class CloudDatabase:
                        bol_number,
                        vendor,
                        COALESCE(SUM(remaining), 0) AS units,
+                       COALESCE(SUM(quantity), 0)  AS capacity,
                        COUNT(*)                    AS boxes,
                        MIN(received_at)            AS first_received
                 FROM tags
@@ -457,26 +465,62 @@ class CloudDatabase:
                 """)
             return cur.fetchall()
         rows = self._run(work)
+        named_types = {r["item_type"] for r in rows if r["item_name"]}
         stock = {}
+        components = {}
         for r in rows:
-            key = (r["item_type"], r["item_name"], r["building"])
+            named = r["item_type"] in named_types
+            key = ((r["item_type"],) if named
+                   else (r["item_type"], "", r["building"]))
             row = stock.setdefault(key, {
-                "item_type": r["item_type"], "item_name": r["item_name"],
-                "building": r["building"],
+                "item_type": r["item_type"], "item_name": "",
+                "named": named,
+                "building": "" if named else r["building"],
+                "buildings": [],
                 "units": 0, "boxes": 0, "vendors": [],
-                "oldest_received": "", "groups": []})
+                "oldest_received": "", "groups": [], "components": []})
             row["units"] += r["units"] or 0
             row["boxes"] += r["boxes"] or 0
             if r["vendor"] and r["vendor"] not in row["vendors"]:
                 row["vendors"].append(r["vendor"])
+            if r["building"] and r["building"] not in row["buildings"]:
+                row["buildings"].append(r["building"])
             first = (r["first_received"] or "")
             if first and (not row["oldest_received"]
                           or first < row["oldest_received"]):
                 row["oldest_received"] = first
-            row["groups"].append({
-                "bol_number": r["bol_number"], "vendor": r["vendor"],
-                "units": r["units"], "boxes": r["boxes"],
-                "first_received": r["first_received"]})
+            if not named:
+                row["groups"].append({
+                    "bol_number": r["bol_number"], "vendor": r["vendor"],
+                    "units": r["units"], "boxes": r["boxes"],
+                    "first_received": r["first_received"]})
+                continue
+            ckey = (r["item_type"], r["item_name"], r["building"])
+            comp = components.get(ckey)
+            if comp is None:
+                comp = {"item_name": r["item_name"],
+                        "building": r["building"],
+                        "units": 0, "capacity": 0, "boxes": 0,
+                        "bol_numbers": [], "vendors": [],
+                        "first_received": ""}
+                components[ckey] = comp
+                row["components"].append(comp)
+            comp["units"] += r["units"] or 0
+            comp["capacity"] += r["capacity"] or 0
+            comp["boxes"] += r["boxes"] or 0
+            if r["bol_number"] and r["bol_number"] not in comp["bol_numbers"]:
+                comp["bol_numbers"].append(r["bol_number"])
+            if r["vendor"] and r["vendor"] not in comp["vendors"]:
+                comp["vendors"].append(r["vendor"])
+            if first and (not comp["first_received"]
+                          or first < comp["first_received"]):
+                comp["first_received"] = first
+        for comp in components.values():
+            # Same wording as the .exe: a component whose boxes are all full
+            # is In Warehouse; some units already drawn makes it Partial.
+            comp["status"] = ("In Warehouse"
+                              if comp["units"] == comp["capacity"]
+                              else "Partial")
         return list(stock.values())
 
     def buildings(self):

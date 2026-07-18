@@ -50,11 +50,80 @@
       </tr>
     </thead>
     {% for row in stock %}
+    {% if row.named %}
+    {# Named type (W.I.F.): one row for the whole type; the drill-down lists
+       its components, and those are what get added to the cart. #}
+    <tbody class="stock-group stock-group-named"
+           data-item-type="{{ row.item_type }}"
+           data-item-names="{{ row.components | map(attribute='item_name') | join(' ') }}"
+           data-buildings="{{ row.components | map(attribute='building') | join('|') }}"
+           data-units="{{ row.units }}"
+           data-boxes="{{ row.boxes }}"
+           data-vendors="{{ row.vendors | join(', ') }}"
+           data-oldest="{{ (row.oldest_received or '')[:10] }}">
+      <tr class="stock-row">
+        <td class="stock-item"><span class="caret">&#9656;</span>
+          {{ row.item_type }}
+          <span class="item-name">({{ row.components | length }}
+            item{{ "s" if row.components | length != 1 }})</span></td>
+        <td>{% for b in row.buildings %}<span class="bldg-badge">Bldg
+            {{ b }}</span> {% else %}<span class="bldg-badge bldg-none">Unassigned</span>{% endfor %}</td>
+        <td class="num">{{ row.units }}</td>
+        <td class="num">{{ row.boxes }}</td>
+        <td class="stock-vendors">{{ row.vendors | join(", ") or "—" }}</td>
+        <td>{{ (row.oldest_received or "")[:10] or "—" }}</td>
+        <td class="req-col"><span class="expand-hint">Expand to pick
+            items</span></td>
+      </tr>
+      <tr class="stock-detail" hidden>
+        <td colspan="7">
+          <table class="bol-table component-table">
+            <thead>
+              <tr><th class="num">Units</th><th>Item name</th><th>BOL #</th>
+                  <th>Building</th><th>Checked in</th><th>Status</th>
+                  <th class="req-col">Request</th></tr>
+            </thead>
+            <tbody>
+              {% for c in row.components %}
+              <tr class="component-row"
+                  data-key="{{ row.item_type }}|{{ c.item_name }}|{{ c.building }}"
+                  data-item-type="{{ row.item_type }}"
+                  data-item-name="{{ c.item_name }}"
+                  data-building="{{ c.building }}"
+                  data-units="{{ c.units }}">
+                <td class="num">{{ c.units }}</td>
+                <td class="comp-name">{{ c.item_name or "(no item name)" }}</td>
+                <td>{{ c.bol_numbers | join(", ") or "—" }}</td>
+                <td>{% if c.building %}<span class="bldg-badge">Bldg
+                    {{ c.building }}</span>{% else %}<span class="bldg-badge bldg-none">Unassigned</span>{% endif %}</td>
+                <td>{% if c.first_received %}<time class="localtime"
+                    datetime="{{ c.first_received }}">{{ (c.first_received or "")[:10] }}</time>{% else %}—{% endif %}</td>
+                <td><span class="badge {{ 'badge-fulfilled' if c.status == 'In Warehouse' else 'badge-pending' }}">{{ c.status }}</span></td>
+                <td class="req-col">
+                  <div class="qty-add">
+                    <div class="stepper">
+                      <button type="button" class="step-btn step-down" aria-label="Less">&minus;</button>
+                      <input type="number" class="qty-input" value="1" min="1"
+                             max="{{ c.units }}" inputmode="numeric" />
+                      <button type="button" class="step-btn step-up" aria-label="More">+</button>
+                    </div>
+                    <button type="button" class="add-btn">Add</button>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </tbody>
+    {% else %}
     <tbody class="stock-group"
            data-key="{{ row.item_type }}|{{ row.item_name }}|{{ row.building }}"
            data-item-type="{{ row.item_type }}"
            data-item-name="{{ row.item_name }}"
            data-building="{{ row.building }}"
+           data-buildings="{{ row.building }}"
            data-units="{{ row.units }}"
            data-boxes="{{ row.boxes }}"
            data-vendors="{{ row.vendors | join(', ') }}"
@@ -103,6 +172,7 @@
         </td>
       </tr>
     </tbody>
+    {% endif %}
     {% endfor %}
   </table>
   <div class="empty" id="stock-no-match" hidden>No items match your search.</div>

@@ -343,7 +343,17 @@ table.bol-table { font-size: 13px; min-width: 0; }
   cursor: pointer;
 }
 .add-btn:hover { background: rgba(0, 40, 240, 0.06); }
-tbody.in-cart .add-btn { background: var(--bg-blue-vivid, #0028F0); color: #fff; }
+/* Scoped to the top row: a named type's tbody goes .in-cart when ANY of its
+   components is carted, which must not light up every component's button. */
+tbody.in-cart .stock-row .add-btn,
+tr.component-row.in-cart .add-btn { background: var(--bg-blue-vivid, #0028F0); color: #fff; }
+
+/* Named types (W.I.F.): the roll-up row isn't directly requestable... */
+.expand-hint { font-size: 12px; color: #565d6d; white-space: nowrap; }
+/* ...its components are, each on a row of the drill-down table. */
+.component-table td { vertical-align: middle; }
+.component-table .comp-name { font-weight: 600; color: var(--bg-navy, #002070); }
+tr.component-row.in-cart td { background: rgba(0, 40, 240, 0.05); }
 
 /* Sticky cart bar */
 .cart-bar:not([hidden]) {

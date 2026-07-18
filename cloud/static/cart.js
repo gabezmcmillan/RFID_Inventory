@@ -20,20 +20,49 @@ function escapeHtml(s) {
 }
 
 // -- stock rows (from the server-rendered table) -----------------------------
-// key = "itemType|itemName|building"; itemName "" except for named types
-// (W.I.F. components), building "" = unassigned stock.
+// Two collections:
+//   topRows -- one entry per <tbody> (plain types AND the single roll-up row
+//     a named type like W.I.F. gets); drives search/filter/sort and the
+//     expand/collapse.
+//   stock -- the requestable lines, keyed "itemType|itemName|building". For
+//     plain types that's the tbody itself; for named types it's each
+//     .component-row inside the drill-down. building "" = unassigned stock.
 const stock = new Map();
+const topRows = [];
 document.querySelectorAll("tbody.stock-group").forEach((tb) => {
-  stock.set(tb.dataset.key, {
-    key: tb.dataset.key,
+  const top = {
+    el: tb,
+    named: tb.classList.contains("stock-group-named"),
     itemType: tb.dataset.itemType,
-    itemName: tb.dataset.itemName || "",
-    building: tb.dataset.building,
+    itemNames: tb.dataset.itemNames || tb.dataset.itemName || "",
+    buildings: (tb.dataset.buildings || "").split("|"),
     units: parseInt(tb.dataset.units, 10) || 0,
     boxes: parseInt(tb.dataset.boxes, 10) || 0,
     vendors: tb.dataset.vendors || "",
     oldest: tb.dataset.oldest || "",
-    el: tb,
+  };
+  topRows.push(top);
+  if (tb.dataset.key) {
+    stock.set(tb.dataset.key, {
+      key: tb.dataset.key,
+      itemType: tb.dataset.itemType,
+      itemName: tb.dataset.itemName || "",
+      building: tb.dataset.building || "",
+      units: top.units,
+      el: tb,
+      top,
+    });
+  }
+  tb.querySelectorAll("tr.component-row").forEach((tr) => {
+    stock.set(tr.dataset.key, {
+      key: tr.dataset.key,
+      itemType: tr.dataset.itemType,
+      itemName: tr.dataset.itemName || "",
+      building: tr.dataset.building || "",
+      units: parseInt(tr.dataset.units, 10) || 0,
+      el: tr,
+      top,
+    });
   });
 });
 
@@ -105,16 +134,20 @@ function setCartDelivery(key, building) {
 
 // -- table interactions --------------------------------------------------------
 function wireRows() {
-  stock.forEach((row) => {
-    const tr = row.el.querySelector(".stock-row");
-    const detail = row.el.querySelector(".stock-detail");
+  topRows.forEach((top) => {
+    const tr = top.el.querySelector(".stock-row");
+    const detail = top.el.querySelector(".stock-detail");
     const caret = tr.querySelector(".caret");
     tr.addEventListener("click", (ev) => {
       if (ev.target.closest(".qty-add")) return;
       detail.hidden = !detail.hidden;
       caret.classList.toggle("open", !detail.hidden);
     });
+  });
 
+  // Steppers + Add live on the requestable line (the plain tbody's stock-row
+  // or a named type's component-row); each el contains exactly one set.
+  stock.forEach((row) => {
     const input = row.el.querySelector(".qty-input");
     const clamp = () => {
       const n = parseInt(input.value, 10);
@@ -143,6 +176,13 @@ function refreshRowStates() {
     btn.textContent = inCart ? "Update" : "Add";
     if (inCart) row.el.querySelector(".qty-input").value = cart[row.key].qty;
   });
+  // A named type's roll-up row highlights when any of its components are in
+  // the cart, so the state shows even while the drill-down is collapsed.
+  topRows.filter((t) => t.named).forEach((top) => {
+    const any = [...stock.values()].some(
+      (row) => row.top === top && cartQty(row.key) > 0);
+    top.el.classList.toggle("in-cart", any);
+  });
 }
 
 // -- search / filter / sort ----------------------------------------------------
@@ -150,15 +190,16 @@ function applyFilters() {
   const q = ($("stock-search")?.value || "").trim().toLowerCase();
   const b = $("stock-building-filter")?.value || "";
   let shown = 0;
-  stock.forEach((row) => {
+  topRows.forEach((top) => {
     const matchesText = !q
-      || row.itemType.toLowerCase().includes(q)
-      || row.itemName.toLowerCase().includes(q)
-      || row.vendors.toLowerCase().includes(q);
-    const matchesBldg = !b || (b === "~" ? row.building === ""
-                                         : row.building === b);
+      || top.itemType.toLowerCase().includes(q)
+      || top.itemNames.toLowerCase().includes(q)
+      || top.vendors.toLowerCase().includes(q);
+    // A named roll-up matches a building filter when ANY of its components
+    // sit in that building ("~" = unassigned).
+    const matchesBldg = !b || top.buildings.includes(b === "~" ? "" : b);
     const show = matchesText && matchesBldg;
-    row.el.hidden = !show;
+    top.el.hidden = !show;
     if (show) shown += 1;
   });
   const none = $("stock-no-match");
@@ -172,15 +213,15 @@ function sortRows(by) {
   if (!table) return;
   sortState.dir = sortState.by === by ? -sortState.dir : 1;
   sortState.by = by;
-  const val = (row) => ({
-    item_type: `${row.itemType} ${row.itemName}`.toLowerCase(),
-    building: row.building,
-    units: row.units,
-    boxes: row.boxes,
-    vendors: row.vendors.toLowerCase(),
-    oldest_received: row.oldest,
+  const val = (top) => ({
+    item_type: `${top.itemType} ${top.itemNames}`.toLowerCase(),
+    building: top.buildings.join(","),
+    units: top.units,
+    boxes: top.boxes,
+    vendors: top.vendors.toLowerCase(),
+    oldest_received: top.oldest,
   }[by]);
-  const groups = [...stock.values()].sort((a, b) => {
+  const groups = [...topRows].sort((a, b) => {
     const x = val(a), y = val(b);
     return (x < y ? -1 : x > y ? 1 : 0) * sortState.dir;
   });
@@ -317,16 +358,35 @@ async function refreshAvailability() {
   } catch (e) {
     return;   // offline/stale is fine -- the server re-validates on submit
   }
-  const fresh = new Map(
-    (data.stock || []).map(
-      (r) => [`${r.item_type}|${r.item_name || ""}|${r.building}`, r]));
+  // Flatten to requestable lines: named types (W.I.F.) carry their
+  // requestable stock in `components`, plain types are the row itself.
+  const fresh = new Map();
+  (data.stock || []).forEach((r) => {
+    if (r.named) {
+      (r.components || []).forEach((c) => fresh.set(
+        `${r.item_type}|${c.item_name || ""}|${c.building || ""}`, c));
+    } else {
+      fresh.set(`${r.item_type}|${r.item_name || ""}|${r.building || ""}`, r);
+    }
+  });
   stock.forEach((row, key) => {
     const now = fresh.get(key);
     row.units = now ? (now.units || 0) : 0;
-    const cell = row.el.querySelector(".stock-row td.num");
+    // First numeric cell of the line is its Units/Available column, whether
+    // the line is a plain tbody's stock-row or a component-row.
+    const cell = row.el.querySelector(".stock-row td.num")
+      || row.el.querySelector("td.num");
     if (cell) cell.textContent = row.units;
     row.el.querySelector(".qty-input").max = Math.max(row.units, 1);
     if (cartQty(key) > row.units) setCartLine(key, row.units);
+  });
+  // Roll the fresh component units back up into each named type's header.
+  topRows.filter((t) => t.named).forEach((top) => {
+    top.units = [...stock.values()]
+      .filter((row) => row.top === top)
+      .reduce((sum, row) => sum + row.units, 0);
+    const cell = top.el.querySelector(".stock-row td.num");
+    if (cell) cell.textContent = top.units;
   });
 }
 

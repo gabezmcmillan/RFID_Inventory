@@ -302,6 +302,59 @@ def main():
         check("offline check-in arrives after reconnect",
               any(t["item_type"] == "W.I.F." for t in inv["types"]))
 
+        # -- 5b. named types (W.I.F.) roll up into one stock row ---------------
+        # Components carry per-box item_names; the browse page shows ONE
+        # W.I.F. row whose drill-down lists each component, and requests are
+        # per component. E2E00004 above was a W.I.F. box with NO name, so the
+        # mixed case (named + unnamed boxes of one type) is covered too.
+        db.receive_shipment(["E2E00006"], "W.I.F.", "6", "BOL-80", "Acme Corp",
+                            {"quantity": 724,
+                             "item_name": "DOOR PANEL ASM_RIGHT"})
+        db.receive_shipment(["E2E00007"], "W.I.F.", "6", "BOL-80", "Acme Corp",
+                            {"quantity": 2268,
+                             "item_name": "Valve Support Lower"})
+        worker.exchange()
+        stock_rows = http.get(f"{BASE}/api/stock", timeout=5).json()["stock"]
+        wif = [r for r in stock_rows if r["item_type"] == "W.I.F."]
+        check("W.I.F. appears as exactly one stock row",
+              len(wif) == 1 and wif[0].get("named"), str(wif))
+        comps = {c["item_name"]: c for c in wif[0].get("components") or []}
+        check("W.I.F. row totals its components",
+              wif[0]["units"] == 724 + 2268 + 1, str(wif))
+        check("components carry name/units/BOL/status",
+              comps.get("DOOR PANEL ASM_RIGHT", {}).get("units") == 724
+              and comps.get("Valve Support Lower", {}).get("units") == 2268
+              and "BOL-80" in comps.get("Valve Support Lower",
+                                        {}).get("bol_numbers", [])
+              and comps.get("Valve Support Lower",
+                            {}).get("status") == "In Warehouse", str(comps))
+        check("unnamed W.I.F. box shows as its own component",
+              comps.get("", {}).get("units") == 1, str(comps))
+        page = http.get(BASE, timeout=5).text
+        check("browse page renders the component drill-down",
+              "DOOR PANEL ASM_RIGHT" in page and "component-row" in page)
+        bad = http.post(f"{BASE}/api/requests/cart", json={
+            "requester": "E2E Bot",
+            "lines": [{"item_type": "W.I.F.",
+                       "item_name": "DOOR PANEL ASM_RIGHT", "building": "6",
+                       "quantity": 725, "delivery_building": "6"}]},
+            timeout=5)
+        check("component over-quantity rejected against its own stock",
+              bad.status_code == 400 and "Only 724" in bad.text, bad.text)
+        wif_cart = http.post(f"{BASE}/api/requests/cart", json={
+            "requester": "E2E Bot",
+            "lines": [{"item_type": "W.I.F.",
+                       "item_name": "DOOR PANEL ASM_RIGHT", "building": "6",
+                       "quantity": 10, "delivery_building": "6"}]},
+            timeout=5).json()
+        check("component request accepted", wif_cart.get("ok"), str(wif_cart))
+        worker.exchange()
+        local = {x["id"]: x for x in db.list_requests()}
+        wif_line = local.get((wif_cart.get("ids") or [0])[0], {})
+        check("component name travels to the exe with the request",
+              wif_line.get("item_name") == "DOOR PANEL ASM_RIGHT",
+              str(wif_line))
+
         # -- 6. edits propagate (checkout + vendor) ---------------------------
         db.deliver_units("E2E00001", 5, "7")     # empty one box
         db.add_vendor("Gamma Inc")
