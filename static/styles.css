@@ -164,8 +164,32 @@ main {
   justify-content: center;
 }
 
-/* Material requests panel */
+/* Material requests panel: one card per ORDER, holding its line items. */
 .requests-list { display: flex; flex-direction: column; gap: 12px; }
+.order-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.order-card.request-pending { border-left: 4px solid var(--amber); }
+.order-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.order-head .wh-caret { margin-top: 5px; }
+.order-count { font-weight: 400; }
+.order-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px 14px 38px;
+}
+/* The display: flex above would beat the browser's [hidden] rule. */
+.order-lines[hidden] { display: none; }
 .request-card {
   display: flex;
   align-items: flex-start;
@@ -173,8 +197,8 @@ main {
   gap: 16px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 14px 16px;
-  background: var(--bg);
+  padding: 12px 14px;
+  background: var(--surface);
 }
 .request-card.request-pending { border-left: 4px solid var(--amber); }
 .request-title { display: flex; align-items: center; gap: 10px; font-size: 17px; }

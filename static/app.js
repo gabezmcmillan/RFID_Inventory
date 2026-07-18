@@ -2494,6 +2494,11 @@ const REQUEST_BADGE = {
 };
 const REQUEST_STATUS_LABEL = { staging: "staging for exit" };
 
+// Order key -> user's expand/collapse choice, surviving the re-render after
+// every action. Orders without a choice default to expanded while any line
+// still needs handling.
+const orderExpanded = new Map();
+
 function updateSyncDetail() {
   const el = $("sync-detail");
   if (!el) return;
@@ -2533,6 +2538,62 @@ async function loadRequests() {
   renderRequests(data.requests || []);
 }
 
+// One card per ORDER (lines submitted together share an order_ref), with a
+// collapsible list of its line items; every line keeps its own
+// fulfill/decline/resume/cancel actions and status. Rows arrive from the
+// server open-first/newest-first; grouping preserves that order, so an order
+// with any staging or pending line surfaces before completed ones.
+function groupRequestOrders(rows) {
+  const orders = new Map();
+  rows.forEach((r) => {
+    const key = r.order_ref || `request-${r.id}`;
+    let o = orders.get(key);
+    if (!o) {
+      o = { key, ref: r.order_ref, lines: [] };
+      orders.set(key, o);
+    }
+    o.lines.push(r);
+  });
+  orders.forEach((o) => o.lines.sort((a, b) => a.id - b.id));
+  return [...orders.values()];
+}
+
+function renderRequestLine(r) {
+  const badgeCls = REQUEST_BADGE[r.status] || "badge-partial";
+  const badgeTxt = REQUEST_STATUS_LABEL[r.status] || r.status;
+  const handled = (r.status === "fulfilled" || r.status === "declined")
+    ? `<div class="request-handled hint">${escapeHtml(r.status)}
+         ${r.handled_at ? escapeHtml(fmtDateTime(r.handled_at)) : ""}
+         ${r.handler_note ? `\u2014 ${escapeHtml(r.handler_note)}` : ""}</div>`
+    : "";
+  let actions = "";
+  if (r.status === "pending") {
+    actions = `<div class="request-actions">
+         <button class="primary-btn req-fulfill" data-id="${r.id}">Fulfill</button>
+         <button class="danger-btn req-decline" data-id="${r.id}">Decline</button>
+       </div>`;
+  } else if (r.status === "staging") {
+    actions = `<div class="request-actions">
+         <button class="primary-btn req-resume" data-id="${r.id}">Resume staging</button>
+         <button class="back-btn req-cancel" data-id="${r.id}">Cancel</button>
+       </div>`;
+  }
+  const open = r.status === "pending" || r.status === "staging";
+  return `<div class="request-card${open ? " request-pending" : ""}">
+    <div class="request-main">
+      <div class="request-title">
+        <span class="request-qty">${r.quantity}\u00d7</span>
+        <strong>${escapeHtml(r.item_type)}${r.item_name
+          ? ` | ${escapeHtml(r.item_name)}` : ""}</strong>
+        <span class="badge ${badgeCls}">${escapeHtml(badgeTxt)}</span>
+      </div>
+      <div class="request-meta hint">#${r.id}${r.building
+          ? ` \u00b7 Deliver to Bldg ${escapeHtml(r.building)}` : ""}</div>
+      ${handled}
+    </div>${actions}
+  </div>`;
+}
+
 function renderRequests(rows) {
   const wrap = $("requests-list");
   if (!rows.length) {
@@ -2541,50 +2602,64 @@ function renderRequests(rows) {
     return;
   }
   const requestsById = {};
-  const html = rows.map((r) => {
-    requestsById[r.id] = r;
-    const badgeCls = REQUEST_BADGE[r.status] || "badge-partial";
-    const badgeTxt = REQUEST_STATUS_LABEL[r.status] || r.status;
-    const who = [r.requester, r.jobsite && `Jobsite: ${r.jobsite}`,
-                 r.building && `Bldg ${r.building}`, r.contact]
+  rows.forEach((r) => { requestsById[r.id] = r; });
+
+  const html = groupRequestOrders(rows).map((o) => {
+    const first = o.lines[0];
+    const openCount = o.lines.filter(
+      (r) => r.status === "pending" || r.status === "staging").length;
+    const expanded = orderExpanded.has(o.key)
+      ? orderExpanded.get(o.key) : openCount > 0;
+    // Status roll-up for the collapsed view, e.g. "2 pending · 1 fulfilled".
+    const counts = {};
+    o.lines.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+    const summary = Object.entries(counts).map(([status, n]) =>
+      `<span class="badge ${REQUEST_BADGE[status] || "badge-partial"}">
+         ${n} ${escapeHtml(status)}</span>`).join(" ");
+    const units = o.lines.reduce((sum, r) => sum + (r.quantity || 0), 0);
+    const who = [first.requester, first.jobsite && `Jobsite: ${first.jobsite}`,
+                 first.contact]
       .filter(Boolean).map(escapeHtml).join(" \u00b7 ");
-    const note = r.note
-      ? `<div class="request-note">\u201C${escapeHtml(r.note)}\u201D</div>` : "";
-    const handled = (r.status === "fulfilled" || r.status === "declined")
-      ? `<div class="request-handled hint">${escapeHtml(r.status)}
-           ${r.handled_at ? escapeHtml(fmtDateTime(r.handled_at)) : ""}
-           ${r.handler_note ? `\u2014 ${escapeHtml(r.handler_note)}` : ""}</div>`
+    // requester/jobsite/contact/note are order-level (identical on every
+    // line of a cart); delivery building is per line.
+    const note = first.note
+      ? `<div class="request-note">\u201C${escapeHtml(first.note)}\u201D</div>`
       : "";
-    let actions = "";
-    if (r.status === "pending") {
-      actions = `<div class="request-actions">
-           <button class="primary-btn req-fulfill" data-id="${r.id}">Fulfill</button>
-           <button class="danger-btn req-decline" data-id="${r.id}">Decline</button>
-         </div>`;
-    } else if (r.status === "staging") {
-      actions = `<div class="request-actions">
-           <button class="primary-btn req-resume" data-id="${r.id}">Resume staging</button>
-           <button class="back-btn req-cancel" data-id="${r.id}">Cancel</button>
-         </div>`;
-    }
-    const open = r.status === "pending" || r.status === "staging";
-    return `<div class="request-card${open ? " request-pending" : ""}">
-      <div class="request-main">
-        <div class="request-title">
-          <span class="request-qty">${r.quantity}\u00d7</span>
-          <strong>${escapeHtml(r.item_type)}${r.item_name
-            ? ` | ${escapeHtml(r.item_name)}` : ""}</strong>
-          <span class="badge ${badgeCls}">${escapeHtml(badgeTxt)}</span>
+    const title = o.ref ? `Order ${escapeHtml(o.ref)}`
+                        : `Request #${first.id}`;
+    return `<div class="order-card${openCount ? " request-pending" : ""}"
+                 data-key="${escapeHtml(o.key)}">
+      <div class="order-head">
+        <span class="wh-caret">${expanded ? "&#9662;" : "&#9656;"}</span>
+        <div class="request-main">
+          <div class="request-title">
+            <strong>${title}</strong>
+            <span class="order-count hint">${o.lines.length}
+              item${o.lines.length === 1 ? "" : "s"} \u00b7 ${units} unit(s)</span>
+            ${summary}
+          </div>
+          <div class="request-meta hint">${escapeHtml(fmtDateTime(first.created_at))}
+            ${who ? `\u00b7 ${who}` : ""}</div>
+          ${note}
         </div>
-        <div class="request-meta hint">#${r.id}${r.order_ref
-            ? ` \u00b7 Order ${escapeHtml(r.order_ref)}` : ""}
-          \u00b7 ${escapeHtml(fmtDateTime(r.created_at))}
-          ${who ? `\u00b7 ${who}` : ""}</div>
-        ${note}${handled}
-      </div>${actions}
+      </div>
+      <div class="order-lines"${expanded ? "" : " hidden"}>
+        ${o.lines.map(renderRequestLine).join("")}
+      </div>
     </div>`;
   }).join("");
   wrap.innerHTML = html;
+
+  wrap.querySelectorAll(".order-card .order-head").forEach((head) => {
+    head.onclick = () => {
+      const card = head.closest(".order-card");
+      const lines = card.querySelector(".order-lines");
+      lines.hidden = !lines.hidden;
+      head.querySelector(".wh-caret").innerHTML =
+        lines.hidden ? "&#9656;" : "&#9662;";
+      orderExpanded.set(card.dataset.key, !lines.hidden);
+    };
+  });
   wrap.querySelectorAll(".req-fulfill, .req-resume").forEach((b) => {
     b.onclick = () => startRequestFulfillment(
       requestsById[parseInt(b.dataset.id, 10)]);
