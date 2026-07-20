@@ -2037,7 +2037,7 @@ function renderWarehouse(data) {
     table.className = "wh-group-table";
     table.innerHTML = `<thead><tr>
         <th>Units</th><th>${escapeHtml(gLabel)}</th>
-        <th>${escapeHtml(oLabel)}</th>
+        <th>${escapeHtml(oLabel)}</th><th>Vendor</th>
         <th>Date Checked In</th><th>Status</th><th></th>
       </tr></thead>`;
     const tbody = document.createElement("tbody");
@@ -2064,10 +2064,10 @@ const STATUS_BADGE = {
   "Partial": "badge-partial",
 };
 
-// The distinct values of the non-grouped dimension (e.g. the BOLs inside a
-// building group). Long lists are truncated; hover shows the full set.
-function otherValuesHtml(g) {
-  const vals = g.other_values || [];
+// A cell holding the distinct values a group spans (e.g. the BOLs inside a
+// building group, or its vendors). Long lists are truncated; hover shows all.
+function valueListHtml(vals) {
+  vals = vals || [];
   if (!vals.length) return "";
   const shown = vals.slice(0, 3).map(escapeHtml).join(", ");
   const extra = vals.length > 3
@@ -2098,7 +2098,8 @@ function addGroupRows(tbody, itemType, groupBy, g, named) {
   row.innerHTML = `
     <td>${g.qty}</td>
     <td><span class="wh-caret">&#9656;</span> ${escapeHtml(g.value || "(blank)")}</td>
-    <td>${otherValuesHtml(g)}</td>
+    <td>${valueListHtml(g.other_values)}</td>
+    <td>${valueListHtml(g.vendors)}</td>
     <td>${escapeHtml(fmtDateTime(g.received_at) || g.received || "")}</td>
     <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span></td>
     <td class="wh-count">${boxes} box(es)${noteBadge}${pdfBtn}${deleteBtn}</td>`;
@@ -2120,7 +2121,7 @@ function addGroupRows(tbody, itemType, groupBy, g, named) {
   const detail = document.createElement("tr");
   detail.className = "wh-detail-row hidden";
   const cell = document.createElement("td");
-  cell.colSpan = 6;
+  cell.colSpan = 7;
   cell.innerHTML = `<p class="hint">Loading units\u2026</p>`;
   detail.appendChild(cell);
 
