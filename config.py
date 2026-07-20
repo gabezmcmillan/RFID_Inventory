@@ -117,12 +117,18 @@ OCR_ENABLED = True
 OCR_LANG = "eng"
 
 # ---------------------------------------------------------------------------
-# Label printer (Zebra ZD621R, raw ZPL over TCP -- see printer.py)
+# Label printer (Zebra ZD621R, raw ZPL over USB or TCP -- see printer.py)
 # ---------------------------------------------------------------------------
-# Check-in can print + RFID-encode a 4x6 label for each box. An empty
-# PRINTER_HOST turns the feature off (the Print button is hidden). Set the
-# address per machine in settings.ini; the printer is on the warehouse LAN,
-# so every machine points at the same IP.
+# Check-in can print + RFID-encode a 4x6 label for each box. Two transports;
+# set exactly one per machine in settings.ini (leave both empty to turn the
+# feature off -- the Print button is hidden):
+#   PRINTER_QUEUE : Windows print-queue name of a USB-attached printer (as
+#                   shown in Settings > Printers, e.g. "ZDesigner ZD621R-300dpi
+#                   ZPL"). ZPL is sent through the spooler as a RAW job, so
+#                   the driver passes it through unrendered. Windows-only;
+#                   takes precedence over PRINTER_HOST when both are set.
+#   PRINTER_HOST  : printer's IP on the warehouse LAN, raw ZPL over TCP 9100.
+PRINTER_QUEUE = ""           # e.g. "ZDesigner ZD621R-300dpi ZPL"
 PRINTER_HOST = ""            # e.g. "10.1.57.18"
 PRINTER_PORT = 9100          # Zebra raw-ZPL port; effectively never changes
 # Prefix of app-minted EPCs (hex: "42473031" is ASCII "BG01"); the remaining
@@ -171,6 +177,8 @@ _ini = configparser.ConfigParser()
 if _ini.read(os.path.join(BASE_DIR, "settings.ini")) and "settings" in _ini:
     _s = _ini["settings"]
     SERIAL_PORT = _s.get("serial_port", SERIAL_PORT).strip() or SERIAL_PORT
+    PRINTER_QUEUE = (_s.get("printer_queue", PRINTER_QUEUE).strip()
+                     or PRINTER_QUEUE)
     PRINTER_HOST = _s.get("printer_host", PRINTER_HOST).strip() or PRINTER_HOST
     PRINTER_PORT = _s.getint("printer_port", fallback=PRINTER_PORT)
     ADMIN_PIN = _s.get("admin_pin", ADMIN_PIN).strip() or ADMIN_PIN

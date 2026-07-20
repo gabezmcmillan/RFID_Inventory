@@ -32,6 +32,9 @@ HIDDEN = [
     "uvicorn.lifespan",
     "uvicorn.lifespan.on",
     "uvicorn.lifespan.off",
+    # USB label printing (printer.py imports it lazily inside a function;
+    # listed here so a build never silently drops it).
+    "win32print",
 ]
 
 a = Analysis(

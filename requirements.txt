@@ -5,3 +5,6 @@ python-multipart>=0.0.9
 pypdf>=4.0
 # Cloud sync worker (sync.py) -- outbound HTTPS to the cloud app.
 requests>=2.31
+# USB label printing via the Windows print spooler (printer.py); the network
+# (TCP 9100) path needs nothing extra. Not installed on macOS.
+pywin32>=306; sys_platform == "win32"
