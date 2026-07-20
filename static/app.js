@@ -2095,13 +2095,18 @@ function addGroupRows(tbody, itemType, groupBy, g, named) {
     ? ` <span class="note-count" title="${g.note_count} note(s) on this group \u2014 expand to read">
          ${g.note_count} note${g.note_count === 1 ? "" : "s"}</span>`
     : "";
+  const flagBadge = g.flagged
+    ? ` <span class="badge badge-flag"
+          title="${g.flagged} box(es) in this group carry a warning flag \u2014 expand for details">
+          &#9888; ${g.flagged} flagged</span>`
+    : "";
   row.innerHTML = `
     <td>${g.qty}</td>
     <td><span class="wh-caret">&#9656;</span> ${escapeHtml(g.value || "(blank)")}</td>
     <td>${valueListHtml(g.other_values)}</td>
     <td>${valueListHtml(g.vendors)}</td>
     <td>${escapeHtml(fmtDateTime(g.received_at) || g.received || "")}</td>
-    <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span></td>
+    <td><span class="badge ${statusCls}">${escapeHtml(statusText)}</span>${flagBadge}</td>
     <td class="wh-count">${boxes} box(es)${noteBadge}${pdfBtn}${deleteBtn}</td>`;
   const pdfLink = row.querySelector(".bol-pdf-btn");
   if (pdfLink) {
