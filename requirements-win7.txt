@@ -18,3 +18,6 @@ pydantic==2.10.6
 pypdf==4.3.1
 # Cloud sync worker (sync.py); 2.31 still supports Python 3.8.
 requests==2.31.0
+# USB label printing via the Windows print spooler (printer.py); 306 is the
+# last pywin32 with Python 3.8 wheels.
+pywin32==306

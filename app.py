@@ -991,8 +991,8 @@ async def checkin_print(req: PrintLabelsRequest):
         return bad
     if not printer.enabled():
         return {"ok": False,
-                "message": ("No label printer configured -- set printer_host "
-                            "in settings.ini")}
+                "message": ("No label printer configured -- set printer_queue "
+                            "or printer_host in settings.ini")}
     if req.item_type not in config.ITEM_TYPES:
         return JSONResponse(
             {"ok": False, "message": "A valid item_type is required"}, 400)

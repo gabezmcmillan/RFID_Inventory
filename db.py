@@ -938,7 +938,9 @@ class Database:
         Only counts tags still in the warehouse; a group whose tags are all
         delivered drops to qty 0 and status Delivered. Each group also carries
         the distinct values of the OTHER dimension (`other_values`) so grouping
-        by building still shows which BOLs are involved, and vice versa.
+        by building still shows which BOLs are involved, and vice versa, plus
+        the distinct vendors of its tags (`vendors`) and how many of its boxes
+        carry a warning flag (`flagged`).
         Named item types (config.NAMED_ITEM_TYPES, e.g. W.I.F.) group by the
         per-box component name instead, with the toggled dimension shown as
         the other values. `filters` narrows the tags considered.
@@ -956,14 +958,17 @@ class Database:
                             THEN item_name ELSE {gcol} END  AS gval,
                        CASE WHEN item_type IN ({named_in})
                             THEN {gcol} ELSE {ocol} END     AS oval,
+                       vendor,
                        COALESCE(SUM(remaining), 0)         AS in_wh,
                        COALESCE(SUM(quantity), 0)          AS capacity,
                        COUNT(*)                            AS boxes,
+                       SUM(CASE WHEN flag <> '' THEN 1 ELSE 0 END)
+                                                           AS flagged,
                        MIN(received_at)                    AS first_received,
                        MAX(bol_doc_id)                     AS doc_id
                 FROM tags
                 {clause}
-                GROUP BY item_type, gval, oval
+                GROUP BY item_type, gval, oval, vendor
                 ORDER BY item_type, gval, oval
                 """,
                 named + named + params,
@@ -994,15 +999,17 @@ class Database:
             g = groups.get(key)
             if g is None:
                 g = {"value": r["gval"] or "", "in_wh": 0, "capacity": 0,
-                     "boxes": 0, "received_at": "", "bol_doc_id": None,
+                     "boxes": 0, "flagged": 0, "received_at": "",
+                     "bol_doc_id": None,
                      "note_count": (type_note_counts.get(r["item_type"], 0)
                                     if is_named else note_counts.get(key, 0)),
-                     "_others": set()}
+                     "_others": set(), "_vendors": set()}
                 groups[key] = g
                 t["groups"].append(g)
             g["in_wh"] += r["in_wh"] or 0
             g["capacity"] += r["capacity"] or 0
             g["boxes"] += r["boxes"]
+            g["flagged"] += r["flagged"] or 0
             if r["doc_id"] and not g["bol_doc_id"]:
                 g["bol_doc_id"] = r["doc_id"]
             first = r["first_received"] or ""
@@ -1011,6 +1018,8 @@ class Database:
                 g["received_at"] = first
             if r["oval"]:
                 g["_others"].add(str(r["oval"]))
+            if r["vendor"]:
+                g["_vendors"].add(str(r["vendor"]))
 
         for t in types.values():
             for g in t["groups"]:
@@ -1028,6 +1037,7 @@ class Database:
                     "received": _date_of(g["received_at"]),
                     "status": status,
                     "other_values": sorted(g.pop("_others")),
+                    "vendors": sorted(g.pop("_vendors")),
                 })
         return {"group_by": group_by, "types": list(types.values())}
 

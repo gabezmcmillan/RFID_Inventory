@@ -1,8 +1,14 @@
 """
 Label printing + RFID encoding on the Zebra ZD621R (300 dpi, 4x6" RFID media).
 
-The printer speaks raw ZPL over TCP port 9100 -- no driver, no OS print queue.
-Each check-in label is one ZPL format: the visible fields plus a ^RFW,H write
+The printer speaks raw ZPL over one of two transports, chosen in settings.ini:
+  - printer_queue (Windows only): a USB-attached printer, reached through its
+    Windows print queue as a RAW-datatype job. RAW makes the ZDesigner driver
+    pass the ZPL through untouched, exactly like port 9100 would.
+  - printer_host: raw ZPL over TCP port 9100 -- no driver, no OS print queue.
+If both are set, the USB queue wins (it is the more deliberate, per-machine
+choice). Either way, no OS rendering ever touches the label:
+each check-in label is one ZPL format: the visible fields plus a ^RFW,H write
 that burns the app-minted EPC into the label's UHF inlay during the same pass.
 The printer verifies every write; a failed encode prints VOID across the label
 and automatically retries the same data on the next one, so a successfully
@@ -18,9 +24,11 @@ Two settings deliberately do NOT appear in the ZPL:
     leave slack media out the front for the backfeed).
 
 Public API (all blocking; call from an executor thread):
-  enabled()        True when a printer_host is configured (settings.ini)
+  enabled()        True when a printer_queue or printer_host is configured
   print_label(...) build + send one label (raises PrintError)
-  status()         reachability / error state via a ~HS host-status query
+  status()         reachability / error state (~HS over TCP; spooler flags
+                   over USB -- the spooler is effectively write-only, so the
+                   printer's own status strings can't be read back there)
 """
 
 import re
@@ -107,7 +115,7 @@ def _desc_layout(text):
 
 
 def enabled():
-    return bool(config.PRINTER_HOST)
+    return bool(config.PRINTER_QUEUE or config.PRINTER_HOST)
 
 
 def _zpl_safe(value):
@@ -115,10 +123,29 @@ def _zpl_safe(value):
     return re.sub(r"[\^~\x00-\x1f\x7f]", " ", str(value or "")).strip()
 
 
+def _win32print():
+    """Import pywin32's print-spooler module (Windows-only, USB transport)."""
+    try:
+        import win32print
+    except ImportError as exc:
+        raise PrintError(
+            "USB printing requires Windows with the pywin32 package installed "
+            "(pip install pywin32), or set printer_host for network printing."
+        ) from exc
+    return win32print
+
+
 def _send(data, timeout=5):
     if not enabled():
-        raise PrintError(
-            "No label printer configured (set printer_host in settings.ini)")
+        raise PrintError("No label printer configured (set printer_queue "
+                         "or printer_host in settings.ini)")
+    if config.PRINTER_QUEUE:
+        _send_usb(data)
+    else:
+        _send_tcp(data, timeout)
+
+
+def _send_tcp(data, timeout):
     try:
         with socket.create_connection(
                 (config.PRINTER_HOST, config.PRINTER_PORT),
@@ -128,6 +155,36 @@ def _send(data, timeout=5):
         raise PrintError(
             f"Printer unreachable at {config.PRINTER_HOST}:"
             f"{config.PRINTER_PORT} ({exc})") from exc
+
+
+def _send_usb(data):
+    """Send ZPL through the Windows print queue as a RAW job.
+
+    The "RAW" datatype tells the driver to pass the bytes straight to the
+    printer without rendering, so this is byte-identical to the TCP path
+    and cannot disturb the printer-resident RFID calibration.
+    """
+    win32print = _win32print()
+    try:
+        handle = win32print.OpenPrinter(config.PRINTER_QUEUE)
+    except Exception as exc:
+        raise PrintError(
+            f"Printer queue {config.PRINTER_QUEUE!r} not found ({exc}). "
+            "Check the queue name under Windows Settings > Printers.") from exc
+    try:
+        win32print.StartDocPrinter(handle, 1, ("RFID label", None, "RAW"))
+        try:
+            win32print.StartPagePrinter(handle)
+            win32print.WritePrinter(handle, data.encode("ascii", "replace"))
+            win32print.EndPagePrinter(handle)
+        finally:
+            win32print.EndDocPrinter(handle)
+    except Exception as exc:
+        raise PrintError(
+            f"Could not print to queue {config.PRINTER_QUEUE!r} ({exc})"
+        ) from exc
+    finally:
+        win32print.ClosePrinter(handle)
 
 
 def print_label(epc, building="", sector="", description="", supplier="",
@@ -165,14 +222,68 @@ def print_label(epc, building="", sector="", description="", supplier="",
 
 
 def status(timeout=3):
-    """Printer health check via ~HS (prints nothing, consumes no media).
+    """Printer health check. Returns {"ok": bool, "message": str}.
 
-    Returns {"ok": bool, "message": str} for the UI / diagnostics.
+    TCP: a ~HS host-status query (prints nothing, consumes no media) that
+    reports real printer conditions (media out, paused, head open).
+    USB: the Windows spooler can't read the printer's ~HS reply back, so this
+    falls back to the queue's own status flags -- coarser (a healthy queue
+    often just reports nothing), but it does catch unplugged/offline/paused.
     """
     if not enabled():
         return {"ok": False,
-                "message": ("No label printer configured "
-                            "(set printer_host in settings.ini).")}
+                "message": ("No label printer configured (set printer_queue "
+                            "or printer_host in settings.ini).")}
+    if config.PRINTER_QUEUE:
+        return _status_usb()
+    return _status_tcp(timeout)
+
+
+def _status_usb():
+    try:
+        win32print = _win32print()
+    except PrintError as exc:
+        return {"ok": False, "message": str(exc)}
+    try:
+        handle = win32print.OpenPrinter(config.PRINTER_QUEUE)
+    except Exception as exc:
+        return {"ok": False,
+                "message": (f"Printer queue {config.PRINTER_QUEUE!r} not "
+                            f"found ({exc}). Check the queue name under "
+                            "Windows Settings > Printers.")}
+    try:
+        info = win32print.GetPrinter(handle, 2)
+    except Exception as exc:
+        return {"ok": False,
+                "message": (f"Could not query printer queue "
+                            f"{config.PRINTER_QUEUE!r} ({exc})")}
+    finally:
+        win32print.ClosePrinter(handle)
+
+    problems = []
+    flags = info["Status"]
+    for bit, label in (
+            (win32print.PRINTER_STATUS_OFFLINE, "offline"),
+            (win32print.PRINTER_STATUS_ERROR, "error"),
+            (win32print.PRINTER_STATUS_PAPER_OUT, "media out"),
+            (win32print.PRINTER_STATUS_PAPER_JAM, "media jam"),
+            (win32print.PRINTER_STATUS_PAUSED, "paused"),
+            (win32print.PRINTER_STATUS_DOOR_OPEN, "printhead open"),
+            (win32print.PRINTER_STATUS_NOT_AVAILABLE, "not available"),
+    ):
+        if flags & bit:
+            problems.append(label)
+    # Windows marks a USB printer it can't reach "Work Offline" via an
+    # attribute rather than a status bit; catch the unplugged case too.
+    if info["Attributes"] & win32print.PRINTER_ATTRIBUTE_WORK_OFFLINE:
+        problems.append("offline (check USB connection and power)")
+    if problems:
+        return {"ok": False,
+                "message": "Printer: " + ", ".join(dict.fromkeys(problems))}
+    return {"ok": True, "message": "Printer queue ready."}
+
+
+def _status_tcp(timeout):
     try:
         with socket.create_connection(
                 (config.PRINTER_HOST, config.PRINTER_PORT),

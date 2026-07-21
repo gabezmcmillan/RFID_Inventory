@@ -1,7 +1,7 @@
 # Switch Warehouse — cloud app
 
 The lightweight, employee-facing half of the RFID inventory system
-(`switch-warehouse.brasfieldgorrie.com`):
+(deployed at `rfid-inventory-sync.magnus.brasfieldgorrie.app`):
 
 - **Browse & request** — the mirrored stock table (from the warehouse
   manager's `RFIDInventory.exe`, which stays the source of truth) doubles as
@@ -11,11 +11,11 @@ The lightweight, employee-facing half of the RFID inventory system
 - **`POST /sync/exchange`** — the private, token-authenticated endpoint the
   .exe calls. The cloud never calls into the warehouse PC.
 
-Stack: FastAPI + Jinja2 + PostgreSQL. Current hosting plan is Vercel
-(serverless function + Vercel Postgres); the Azure App Service path is kept
-below as an alternative.
+Stack: FastAPI + Jinja2 + PostgreSQL. Hosting is Vercel (serverless function
++ Vercel Postgres/Neon); an Azure App Service path is kept below as an unused
+alternative.
 
-## Run locally (no Azure needed)
+## Run locally (no cloud account needed)
 
 ```bash
 # 1. Postgres in Docker
@@ -47,7 +47,7 @@ An automated end-to-end check of the whole loop lives at `test_sync.py`:
 python test_sync.py     # needs the Docker Postgres above; starts its own app
 ```
 
-## Deploy to Vercel (current plan)
+## Deploy to Vercel (current deployment)
 
 The app deploys to the org's Vercel account as a single Python serverless
 function; `cloud/vercel.json` and `cloud/pyproject.toml` carry the config.
@@ -79,7 +79,10 @@ accepted for the demo, revisit before real use.
 Within ~30 s of the exe starting, the inventory appears on the site and
 requests submitted on `/requests` flow down to the exe.
 
-## Deploy to Azure (alternative)
+## Deploy to Azure (unused alternative)
+
+This path was scoped out before the Vercel deployment was chosen; it is kept
+in case the app ever needs to move onto the org's Azure subscription.
 
 One-time provisioning (adjust names/region/subscription to fit; smallest
 tiers are plenty for this workload):
