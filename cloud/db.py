@@ -20,12 +20,18 @@ connection, which managed/serverless Postgres does after a while.
 import base64
 import binascii
 import os
+import re
 import secrets
 import threading
 from datetime import datetime, timezone
 
 import psycopg
 from psycopg.rows import dict_row
+
+try:
+    import sync_contract                    # Vercel: cloud/ is the app root
+except ImportError:
+    from cloud import sync_contract         # repo root (tests, the .exe side)
 
 # On serverless hosting (Vercel), each function instance opens its own
 # connection, so DATABASE_URL must be the POOLED connection string the
@@ -37,78 +43,11 @@ REQUEST_PENDING = "pending"
 # staging = the warehouse manager is scanning boxes for the request right now.
 REQUEST_STATUSES = ("pending", "staging", "fulfilled", "declined")
 
-# Mirror-table columns, matching what the .exe's export_snapshot() sends
-# (db.py schema on the local side). Snapshot apply is a wholesale replace, so
-# types stay permissive TEXT/INTEGER -- the .exe owns validation.
-MIRROR_COLUMNS = {
-    "tags": ("id", "epc", "item_type", "item_name", "bol_number", "po_number",
-             "building", "sector", "vendor", "sku", "mfc_date", "quantity",
-             "remaining", "status", "received_at", "delivered_at",
-             "checkout_building", "flag", "flagged_at", "created_at",
-             "updated_at", "bol_doc_id"),
-    "vendors": ("name",),
-    "notes": ("id", "ts", "item_type", "bol_number", "building", "text"),
-    "bol_docs": ("id", "bol_number", "filename", "source", "pages", "vendor",
-                 "po_number", "auto_named", "created_at"),
-}
-
+# Mirror tables (tags/vendors/notes/bol_docs/events) are NOT in this schema:
+# their DDL is generated from the sync contract (sync_contract.py, shared
+# with the .exe) by _mirror_ddl(). Types stay permissive TEXT/INTEGER -- the
+# .exe owns validation. This schema holds only the cloud-owned tables.
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS tags (
-    id                BIGINT,
-    epc               TEXT,
-    item_type         TEXT,
-    bol_number        TEXT,
-    po_number         TEXT,
-    building          TEXT,
-    sector            TEXT,
-    vendor            TEXT,
-    sku               TEXT,
-    mfc_date          TEXT,
-    quantity          INTEGER,
-    remaining         INTEGER,
-    status            TEXT,
-    received_at       TEXT,
-    delivered_at      TEXT,
-    checkout_building TEXT,
-    flag              TEXT,
-    flagged_at        TEXT,
-    created_at        TEXT,
-    updated_at        TEXT,
-    bol_doc_id        BIGINT
-);
-CREATE TABLE IF NOT EXISTS vendors (
-    name TEXT
-);
-CREATE TABLE IF NOT EXISTS notes (
-    id         BIGINT,
-    ts         TEXT,
-    item_type  TEXT,
-    bol_number TEXT,
-    building   TEXT,
-    text       TEXT
-);
-CREATE TABLE IF NOT EXISTS bol_docs (
-    id         BIGINT,
-    bol_number TEXT,
-    filename   TEXT,
-    source     TEXT,
-    pages      INTEGER,
-    vendor     TEXT,
-    po_number  TEXT,
-    auto_named INTEGER,
-    created_at TEXT
-);
-CREATE TABLE IF NOT EXISTS events (
-    id         BIGINT PRIMARY KEY,
-    ts         TEXT,
-    action     TEXT,
-    epc        TEXT,
-    item_type  TEXT,
-    bol_number TEXT,
-    building   TEXT,
-    vendor     TEXT,
-    detail     TEXT
-);
 CREATE TABLE IF NOT EXISTS requests (
     id           BIGSERIAL PRIMARY KEY,
     item_type    TEXT NOT NULL,
@@ -127,14 +66,9 @@ CREATE TABLE IF NOT EXISTS sync_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_tags_type ON tags (item_type);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests (status);
 -- Cart orders: lines submitted together share an order_ref (short hex).
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS order_ref TEXT NOT NULL DEFAULT '';
--- Warehouse sector on a tag (mirrored from the .exe as of July 2026).
-ALTER TABLE tags ADD COLUMN IF NOT EXISTS sector TEXT;
--- Per-box component name for W.I.F. (mirrored from the .exe as of July 2026).
-ALTER TABLE tags ADD COLUMN IF NOT EXISTS item_name TEXT;
 -- Requests carry the component name too, so W.I.F. accessories are requested
 -- (and stock-checked) per component rather than as one pooled type.
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS item_name TEXT NOT NULL DEFAULT '';
@@ -152,6 +86,47 @@ CREATE TABLE IF NOT EXISTS bol_files (
 # How many missing BOL PDFs to ask the .exe for per exchange (bounds the
 # follow-up upload's size; remaining ids are requested on later cycles).
 BOL_FILES_WANTED_LIMIT = 5
+
+# Unknown incoming columns (a newer .exe syncing against this older cloud)
+# are auto-added as TEXT so no data is dropped during version skew -- but
+# only names that look like plain SQL identifiers; anything else is ignored.
+_SAFE_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _mirror_ddl():
+    """DDL for the mirror tables, generated from the sync contract.
+
+    CREATE TABLE for fresh databases, plus ADD COLUMN IF NOT EXISTS for each
+    contract column so an existing deployment migrates itself on startup --
+    this replaces the hand-patched ALTER list that used to lag the .exe
+    (sector and item_name both shipped late that way).
+    """
+    stmts = []
+    for table, cols in sync_contract.MIRROR_TABLES.items():
+        defs = ", ".join(f"{name} {ctype}" for name, ctype in cols)
+        stmts.append(f"CREATE TABLE IF NOT EXISTS {table} ({defs})")
+        for name, ctype in cols:
+            stmts.append(f"ALTER TABLE {table} "
+                         f"ADD COLUMN IF NOT EXISTS {name} {ctype}")
+    ev_defs = ", ".join(
+        f"{name} {ctype}" + (" PRIMARY KEY" if name == "id" else "")
+        for name, ctype in sync_contract.EVENT_COLUMNS)
+    stmts.append(f"CREATE TABLE IF NOT EXISTS events ({ev_defs})")
+    for name, ctype in sync_contract.EVENT_COLUMNS:
+        stmts.append(f"ALTER TABLE events "
+                     f"ADD COLUMN IF NOT EXISTS {name} {ctype}")
+    stmts.append("CREATE INDEX IF NOT EXISTS idx_tags_type ON tags (item_type)")
+    return stmts
+
+
+def _extra_columns(rows, known):
+    """Column names present in incoming rows but not in the contract,
+    filtered to safe identifiers (lenient skew handling: store, don't drop)."""
+    extras = set()
+    for r in rows:
+        extras.update(r.keys())
+    extras.difference_update(known)
+    return tuple(sorted(c for c in extras if _SAFE_IDENT.match(c)))
 
 
 def _now():
@@ -230,7 +205,11 @@ class CloudDatabase:
                     raise
 
     def _create_schema(self):
-        self._run(lambda cur: cur.execute(SCHEMA))
+        def work(cur):
+            for stmt in _mirror_ddl():
+                cur.execute(stmt)
+            cur.execute(SCHEMA)
+        self._run(work)
 
     def close(self):
         with self._lock:
@@ -265,10 +244,13 @@ class CloudDatabase:
             #    edits and deletes for free). Only sent when content changed.
             snapshot = payload.get("snapshot")
             if snapshot:
-                for table, cols in MIRROR_COLUMNS.items():
+                for table in sync_contract.SNAPSHOT_TABLES:
                     rows = snapshot.get(table) or []
                     cur.execute(f"DELETE FROM {table}")
                     if rows:
+                        cols = self._insert_columns(cur, table,
+                                                    sync_contract.columns(table),
+                                                    rows)
                         placeholders = ",".join(["%s"] * len(cols))
                         sql = (f"INSERT INTO {table} ({', '.join(cols)}) "
                                f"VALUES ({placeholders})")
@@ -289,8 +271,11 @@ class CloudDatabase:
             had_to = cur.fetchone()["n"]
             events = payload.get("events") or []
             if events:
-                cols = ("id", "ts", "action", "epc", "item_type",
-                        "bol_number", "building", "vendor", "detail")
+                # Leniency matters most here: events are acked once and never
+                # re-pushed, so a dropped column would be lost permanently.
+                cols = self._insert_columns(
+                    cur, "events",
+                    sync_contract.columns(sync_contract.EVENTS_TABLE), events)
                 placeholders = ",".join(["%s"] * len(cols))
                 cur.executemany(
                     f"INSERT INTO events ({', '.join(cols)}) "
@@ -342,6 +327,9 @@ class CloudDatabase:
             row = cur.fetchone()
             return {
                 "ok": True,
+                # Our contract version; the .exe compares it to its own and
+                # shows a (non-fatal) skew warning on mismatch.
+                "contract_hash": sync_contract.contract_hash(),
                 "snapshot_hash": row["value"] if row else "",
                 "events_acked_to": events_acked_to,
                 "request_updates_acked": acked_updates,
@@ -349,6 +337,22 @@ class CloudDatabase:
                 "bol_files_wanted": bol_files_wanted,
             }
         return self._run(work)
+
+    @staticmethod
+    def _insert_columns(cur, table, contract_cols, rows):
+        """Contract columns plus any unknown incoming ones, which are added
+        to the table as TEXT first (lenient skew: a newer .exe's new column
+        is stored, not dropped, until this deployment catches up)."""
+        extras = _extra_columns(rows, set(contract_cols))
+        for name in extras:
+            cur.execute(f"ALTER TABLE {table} "
+                        f"ADD COLUMN IF NOT EXISTS {name} TEXT")
+            # The column is TEXT; Postgres won't cast an integer parameter
+            # into it, so stringify non-null values up front.
+            for r in rows:
+                if r.get(name) is not None and not isinstance(r[name], str):
+                    r[name] = str(r[name])
+        return tuple(contract_cols) + extras
 
     def store_bol_files(self, files):
         """Store BOL PDFs pushed by the .exe ({id, filename, data} rows,

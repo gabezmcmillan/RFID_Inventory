@@ -39,6 +39,7 @@ from datetime import datetime
 import requests
 
 import config
+from cloud import sync_contract
 
 PROTOCOL = 1
 EVENTS_BATCH = 1000          # max events pushed per exchange
@@ -85,6 +86,7 @@ class SyncWorker:
         self.online = False              # last exchange succeeded
         self.last_sync = self.db.sync_get(K_LAST_SYNC, "") if db else ""
         self.last_error = ""
+        self.warning = ""                # non-fatal, e.g. contract skew
         self.pending = 0                 # local changes not yet on the cloud
 
     # -- lifecycle -------------------------------------------------------------
@@ -149,6 +151,7 @@ class SyncWorker:
 
         payload = {
             "protocol": PROTOCOL,
+            "contract_hash": sync_contract.contract_hash(),
             "snapshot_hash": snap_hash,
             # Only ship the (comparatively) heavy snapshot when its content
             # differs from what the cloud last acked.
@@ -170,6 +173,17 @@ class SyncWorker:
         ack = resp.json()
         if not ack.get("ok"):
             raise RuntimeError(ack.get("message") or "Cloud sync failed")
+
+        # Contract skew is expected (exe and cloud deploy independently) and
+        # deliberately non-fatal: the cloud stores unknown columns as TEXT so
+        # nothing is dropped. Warn so someone updates the lagging side.
+        cloud_contract = ack.get("contract_hash") or ""
+        if cloud_contract != sync_contract.contract_hash():
+            self.warning = ("Cloud is on a different sync contract version "
+                            "(syncing still works; update the exe or the "
+                            "cloud app)")
+        else:
+            self.warning = ""
 
         # Apply acks / pulls. Each step is idempotent, so a crash between any
         # two of them just repeats work on the next cycle.
@@ -258,6 +272,7 @@ class SyncWorker:
             "online": self.online,
             "last_sync": self.last_sync,
             "error": self.last_error,
+            "warning": self.warning,
             "pending": self.pending,
         }
 

@@ -33,6 +33,7 @@ import threading
 from datetime import datetime
 
 import config
+from cloud import sync_contract
 
 STATUS_IN = "In Warehouse"
 STATUS_DELIVERED = "Delivered"
@@ -1326,22 +1327,23 @@ class Database:
     # mirror. Small tables (tags/vendors/notes/bol_docs) are pushed as full
     # snapshots -- which naturally carries edits and deletes -- and the
     # append-only events table is pushed incrementally above a watermark.
-    SNAPSHOT_TABLES = ("tags", "vendors", "notes", "bol_docs")
+    # What crosses the wire is defined by the sync contract
+    # (cloud/sync_contract.py), shared with the cloud side.
 
     def export_snapshot(self):
         """Full dump of the mirrored tables, JSON-ready ({table: [rows...]}).
 
-        ocr_text is stripped from bol_docs: it can be hundreds of KB per doc
-        and the cloud view doesn't use it.
+        Exactly the sync-contract columns are exported: a local-only column
+        (e.g. bol_docs.ocr_text, hundreds of KB per doc) stays local simply
+        by not being in the contract.
         """
         snap = {}
         with self._lock:
-            for table in self.SNAPSHOT_TABLES:
+            for table in sync_contract.SNAPSHOT_TABLES:
+                cols = ", ".join(sync_contract.columns(table))
                 rows = self._conn.execute(
-                    f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                    f"SELECT {cols} FROM {table} ORDER BY rowid").fetchall()
                 snap[table] = [dict(r) for r in rows]
-        for doc in snap["bol_docs"]:
-            doc.pop("ocr_text", None)
         return snap
 
     def events_since(self, after_id, limit=1000):
@@ -1350,9 +1352,10 @@ class Database:
         The cap bounds one exchange payload; the next cycle picks up where the
         ack left off.
         """
+        cols = ", ".join(sync_contract.columns(sync_contract.EVENTS_TABLE))
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT ?",
+                f"SELECT {cols} FROM events WHERE id > ? ORDER BY id LIMIT ?",
                 (after_id, limit)).fetchall()
         return [dict(r) for r in rows]
 

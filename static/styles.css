@@ -106,6 +106,9 @@ h1.brand-app {
 .pill-off::before { background: #ff7b7b; }
 /* Idle: feature not configured (e.g. cloud sync off) — quiet, not alarming */
 .pill-idle { color: rgba(255, 255, 255, 0.55); border-style: dashed; }
+/* Warn: working but degraded (e.g. sync contract version skew) */
+.pill-warn { color: #f0c14b; border-color: rgba(240,193,75,0.55); }
+.pill-warn::before { background: #f0c14b; }
 #sync-pill { cursor: pointer; }
 
 main {

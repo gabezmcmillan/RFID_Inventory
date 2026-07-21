@@ -249,7 +249,11 @@ function setSyncPill(sync) {
   const lastTxt = sync.last_sync
     ? `Last synced ${fmtDateTime(sync.last_sync)}` : "Never synced yet";
   const pendTxt = pending ? ` \u00b7 ${pending} change(s) pending` : "";
-  if (sync.online) {
+  if (sync.online && sync.warning) {
+    p.className = "pill pill-warn";
+    p.textContent = pending ? `Sync (${pending})` : "Sync ok";
+    p.title = `${sync.warning} \u00b7 ${lastTxt}${pendTxt} \u00b7 click to sync now`;
+  } else if (sync.online) {
     p.className = "pill pill-on";
     p.textContent = pending ? `Sync (${pending})` : "Sync ok";
     p.title = `${lastTxt}${pendTxt} \u00b7 click to sync now`;
@@ -264,12 +268,16 @@ function setSyncPill(sync) {
 
 function onSyncStatus(msg) {
   const wasError = state.sync && state.sync.enabled && !state.sync.online;
+  const wasWarning = state.sync && state.sync.warning;
   setSyncPill(msg);
   // Log transitions (not every 30s heartbeat): going offline / coming back.
   if (msg.enabled && !msg.online && !wasError && msg.error) {
     logActivity(`Cloud sync: ${msg.error}`, "warn");
   } else if (msg.enabled && msg.online && wasError) {
     logActivity("Cloud sync restored \u2014 caught up", "ok");
+  }
+  if (msg.enabled && msg.warning && !wasWarning) {
+    logActivity(`Cloud sync: ${msg.warning}`, "warn");
   }
 }
 
@@ -2517,7 +2525,8 @@ function updateSyncDetail() {
     ? `Last synced ${fmtDateTime(s.last_sync)}` : "Never synced yet";
   const pending = s.pending ? ` \u00b7 ${s.pending} change(s) pending` : "";
   const err = s.online ? "" : ` \u00b7 offline: ${s.error || "cloud unreachable"}`;
-  el.textContent = `${last}${pending}${err}`;
+  const warn = s.online && s.warning ? ` \u00b7 ${s.warning}` : "";
+  el.textContent = `${last}${pending}${err}${warn}`;
 }
 
 async function syncNow() {

@@ -19,6 +19,10 @@ local SQLite Database + SyncWorker against it, and checks the full round trip:
      and the next successful exchange catches the cloud up
   6. checkout (edit) and vendor add propagate via the snapshot
   7. a wiped cloud DB rebuilds itself from the exe within two cycles
+  8. BOL PDFs ride the follow-up upload and the tag/BOL pages serve them
+  9. contract skew is lenient: unknown columns from a "newer exe" are stored
+     as TEXT (never dropped), the ack carries the cloud's contract hash, and
+     a mismatch surfaces as a non-fatal warning on the exe side
 
 Run:  python test_sync.py   (from cloud/, any venv with both requirement sets)
 """
@@ -39,6 +43,7 @@ sys.path.insert(0, ROOT)                      # local app modules (db, sync)
 from db import Database                        # noqa: E402 (local SQLite side)
 from sync import (                             # noqa: E402
     K_EVENTS_PUSHED, K_SNAPSHOT_HASH, SyncWorker, snapshot_hash)
+from cloud import sync_contract                # noqa: E402 (the shared seam)
 
 # The test drops and rebuilds its whole database, so it must never point at
 # the "real" dev DB (the one the manually-run cloud app uses). Default to a
@@ -399,6 +404,57 @@ def main():
                        timeout=5).status_code == 404)
         check("missing BOL file 404s",
               http.get(f"{BASE}/bol/999999", timeout=5).status_code == 404)
+
+        # -- 9. contract skew is lenient ---------------------------------------
+        check("matched contracts produce no warning",
+              worker.status()["warning"] == "", str(worker.status()))
+
+        # A "newer exe" pushes columns this cloud's contract doesn't know.
+        # Post the exchange by hand so the real worker's watermarks stay put.
+        snap = db.export_snapshot()
+        for r in snap["tags"]:
+            r["future_col"] = f"future-{r['epc']}"
+        fake_event_id = db.last_event_id() + 1000
+        skew = http.post(f"{BASE}/sync/exchange", json={
+            "protocol": 1,
+            "contract_hash": "not-the-cloud's-contract",
+            "snapshot_hash": "skew-test",
+            "snapshot": snap,
+            "events_after": db.last_event_id(),
+            "events": [{"id": fake_event_id, "ts": "2026-07-21T00:00:00",
+                        "action": "TEST", "epc": "E2E00001",
+                        "future_detail": "kept"}],
+            "request_updates": [],
+            "requests_after": 10**9,
+        }, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=10).json()
+        check("skewed exchange still succeeds", skew.get("ok"), str(skew))
+        check("ack carries the cloud's contract hash",
+              skew.get("contract_hash") == sync_contract.contract_hash(),
+              str(skew.get("contract_hash")))
+        with psycopg.connect(PG_URL) as conn:
+            row = conn.execute("SELECT future_col FROM tags "
+                               "WHERE epc='E2E00001'").fetchone()
+            ev = conn.execute("SELECT future_detail FROM events WHERE id=%s",
+                              (fake_event_id,)).fetchone()
+        check("unknown snapshot column stored as TEXT, not dropped",
+              row and row[0] == "future-E2E00001", str(row))
+        check("unknown event column stored, not dropped",
+              ev and ev[0] == "kept", str(ev))
+
+        # Mismatched hashes warn on the exe side but never fail the exchange.
+        orig_hash = sync_contract.contract_hash
+        sync_contract.contract_hash = lambda: "e2e-skewed-contract"
+        try:
+            worker.exchange()
+            check("contract mismatch warns instead of failing",
+                  worker.online
+                  and "contract" in worker.status()["warning"].lower(),
+                  str(worker.status()))
+        finally:
+            sync_contract.contract_hash = orig_hash
+        worker.exchange()
+        check("warning clears when contracts match again",
+              worker.status()["warning"] == "", str(worker.status()))
 
         db.close()
     finally:
