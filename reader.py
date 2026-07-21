@@ -106,10 +106,6 @@ class ReaderWorker:
         self._lock = threading.Lock()
 
         self._mode = IDLE
-        self._checkin_payload = None  # {"item_type":..., "fields":{...}}
-        # Per-unit fields (SKU, mfc date) for the NEXT tag in check-in; the UI
-        # updates these before each trigger pull since they differ per unit.
-        self._checkin_item = {}
         self._connected = False
 
         # Output power (dBm) to apply on the reader; set when the mode changes
@@ -192,10 +188,14 @@ class ReaderWorker:
             self._pending_alert = True
 
     def set_mode(self, mode, payload=None):
+        """Switch reader behavior (power / RSSI / beep / finder mask).
+
+        The payload only matters for FINDER (the target EPC). What a scan
+        MEANS -- the armed shipment for check-in, etc. -- lives in
+        intake.py / the event consumers, not here.
+        """
         with self._lock:
             self._mode = mode
-            self._checkin_payload = payload if mode == CHECKIN else None
-            self._checkin_item = {}
             self._finder_target = (
                 (payload or {}).get("target_epc") if mode == FINDER else None)
             self._last_epc = None
@@ -215,19 +215,13 @@ class ReaderWorker:
             # Reconcile the finder select-mask (single-tag .iv) for the new mode.
             self._pending_finder = True
 
-    def set_checkin_item_fields(self, fields):
-        """Set the per-unit fields (SKU, mfc date) attached to the next tag."""
-        with self._lock:
-            self._checkin_item = dict(fields or {})
-
     def inject_scan(self, epcs):
         """Test hook: feed EPCs as if they came from the reader (no hardware)."""
         with self._lock:
             mode = self._mode
-            payload = self._checkin_payload
         if mode == IDLE:
             return
-        self._finalize(mode, payload, Counter(e.upper() for e in epcs),
+        self._finalize(mode, Counter(e.upper() for e in epcs),
                        set(e.upper() for e in epcs))
 
     # -- worker loop ---------------------------------------------------------
@@ -480,14 +474,13 @@ class ReaderWorker:
             return
         with self._lock:
             mode = self._mode
-            payload = self._checkin_payload
             counts = self._counts.copy()
             distinct = set(self._distinct)
             rssi_peak = dict(self._rssi_peak)
             self._counts.clear()
             self._distinct.clear()
             self._rssi_peak.clear()
-        self._finalize(mode, payload, counts, distinct, rssi_peak)
+        self._finalize(mode, counts, distinct, rssi_peak)
 
     @staticmethod
     def _pick_epc(counts, rssi_peak):
@@ -498,27 +491,18 @@ class ReaderWorker:
                        key=lambda e: (rssi_peak[e], counts.get(e, 0)))
         return counts.most_common(1)[0][0]
 
-    def _finalize(self, mode, payload, counts, distinct, rssi_peak=None):
+    def _finalize(self, mode, counts, distinct, rssi_peak=None):
         if mode == IDLE or not distinct:
             return
         rssi_peak = rssi_peak or {}
-        if mode == CHECKOUT:
+        if mode in SINGLE_MODES:
+            # One tag per trigger pull: the closest (strongest-RSSI) EPC.
+            # The event carries only what the reader knows; what the scan
+            # means (armed shipment, checkout lookup) is the consumer's job.
             epc = self._pick_epc(counts, rssi_peak)
-            self._emit({"event": "scan", "mode": CHECKOUT, "epc": epc,
+            self._emit({"event": "scan", "mode": mode, "epc": epc,
                         "reads": counts[epc], "candidates": len(distinct),
                         "rssi": rssi_peak.get(epc)})
-        elif mode == CHECKIN:
-            # One tag per trigger pull: use the closest (strongest-RSSI) EPC.
-            epc = self._pick_epc(counts, rssi_peak)
-            with self._lock:
-                item_fields = dict(self._checkin_item)
-            event = {"event": "checkin_batch", "epcs": [epc], "distinct": 1,
-                     "candidates": len(distinct), "item_fields": item_fields,
-                     "rssi": rssi_peak.get(epc)}
-            if payload:
-                event["item_type"] = payload.get("item_type")
-                event["fields"] = payload.get("fields", {})
-            self._emit(event)
         elif mode == INVENTORY:
             self._emit({"event": "inventory", "epcs": sorted(distinct),
                         "distinct": len(distinct)})
