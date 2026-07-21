@@ -25,3 +25,4 @@ cloud/deploy.zip
 
 # Cursor plan files (local working notes; rules stay tracked)
 .cursor/plans/
+test_intake.py

@@ -32,6 +32,7 @@ import db as db_mod
 import printer
 import reader as reader_mod
 import scanner
+from intake import ShipmentIntake
 from reader import ReaderWorker
 from sync import SyncWorker
 
@@ -45,6 +46,7 @@ class AppState:
         self.sync: Optional[SyncWorker] = None
         self.db = None
         self.db_error: Optional[str] = None
+        self.intake: Optional[ShipmentIntake] = None
         self.clients: set[WebSocket] = set()
 
     def init_db(self):
@@ -52,6 +54,7 @@ class AppState:
             from db import Database
             self.db = Database()
             self.db_error = None
+            self.intake = ShipmentIntake(self.db)
         except Exception as exc:  # noqa: BLE001
             self.db = None
             self.db_error = str(exc)
@@ -181,22 +184,11 @@ async def _handle_event(event: dict):
                          "message": f"Database not available: {state.db_error}"})
         return
 
-    if kind == "checkin_batch":
-        epcs = event.get("epcs", [])
-        item_type = event.get("item_type")
-        fields = event.get("fields", {})
-        item_fields = event.get("item_fields", {})
-        building = fields.get("building_number", "")
-        bol_number = fields.get("bol_number", "")
-        po_number = fields.get("po_number", "")
-        vendor = fields.get("vendor", "")
-        sector = fields.get("sector", "")
-        bol_doc_id = _as_doc_id(fields.get("bol_doc_id"))
+    if kind == "scan" and event.get("mode") == reader_mod.CHECKIN:
+        # The reader only picked an EPC; the armed shipment lives in intake.
         result = await loop.run_in_executor(
-            None, state.db.receive_shipment,
-            epcs, item_type, building, bol_number, vendor, item_fields,
-            bol_doc_id, po_number, sector)
-        # Stay armed on this shipment so more units can be tagged in.
+            None, state.intake.check_in_scanned, event["epc"])
+        # Intake stays armed on this shipment so more units can be tagged in.
         await broadcast({"type": "checkin_result", **result})
         return
 
@@ -273,15 +265,6 @@ async def set_power(req: PowerRequest):
         return JSONResponse({"ok": False, "message": "Reader worker not ready"}, 503)
     applied = state.worker.set_check_power(req.dbm)
     return {"ok": True, "check_power": applied}
-
-
-def _as_doc_id(value):
-    """Coerce a fields-dict bol_doc_id (string) to an int, or None."""
-    try:
-        doc_id = int(str(value).strip())
-        return doc_id if doc_id > 0 else None
-    except (TypeError, ValueError):
-        return None
 
 
 def _wh_filters(bol="", building="", received_from="", received_to="",
@@ -937,12 +920,17 @@ async def set_mode(req: ModeRequest):
             return JSONResponse(
                 {"ok": False, "message": "A valid item_type is required for check-in"},
                 400)
-        payload = {"item_type": req.item_type, "fields": req.fields or {}}
+        if state.intake is None:
+            return JSONResponse(
+                {"ok": False, "message": "Database not available"}, 503)
+        state.intake.arm(req.item_type, req.fields or {})
     elif mode == reader_mod.FINDER:
         if not req.target_epc:
             return JSONResponse(
                 {"ok": False, "message": "A target_epc is required for finder"}, 400)
         payload = {"target_epc": req.target_epc.upper()}
+    if mode != reader_mod.CHECKIN and state.intake is not None:
+        state.intake.disarm()
 
     state.worker.set_mode(mode, payload)
     return {"ok": True, "mode": mode}
@@ -964,9 +952,9 @@ class CheckinItemRequest(BaseModel):
 @app.post("/api/checkin_item")
 async def set_checkin_item(req: CheckinItemRequest):
     """Set the per-unit fields (SKU, mfc date) for the next check-in tag."""
-    if state.worker is None:
-        return JSONResponse({"ok": False, "message": "Reader worker not ready"}, 503)
-    state.worker.set_checkin_item_fields(req.fields or {})
+    if state.intake is None:
+        return JSONResponse({"ok": False, "message": "Database not available"}, 503)
+    state.intake.set_item_fields(req.fields or {})
     return {"ok": True}
 
 
@@ -979,72 +967,17 @@ class PrintLabelsRequest(BaseModel):
 
 @app.post("/api/checkin/print")
 async def checkin_print(req: PrintLabelsRequest):
-    """Check a box in by printing + encoding a fresh label for it.
-
-    The app mints the EPC (see db.allocate_epcs), the ZD621R burns it into
-    the label's inlay while printing (printer.py). Labels are printed first
-    and only the successfully sent ones are recorded, so a dead printer
-    never creates phantom inventory.
-    """
+    """Check boxes in by printing + encoding fresh labels (see intake.py)."""
     bad = _require_db()
     if bad:
         return bad
-    if not printer.enabled():
-        return {"ok": False,
-                "message": ("No label printer configured -- set printer_queue "
-                            "or printer_host in settings.ini")}
     if req.item_type not in config.ITEM_TYPES:
         return JSONResponse(
             {"ok": False, "message": "A valid item_type is required"}, 400)
-
-    count = max(1, min(req.count or 1, 25))
-    fields = req.fields or {}
-    item_fields = req.item_fields or {}
-    # Named types (W.I.F.) print "TYPE | component name" as the description.
-    item_name = (item_fields.get("item_name") or "").strip()
-    description = f"{req.item_type} | {item_name}" if item_name else req.item_type
-    now = datetime.now()
     loop = asyncio.get_running_loop()
-
-    epcs = await loop.run_in_executor(None, state.db.allocate_epcs, count)
-    # QR on the label opens the box's page on the cloud site (BOL PDF and
-    # live status); printed only when this install has a cloud configured.
-    cloud_base = config.CLOUD_URL.rstrip("/")
-    printed, print_error = [], ""
-    for epc in epcs:
-        job = lambda e=epc: printer.print_label(
-            epc=e,
-            building=fields.get("building_number", ""),
-            sector=fields.get("sector", ""),
-            description=description,
-            supplier=fields.get("vendor", ""),
-            sku=item_fields.get("sku", ""),
-            quantity=item_fields.get("quantity") or "1",
-            po_number=fields.get("po_number", ""),
-            received_date=now.strftime("%m/%d/%Y"),
-            received_time=now.strftime("%I:%M %p").lstrip("0"),
-            qr_url=f"{cloud_base}/tag/{e}" if cloud_base else "")
-        try:
-            await loop.run_in_executor(None, job)
-            printed.append(epc)
-        except printer.PrintError as exc:
-            print_error = str(exc)
-            break
-
-    if not printed:
-        return {"ok": False, "message": f"Label not printed: {print_error}"}
-
-    result = await loop.run_in_executor(
-        None, state.db.receive_shipment,
-        printed, req.item_type, fields.get("building_number", ""),
-        fields.get("bol_number", ""), fields.get("vendor", ""), item_fields,
-        _as_doc_id(fields.get("bol_doc_id")), fields.get("po_number", ""),
-        fields.get("sector", ""))
-    result["printed"] = len(printed)
-    if print_error:
-        result["message"] += (f" Printing stopped after {len(printed)} of "
-                              f"{count} labels: {print_error}")
-    return result
+    return await loop.run_in_executor(
+        None, state.intake.check_in_printed,
+        req.item_type, req.fields, req.item_fields, req.count)
 
 
 @app.get("/api/printer/status")
@@ -1066,13 +999,11 @@ async def checkin_amend(req: CheckinAmendRequest):
     Not PIN-gated: it only touches the per-unit fields and is meant for
     correcting a typo immediately after the trigger pull.
     """
-    if state.db is None:
+    if state.intake is None:
         return JSONResponse({"ok": False, "message": "Database not available"}, 503)
-    allowed = {k: v for k, v in (req.fields or {}).items()
-               if k in ("item_name", "sku", "mfc_date", "quantity")}
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        None, state.db.amend_checkin, req.epc, allowed)
+        None, state.intake.amend, req.epc, req.fields)
 
 
 class CheckoutRequest(BaseModel):
