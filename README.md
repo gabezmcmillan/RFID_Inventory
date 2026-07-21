@@ -19,7 +19,7 @@ stock and submit material requests that flow back into the app.
   prefill the shipment form as editable guesses (vendor only matches names
   already in the vendor list). Then pick an item type (TSC / CDU / W.I.F.),
   verify/complete the shipment fields (Building #, PO #, Vendor), and for each
-  physical unit enter its per-unit fields (SKU, Manufactured Date) and pull the
+  physical unit enter its per-unit fields (Item No., Manufactured Date) and pull the
   trigger to tag it. Every tag is linked to the BOL PDF (viewable from the
   Warehouse). Uploading a PDF or typing the BOL # manually are available as
   fallbacks; uploads are OCRed too when they carry no text layer. When a label
@@ -69,6 +69,15 @@ pip install -r requirements.txt
   aren't prefilled. OCR settings: `OCR_ENABLED` / `OCR_LANG` in `config.py`.
   `python bol_extract.py scans/<file>.pdf` shows what OCR read from a stored
   PDF and which fields were parsed out (useful for tuning the heuristics).
+- **Better extraction via Mistral OCR (optional):** set `mistral_api_key` in
+  `settings.ini` (create a key at [Mistral Studio](https://console.mistral.ai))
+  and BOL/PO/Vendor extraction runs through Mistral's layout-aware OCR 4
+  cloud API instead of the local heuristics (about $5 per 1,000 pages).
+  Needs internet at scan time; on any failure — or with no key — the app
+  falls back to the local Tesseract path automatically, so scanning keeps
+  working offline. The vendor is still matched against the vendor list, never
+  invented. `python ocr_mistral.py scans/<file>.pdf` shows what Mistral
+  returns for a stored PDF (compare with `bol_extract.py`).
 - The database is created automatically at `config.DB_PATH` (`inventory.db`) on
   first run. It is gitignored, so each machine starts fresh.
 
@@ -137,8 +146,9 @@ window stops the app) and opens the browser UI automatically.
 Notes for the machine that runs the exe:
 
 - `settings.ini` next to the exe holds the per-machine values (serial port,
-  printer settings `printer_queue` / `printer_host`, admin PIN, web port, and
-  the cloud sync settings `cloud_url` / `sync_token`). The default
+  printer settings `printer_queue` / `printer_host`, admin PIN, web port,
+  the cloud sync settings `cloud_url` / `sync_token`, and the optional
+  `mistral_api_key` for cloud OCR). The default
   `serial_port = auto` finds the reader on its own; pin it to e.g. `COM3` if
   needed (Device Manager > Ports).
 - `inventory.db` and `scans\` are created next to the exe on first run — back
@@ -182,11 +192,14 @@ users; the warehouse app never needs to be reachable from the internet.
 ## Database tables (auto-created)
 
 - `tags`: one row per physical EPC — item_type, BOL #, PO #, Building #,
-  Vendor, SKU, mfc date, status, received/delivered timestamps, and a
-  `bol_doc_id` link to the scanned BOL document. This is the source of truth;
+  Vendor, Item No. (stored as `sku`), mfc date, status, received/delivered
+  timestamps, and a `bol_doc_id` link to the scanned BOL document. This is
+  the source of truth;
   warehouse quantities are derived as a `COUNT` of in-warehouse tags.
 - `bol_docs`: one row per scanned/uploaded bill of lading (the PDF itself lives
-  in `scans/`), including the OCR text and the extracted vendor/PO guesses.
+  in `scans/`), including the OCR text, the extracted vendor/PO guesses, and
+  the parsed line items (item no. + item name) offered as one-tap prefills
+  at check-in.
 - `events`: append-only audit log of IN / OUT / COUNT / BOL_SCAN actions.
 - `requests`: material requests pulled from the cloud site plus the manager's
   handling status (fulfilled / declined, note).

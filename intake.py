@@ -50,7 +50,7 @@ class ShipmentIntake:
         self.printer = printer_mod if printer_mod is not None else printer_module
         self._lock = threading.Lock()
         self._armed = None       # {"item_type": ..., "fields": {...}} or None
-        # Per-unit fields (SKU, mfc date) for the NEXT tag; the UI updates
+        # Per-unit fields (Item No., mfc date) for the NEXT tag; the UI updates
         # these before each trigger pull since they differ per unit.
         self._item_fields = {}
 
@@ -67,7 +67,7 @@ class ShipmentIntake:
             self._item_fields = {}
 
     def set_item_fields(self, fields):
-        """Set the per-unit fields (SKU, mfc date) for the next tag."""
+        """Set the per-unit fields (Item No., mfc date) for the next tag."""
         with self._lock:
             self._item_fields = dict(fields or {})
 
@@ -141,7 +141,7 @@ class ShipmentIntake:
 
     # -- corrections ---------------------------------------------------------------
     def amend(self, epc, fields):
-        """Operator fix of a just-checked-in tag (name / SKU / mfc date / qty).
+        """Operator fix of a just-checked-in tag (name / Item No. / mfc date / qty).
 
         Not PIN-gated: it corrects a typo right after the trigger pull,
         before the box has been touched.

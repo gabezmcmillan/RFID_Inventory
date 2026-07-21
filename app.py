@@ -29,6 +29,7 @@ from pydantic import BaseModel
 import bol_extract
 import config
 import db as db_mod
+import ocr_mistral
 import printer
 import reader as reader_mod
 import scanner
@@ -410,7 +411,7 @@ EXPORT_COLUMNS = [
     ("Sector", "sector"),
     ("Checked Out To", "checkout_building"),
     ("Vendor", "vendor"),
-    ("SKU", "sku"),
+    ("Item No.", "sku"),
     ("Mfc Date", "mfc_date"),
     ("Units Remaining", "remaining"),
     ("Units Total", "quantity"),
@@ -578,17 +579,25 @@ def _default_bol_reference():
 def _extract_bol_fields(path, ocr_if_needed=False):
     """OCR-text guesses for a BOL PDF (blocking; run in an executor).
 
-    Returns {"bol_number", "po_number", "vendor", "ocr_text"} with "" for
-    anything not found. With `ocr_if_needed` (uploads), a PDF with no text
-    layer is first OCRed in place via NAPS2; scanned PDFs already got their
-    text layer during the scan itself.
+    Returns {"bol_number", "po_number", "vendor", "ocr_text", "line_items"}
+    with "" / [] for anything not found. When a Mistral API key is
+    configured, extraction goes through the cloud OCR first
+    (ocr_mistral.py); any failure there falls back to the local path, which
+    can't parse line items. With `ocr_if_needed` (uploads), a PDF with no
+    text layer is first OCRed in place via NAPS2; scanned PDFs already got
+    their text layer during the scan itself.
     """
+    vendors = state.db.list_vendors() if state.db else []
+    if ocr_mistral.enabled():
+        fields = ocr_mistral.extract_fields(path, vendors)
+        if fields is not None:
+            return fields
     text = scanner.extract_pdf_text(path)
     if not text and ocr_if_needed and scanner.ocr_pdf(path):
         text = scanner.extract_pdf_text(path)
-    vendors = state.db.list_vendors() if state.db else []
     fields = bol_extract.extract_fields(text, vendors)
     fields["ocr_text"] = text
+    fields["line_items"] = []
     return fields
 
 
@@ -633,7 +642,8 @@ async def bol_scan(req: BolScanRequest):
             None, lambda: state.db.apply_bol_extraction(
                 doc_id, bol_number=extracted["bol_number"],
                 vendor=extracted["vendor"], po_number=extracted["po_number"],
-                ocr_text=extracted["ocr_text"]))
+                ocr_text=extracted["ocr_text"],
+                line_items=extracted["line_items"]))
         return {"ok": True, "doc": doc, "appended": True}
 
     filename = _new_scan_filename()
@@ -651,7 +661,8 @@ async def bol_scan(req: BolScanRequest):
         None, lambda: state.db.create_bol_doc(
             reference, filename, "scan", pages,
             vendor=extracted["vendor"], po_number=extracted["po_number"],
-            ocr_text=extracted["ocr_text"]))
+            ocr_text=extracted["ocr_text"],
+            line_items=extracted["line_items"]))
     return {"ok": True, "doc": doc}
 
 
@@ -690,7 +701,8 @@ async def bol_upload(file: UploadFile = File(...)):
         None, lambda: state.db.create_bol_doc(
             reference, filename, "upload", pages,
             vendor=extracted["vendor"], po_number=extracted["po_number"],
-            ocr_text=extracted["ocr_text"]))
+            ocr_text=extracted["ocr_text"],
+            line_items=extracted["line_items"]))
     return {"ok": True, "doc": doc}
 
 
@@ -951,7 +963,7 @@ class CheckinItemRequest(BaseModel):
 
 @app.post("/api/checkin_item")
 async def set_checkin_item(req: CheckinItemRequest):
-    """Set the per-unit fields (SKU, mfc date) for the next check-in tag."""
+    """Set the per-unit fields (Item No., mfc date) for the next check-in tag."""
     if state.intake is None:
         return JSONResponse({"ok": False, "message": "Database not available"}, 503)
     state.intake.set_item_fields(req.fields or {})
@@ -994,7 +1006,7 @@ class CheckinAmendRequest(BaseModel):
 
 @app.post("/api/checkin/amend")
 async def checkin_amend(req: CheckinAmendRequest):
-    """Operator fix of the tag that was just checked in (SKU / mfc date / qty).
+    """Operator fix of the tag that was just checked in (Item No. / mfc date / qty).
 
     Not PIN-gated: it only touches the per-unit fields and is meant for
     correcting a typo immediately after the trigger pull.

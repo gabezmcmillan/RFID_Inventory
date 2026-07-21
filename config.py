@@ -116,6 +116,15 @@ SCANS_DIR = os.path.join(BASE_DIR, "scans")
 OCR_ENABLED = True
 OCR_LANG = "eng"
 
+# Cloud OCR (Mistral OCR 4): when an API key is set (settings.ini,
+# mistral_api_key), BOL field extraction goes through Mistral's layout-aware
+# /v1/ocr endpoint first (see ocr_mistral.py) and only falls back to the
+# local Tesseract text layer + heuristics when the call fails or the key is
+# blank. The stored PDF and its NAPS2 text layer are unaffected either way.
+MISTRAL_API_KEY = "XQOekdK3blrHbZlI4IuxgOKBBi8CXH8H"
+MISTRAL_OCR_MODEL = "mistral-ocr-latest"
+MISTRAL_OCR_TIMEOUT_SECONDS = 45
+
 # ---------------------------------------------------------------------------
 # Label printer (Zebra ZD621R, raw ZPL over USB or TCP -- see printer.py)
 # ---------------------------------------------------------------------------
@@ -182,6 +191,8 @@ if _ini.read(os.path.join(BASE_DIR, "settings.ini")) and "settings" in _ini:
     PRINTER_HOST = _s.get("printer_host", PRINTER_HOST).strip() or PRINTER_HOST
     PRINTER_PORT = _s.getint("printer_port", fallback=PRINTER_PORT)
     ADMIN_PIN = _s.get("admin_pin", ADMIN_PIN).strip() or ADMIN_PIN
+    MISTRAL_API_KEY = (_s.get("mistral_api_key", MISTRAL_API_KEY).strip()
+                       or MISTRAL_API_KEY)
     HOST = _s.get("host", HOST).strip() or HOST
     PORT = _s.getint("port", fallback=PORT)
     CLOUD_URL = _s.get("cloud_url", CLOUD_URL).strip() or CLOUD_URL
@@ -198,7 +209,7 @@ if _ini.read(os.path.join(BASE_DIR, "settings.ini")) and "settings" in _ini:
 #   "shipment" : entered once when arming the shipment, applied to every tag
 #                in it (Building #, BOL Number, Vendor).
 #   "item"     : entered per unit, just before pulling the trigger on that tag
-#                (SKU, Manufactured Date) -- each tag can differ.
+#                (Item No., Manufactured Date) -- each tag can differ.
 # Each field: key (stored), label (shown in UI), type (input type), scope.
 # Building # is a fixed set of buttons (edit here to change the choices). Vendor
 # is a dropdown whose options live in the DB and are managed in the Admin view;
@@ -215,7 +226,7 @@ SHIPMENT_FIELDS = [
     {"key": "vendor",          "label": "Vendor",     "type": "select", "scope": "shipment"},
 ]
 ITEM_FIELDS = [
-    {"key": "sku",      "label": "SKU",               "type": "text",   "scope": "item"},
+    {"key": "sku",      "label": "Item No.",          "type": "text",   "scope": "item"},
     {"key": "mfc_date", "label": "Manufactured Date", "type": "date",   "scope": "item"},
     {"key": "quantity", "label": "Quantity (units in this box)", "type": "number",
      "scope": "item"},

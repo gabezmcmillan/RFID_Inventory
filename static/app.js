@@ -20,7 +20,7 @@ const EDIT_FIELDS = [
   { key: "building", label: "Building #", type: "building" },
   { key: "sector", label: "Sector", type: "text" },
   { key: "vendor", label: "Vendor", type: "vendor" },
-  { key: "sku", label: "SKU", type: "text" },
+  { key: "sku", label: "Item No.", type: "text" },
   { key: "mfc_date", label: "Mfc date", type: "date" },
   { key: "quantity", label: "Quantity (box size)", type: "number" },
   { key: "remaining", label: "Units remaining", type: "number" },
@@ -501,6 +501,7 @@ function renderBolRename() {
 // already armed, re-arm it so the reader files subsequent tags correctly.
 async function syncBolIntoCheckin() {
   applyBolToForm();
+  renderBolItemChips();
   if (state.shipment && state.bolDoc) {
     state.shipment.fields.bol_number = state.bolDoc.bol_number;
     state.shipment.fields.bol_doc_id = String(state.bolDoc.id);
@@ -1045,6 +1046,7 @@ function renderItemForm(type) {
     ? "Fill in this unit's details, then pull the trigger to tag it \u2014 or print &amp; encode a fresh label for it."
     : "Fill in this unit's details, then pull the trigger to tag it.";
   form.innerHTML = `<p class="hint">${hint}</p>`;
+  renderBolItemChips();
   fieldsForScope(type, "item").forEach((f) => {
     const field = buildField(f, "it_");
     const inp = field.querySelector("input, select");
@@ -1060,6 +1062,51 @@ function renderItemForm(type) {
     btn.onclick = printAndEncodeLabel;
     form.appendChild(btn);
   }
+}
+
+// Goods lines parsed off the scanned BOL (cloud OCR): a tappable chip per
+// line item. Tapping fills Item No. (and Item Name, when the type has one)
+// for the next tag and posts the fields, exactly like typing them would.
+// Renders nothing when the active document has no parsed items.
+function renderBolItemChips() {
+  const form = $("item-form");
+  if (!form) return;
+  const old = $("bol-item-chips");
+  if (old) old.remove();
+  const items = (state.bolDoc && state.bolDoc.line_items) || [];
+  if (!items.length) return;
+  const wrap = document.createElement("div");
+  wrap.id = "bol-item-chips";
+  wrap.className = "bol-item-chips";
+  const label = document.createElement("div");
+  label.className = "bol-item-chips-label";
+  label.textContent = "Items on this BOL \u2014 tap to fill";
+  wrap.appendChild(label);
+  items.forEach((it) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "bol-item-chip";
+    let text = it.item_name
+      ? `${it.item_no} \u2014 ${it.item_name}` : it.item_no;
+    if (it.quantity) text += ` \u00d7 ${it.quantity}`;
+    chip.textContent = text;
+    chip.onclick = () => {
+      const sku = $("it_sku");
+      if (sku) sku.value = it.item_no;
+      const name = $("it_item_name");
+      if (name && it.item_name) name.value = it.item_name;
+      const qty = $("it_quantity");
+      if (qty && it.quantity) qty.value = it.quantity;
+      wrap.querySelectorAll(".bol-item-chip")
+        .forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      postItemFields();
+    };
+    wrap.appendChild(chip);
+  });
+  const hintEl = form.querySelector(".hint");
+  if (hintEl) hintEl.after(wrap);
+  else form.prepend(wrap);
 }
 
 // Check a box in via the label printer: the server mints an EPC, the ZD621R
@@ -1289,7 +1336,7 @@ function renderCheckinSummary(msg) {
     ? `<p class="hint">${msg.duplicates.length} tag(s) were already on file (not re-counted).</p>` : "";
   const itemName = msg.item_name
     ? `<tr><th>Item Name</th><td>${escapeHtml(msg.item_name)}</td></tr>` : "";
-  const sku = msg.sku ? `<tr><th>SKU</th><td>${escapeHtml(msg.sku)}</td></tr>` : "";
+  const sku = msg.sku ? `<tr><th>Item No.</th><td>${escapeHtml(msg.sku)}</td></tr>` : "";
   const mfc = msg.mfc_date ? `<tr><th>Mfc date</th><td>${escapeHtml(msg.mfc_date)}</td></tr>` : "";
   const boxUnits = msg.quantity != null ? msg.quantity : msg.added_units;
   const epcRow = msg.epc
@@ -1318,7 +1365,7 @@ function renderCheckinSummary(msg) {
   if (btn) btn.onclick = () => renderCheckinAmend(msg);
 }
 
-// Quick fix of the box that was just scanned (typo in qty / SKU / mfc date).
+// Quick fix of the box that was just scanned (typo in qty / Item No. / mfc date).
 // Scanning stays armed the whole time, so the flow isn't interrupted.
 function renderCheckinAmend(msg) {
   const qty = msg.quantity != null ? msg.quantity : 1;
@@ -1331,7 +1378,7 @@ function renderCheckinAmend(msg) {
   showResult("ok", `Edit box ${msg.epc}`,
     `<div class="checkin-amend-form">
        ${itemNameField}
-       <label class="edit-field"><span>SKU</span>
+       <label class="edit-field"><span>Item No.</span>
          <input id="amend-sku" type="text" value="${escapeHtml(msg.sku || "")}" /></label>
        <label class="edit-field"><span>Manufactured Date</span>
          <input id="amend-mfc" type="date" value="${escapeHtml(msg.mfc_date || "")}" /></label>
@@ -1486,7 +1533,7 @@ function showCheckoutCard(msg) {
        ${itemNameRow}
        <tr><th>BOL Number</th><td>${escapeHtml(msg.bol_number || "n/a")}</td></tr>
        <tr><th>Building</th><td>${escapeHtml(msg.building || "n/a")}</td></tr>
-       <tr><th>SKU</th><td>${escapeHtml(msg.sku || "")}</td></tr>
+       <tr><th>Item No.</th><td>${escapeHtml(msg.sku || "")}</td></tr>
        <tr><th>Units in this box</th><td>${remaining} of ${quantity}</td></tr>
      </table>
      <div class="checkout-bldg">
@@ -1904,7 +1951,7 @@ function renderSweepResult(cmp) {
         <strong>&#9888; ${cmp.missing_count} box(es) expected in the warehouse but NOT detected:</strong>
         <table>
           <thead><tr><th>EPC</th><th>Type</th><th>BOL</th><th>Building</th>
-            <th>SKU</th><th>Qty</th><th></th></tr></thead>
+            <th>Item No.</th><th>Qty</th><th></th></tr></thead>
           <tbody>${mrows}</tbody>
         </table>
         <p class="hint">Keep sweeping to pick up more tags, or use Find to hunt one down.</p>
@@ -1983,7 +2030,7 @@ function sweepDetailsHtml(items) {
       <summary>View detailed scan (${items.length} box${items.length === 1 ? "" : "es"})</summary>
       <table>
         <thead><tr><th>EPC</th><th>Type</th><th>Qty</th><th>BOL</th><th>PO</th><th>Building</th>
-          <th>Vendor</th><th>SKU</th><th>Mfc date</th><th>Checked in</th>
+          <th>Vendor</th><th>Item No.</th><th>Mfc date</th><th>Checked in</th>
           <th>Checked out</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -2194,7 +2241,7 @@ async function loadGroupTags(cell, itemType, groupBy, value, groupInfo, named) {
         tagRowHtml(tag, itemType, editing, groupBy, named)).join("");
       tableHtml = `<table class="wh-tag-table">
         <thead><tr><th>EPC</th>${dimHeads}<th>PO #</th>
-          <th>SKU</th><th>Qty</th><th>Mfc date</th>
+          <th>Item No.</th><th>Qty</th><th>Mfc date</th>
           <th>Checked in</th><th>Checked out</th><th>Checked out to</th>
           <th>Status</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table>`;

@@ -524,6 +524,37 @@ main {
 .bol-recent-item:hover { border-color: var(--accent); }
 .bol-recent-item span { color: var(--muted); font-size: 13px; }
 
+/* Line items parsed off the scanned BOL: one-tap prefill chips */
+.bol-item-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 18px;
+}
+.bol-item-chips-label {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.bol-item-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+.bol-item-chip:hover { border-color: var(--accent); }
+.bol-item-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* Active truckload banner */
 .bol-banner {
   display: flex;

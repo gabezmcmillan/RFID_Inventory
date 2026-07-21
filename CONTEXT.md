@@ -13,7 +13,8 @@ lazily, when a design conversation actually sharpens one.
 - **Armed shipment** — the item type + shipment-scope fields that scanned
   tags file under, set when the operator opens check-in (`intake.arm`).
   Lives in intake, not on the reader: the reader only reports which EPC it
-  saw. Per-unit fields (SKU, mfc date) ride alongside and reset on re-arm.
+  saw. Per-unit fields (Item No., mfc date) ride alongside and reset on
+  re-arm. "Item No." is the user-facing name for the `sku` key/column.
 
 ## Sync
 

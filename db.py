@@ -7,8 +7,8 @@ derived aggregation over tags grouped by (item_type, bol_number, building), so
 quantities are always a COUNT and can never drift out of sync.
 
 Tables (created on first run):
-  tags       EPC -> item_type, BOL#, Building#, Sector, Vendor, SKU, mfc date,
-             status, received_at, delivered_at. One row per physical tag.
+  tags       EPC -> item_type, BOL#, Building#, Sector, Vendor, Item No. (sku),
+             mfc date, status, received_at, delivered_at. One row per tag.
   events     Append-only audit log (IN / OUT / COUNT / ...).
   requests   Material requests pulled from the cloud app (cloud id == local id)
              plus the manager's handling status.
@@ -27,6 +27,7 @@ Plus read helpers for the interactive inventory view and finder:
   inventory_tree(group_by), group_tags(item_type, group_by, value), find_tag(epc)
 """
 
+import json
 import os
 import sqlite3
 import threading
@@ -147,6 +148,10 @@ class Database:
                     vendor     TEXT NOT NULL DEFAULT '',
                     po_number  TEXT NOT NULL DEFAULT '',
                     ocr_text   TEXT NOT NULL DEFAULT '',
+                    -- Goods lines parsed off the document (JSON array of
+                    -- {item_no, item_name}); check-in offers them as
+                    -- one-tap prefills. Local-only, like ocr_text.
+                    line_items TEXT NOT NULL DEFAULT '[]',
                     auto_named INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL
                 );
@@ -235,6 +240,11 @@ class Database:
             if col not in have_docs:
                 self._conn.execute(
                     f"ALTER TABLE bol_docs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        # Goods lines parsed off the document (JSON [{item_no, item_name}]).
+        if "line_items" not in have_docs:
+            self._conn.execute(
+                "ALTER TABLE bol_docs ADD COLUMN line_items "
+                "TEXT NOT NULL DEFAULT '[]'")
         if "auto_named" not in have_docs:
             self._conn.execute(
                 "ALTER TABLE bol_docs ADD COLUMN auto_named INTEGER NOT NULL DEFAULT 1")
@@ -424,7 +434,7 @@ class Database:
                 "sku": sku, "mfc_date": mfc_date}
 
     def amend_checkin(self, epc, fields):
-        """Operator correction of a just-checked-in box (item name, SKU,
+        """Operator correction of a just-checked-in box (item name, Item No.,
         mfc date, quantity).
 
         Not PIN-gated: this fixes typos right after a trigger pull, before the
@@ -480,29 +490,35 @@ class Database:
     # and future search, not something the UI needs on every payload.
     @staticmethod
     def _bol_doc_dict(row):
+        try:
+            line_items = json.loads(row["line_items"] or "[]")
+        except (ValueError, TypeError):
+            line_items = []
         return {"id": row["id"], "bol_number": row["bol_number"],
                 "filename": row["filename"], "source": row["source"],
                 "pages": row["pages"], "vendor": row["vendor"],
                 "po_number": row["po_number"],
+                "line_items": line_items,
                 "auto_named": bool(row["auto_named"]),
                 "created_at": row["created_at"]}
 
     def create_bol_doc(self, bol_number, filename, source="scan", pages=1,
-                       vendor="", po_number="", ocr_text=""):
+                       vendor="", po_number="", ocr_text="", line_items=None):
         """Register a scanned/uploaded BOL PDF and log a BOL_SCAN event.
 
-        vendor/po_number are OCR guesses (may be ""); the BOL number passed in
-        is either an OCR guess or a generated placeholder, so the doc starts
-        auto_named=1 until the operator confirms it via rename.
+        vendor/po_number/line_items are OCR guesses (may be empty); the BOL
+        number passed in is either an OCR guess or a generated placeholder,
+        so the doc starts auto_named=1 until the operator confirms it via
+        rename.
         """
         ts = _now()
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO bol_docs (bol_number, filename, source, pages, "
-                "vendor, po_number, ocr_text, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                "vendor, po_number, ocr_text, line_items, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
                 (bol_number, filename, source, pages, vendor, po_number,
-                 ocr_text, ts))
+                 ocr_text, json.dumps(line_items or []), ts))
             doc_id = cur.lastrowid
             extracted = ", ".join(
                 s for s in (f"vendor {vendor}" if vendor else "",
@@ -614,13 +630,14 @@ class Database:
             self._conn.commit()
 
     def apply_bol_extraction(self, doc_id, bol_number="", vendor="",
-                             po_number="", ocr_text=""):
+                             po_number="", ocr_text="", line_items=None):
         """Fold a re-run OCR extraction (after Add page) into the document.
 
         Non-destructive: the BOL number is only replaced while it is still
         machine-generated (auto_named=1) -- and tags already filed under the
-        doc follow, as with rename. Vendor/PO fill in only if still empty.
-        The stored ocr_text is always refreshed (it covers all pages now).
+        doc follow, as with rename. Vendor/PO/line items fill in only if
+        still empty. The stored ocr_text is always refreshed (it covers all
+        pages now).
         """
         ts = _now()
         with self._lock:
@@ -630,6 +647,10 @@ class Database:
                 return None
             self._conn.execute(
                 "UPDATE bol_docs SET ocr_text=? WHERE id=?", (ocr_text, doc_id))
+            if line_items and (row["line_items"] or "[]") in ("", "[]"):
+                self._conn.execute(
+                    "UPDATE bol_docs SET line_items=? WHERE id=?",
+                    (json.dumps(line_items), doc_id))
             if vendor and not row["vendor"]:
                 self._conn.execute(
                     "UPDATE bol_docs SET vendor=? WHERE id=?", (vendor, doc_id))
