@@ -1,18 +1,19 @@
 """
-Cloud app for the warehouse: switch-warehouse.brasfieldgorrie.com
+Cloud app for the warehouse: rfid-inventory-sync.magnus.brasfieldgorrie.app
 
-Two jobs, one small FastAPI process (App Service + Azure PostgreSQL):
+Two jobs, one small FastAPI process (deployed on Vercel as a serverless
+function, with Vercel Postgres/Neon behind it -- see README.md):
 
   1. /sync/exchange -- the private API the warehouse .exe calls (outbound
      HTTPS from the warehouse PC; the cloud never calls into the .exe). Auth
-     is a bearer token (SYNC_TOKEN env var), NOT Entra SSO -- exclude /sync/*
-     from Easy Auth when enabling it (see README.md).
+     is a bearer token (SYNC_TOKEN env var).
   2. The employee-facing site: a browse-the-stock table with a shopping cart
      (pick rows, set quantities, check out with contact/jobsite/notes) plus
      an order-status page. Requests queue in Postgres until the .exe's next
-     sync. Sign-in is handled by App Service Easy Auth (Entra ID) in front
-     of the app; the app itself stays auth-agnostic (headers only prefill
-     the checkout form).
+     sync. The app itself stays auth-agnostic: any sign-in layer put in
+     front of it (e.g. Azure Easy Auth on the alternative deployment) must
+     leave /sync/* and /healthz open; identity headers only prefill the
+     checkout form.
 
 Run locally:
   DATABASE_URL=postgresql://postgres:postgres@localhost:5433/warehouse \

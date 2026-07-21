@@ -2,8 +2,8 @@
 Shared configuration for the RFID inventory web app.
 
 Edit the hardware/connection values for your machine. The item-type and field
-definitions drive both the Google Sheets schema and the browser form, so adding
-a new type or field here automatically flows through the whole app.
+definitions drive both the SQLite schema and the browser form, so adding a new
+type or field here automatically flows through the whole app.
 """
 
 import configparser
@@ -161,7 +161,7 @@ PORT = 8000
 # worker pushes inventory to the cloud app and pulls material requests every
 # SYNC_INTERVAL_SECONDS. Leave CLOUD_URL empty to run without a cloud at all.
 # These are normally set per machine in settings.ini, not here.
-CLOUD_URL = ""            # e.g. "https://switch-warehouse.brasfieldgorrie.com"
+CLOUD_URL = ""            # e.g. "https://rfid-inventory-sync.magnus.brasfieldgorrie.app"
 SYNC_TOKEN = ""           # bearer token; must match the cloud app's SYNC_TOKEN
 SYNC_ENABLED = True       # master switch (only matters when CLOUD_URL is set)
 SYNC_INTERVAL_SECONDS = 30
@@ -247,7 +247,8 @@ TYPE_FIELDS = {
 def all_field_defs():
     """Ordered, de-duplicated list of every field used across all types.
 
-    Used to build a single stable column layout for the Items worksheet.
+    Used to build a single stable column layout for the tags table and the
+    warehouse views.
     """
     seen = {}
     for fields in TYPE_FIELDS.values():

@@ -6,9 +6,9 @@ everything written to a local SQLite database (`inventory.db`).
 
 The app is **offline-first**: everything works with no internet at all. When a
 cloud URL is configured (see *Cloud site + sync* below), a background worker
-mirrors inventory to a small Azure-hosted site
-(`switch-warehouse.brasfieldgorrie.com`) where jobsite users can view stock and
-submit material requests that flow back into the app.
+mirrors inventory to a small Vercel-hosted site
+(`rfid-inventory-sync.magnus.brasfieldgorrie.app`) where jobsite users can view
+stock and submit material requests that flow back into the app.
 
 ## Modes
 
@@ -22,7 +22,10 @@ submit material requests that flow back into the app.
   physical unit enter its per-unit fields (SKU, Manufactured Date) and pull the
   trigger to tag it. Every tag is linked to the BOL PDF (viewable from the
   Warehouse). Uploading a PDF or typing the BOL # manually are available as
-  fallbacks; uploads are OCRed too when they carry no text layer.
+  fallbacks; uploads are OCRed too when they carry no text layer. When a label
+  printer is configured (see *Label printer* below), check-in can instead
+  **print + RFID-encode a 4x6 label** per box: the app mints the EPC, the
+  printer burns it into the label's inlay, and the box is recorded in one step.
 - **Check Out** — pull the trigger on a tag to deliver it to site. The app looks
   up its shipment, stamps the delivered date, and decrements the group quantity
   (marking the group Delivered when it reaches zero).
@@ -69,6 +72,42 @@ pip install -r requirements.txt
 - The database is created automatically at `config.DB_PATH` (`inventory.db`) on
   first run. It is gitignored, so each machine starts fresh.
 
+### Label printer (Zebra ZD621R)
+
+Label printing + RFID encoding is optional — with no printer configured the
+Print button is simply hidden. The printer speaks raw ZPL and is reached one
+of two ways; set exactly **one** of these in `settings.ini` (next to the exe,
+or in the repo root when running from source):
+
+- **Network** — set `printer_host` to the printer's IP on the warehouse LAN
+  (ZPL over TCP port 9100, no driver needed):
+
+  ```ini
+  printer_host = 10.1.57.18
+  printer_port = 9100
+  ```
+
+  The IP is DHCP-assigned; if labels stop printing, check the current address
+  on the printer's LCD (Menu > Network > Wired) and update `printer_host`.
+
+- **USB (Windows only)** — install Zebra's ZDesigner driver, then set
+  `printer_queue` to the print-queue name exactly as it appears in Settings >
+  Printers & scanners:
+
+  ```ini
+  printer_queue = ZDesigner ZD621R-300dpi ZPL
+  ```
+
+  ZPL is sent through the spooler as a RAW job (the driver passes it through
+  untouched). USB printing requires the `pywin32` package (included in
+  `requirements.txt` on Windows / the built exe). If both settings are set,
+  the USB queue wins.
+
+The printer stores its own media and RFID calibration: if labels start
+voiding with "NO TAG FOUND" or a blank label trails each print, re-run RFID
+calibration from the printer's LCD (Menu > RFID > RFID Calibrate). Printer
+health is shown in the app and available at `/api/printer/status`.
+
 ## Run
 
 ```bash
@@ -98,23 +137,26 @@ window stops the app) and opens the browser UI automatically.
 Notes for the machine that runs the exe:
 
 - `settings.ini` next to the exe holds the per-machine values (serial port,
-  admin PIN, web port, and the cloud sync settings `cloud_url` /
-  `sync_token`). The default `serial_port = auto` finds the reader on its
-  own; pin it to e.g. `COM3` if needed (Device Manager > Ports).
+  printer settings `printer_queue` / `printer_host`, admin PIN, web port, and
+  the cloud sync settings `cloud_url` / `sync_token`). The default
+  `serial_port = auto` finds the reader on its own; pin it to e.g. `COM3` if
+  needed (Device Manager > Ports).
 - `inventory.db` and `scans\` are created next to the exe on first run — back
   up / migrate by copying them.
 - Still separate installs (not bundled): [NAPS2](https://www.naps2.com) and
-  the Epson ES-50 driver for BOL scanning. The RFID reader's USB-serial (FTDI)
-  driver installs itself via Windows Update on first plug-in.
+  the Epson ES-50 driver for BOL scanning, plus Zebra's ZDesigner driver if
+  the label printer is attached over USB (not needed for network printing).
+  The RFID reader's USB-serial (FTDI) driver installs itself via Windows
+  Update on first plug-in.
 - The exe is unsigned, so the first launch may show a SmartScreen warning:
   "More info" > "Run anyway".
 
 ## Cloud site + sync (optional)
 
-The `cloud/` directory holds a second, lightweight FastAPI app meant for Azure
-App Service + Azure Database for PostgreSQL. It serves a **read-only inventory
-view** and a **material request form** for jobsite users; the warehouse app
-never needs to be reachable from the internet.
+The `cloud/` directory holds a second, lightweight FastAPI app deployed to
+**Vercel** (a Python serverless function + Vercel Postgres/Neon). It serves a
+**read-only inventory view** and a **material request form** for jobsite
+users; the warehouse app never needs to be reachable from the internet.
 
 - The exe's sync worker (`sync.py`) calls `POST {cloud_url}/sync/exchange`
   every ~30 s (and on demand via the Sync pill / "Sync now"): it pushes a
@@ -128,14 +170,14 @@ never needs to be reachable from the internet.
 - To enable it, set in `settings.ini`:
 
   ```ini
-  cloud_url = https://switch-warehouse.brasfieldgorrie.com
+  cloud_url = https://rfid-inventory-sync.magnus.brasfieldgorrie.app
   sync_token = <shared secret, same as the cloud app's SYNC_TOKEN>
   ```
 
 - Running the cloud app locally (Docker Postgres), the end-to-end test
-  (`cloud/test_sync.py`), and the deployment walkthroughs (Vercel — the
-  current plan — plus Azure App Service as an alternative) live in
-  [cloud/README.md](cloud/README.md).
+  (`cloud/test_sync.py`), and the deployment walkthrough (Vercel — the
+  current deployment — plus Azure App Service kept as an unused alternative)
+  live in [cloud/README.md](cloud/README.md).
 
 ## Database tables (auto-created)
 

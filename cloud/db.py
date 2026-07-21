@@ -1,5 +1,5 @@
 """
-Postgres layer for the cloud app (Azure Database for PostgreSQL).
+Postgres layer for the cloud app (Vercel Postgres / Neon in production).
 
 Same house style as the local db.py: raw SQL, no ORM. The cloud holds
 
@@ -14,7 +14,7 @@ Connection comes from the DATABASE_URL environment variable, e.g.
   postgresql://user:password@host:5432/warehouse
 A single connection guarded by a lock is plenty at this scale (the local app
 uses the same pattern); calls reconnect once if Postgres dropped an idle
-connection, which Azure does after a while.
+connection, which managed/serverless Postgres does after a while.
 """
 
 import base64
