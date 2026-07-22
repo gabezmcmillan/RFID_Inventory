@@ -364,3 +364,51 @@ Stop and report back (do not improvise) if:
   until then tests pass `deviceId` explicitly.
 - Deferred: full-text search over `bol_docs.ocr_text`, and any schema change
   beyond `storage_url`/`updated_at` — do not add columns speculatively.
+
+## Amendment: Drizzle adoption (2026-07-22)
+
+The data-access layer was retrofitted from the hand-rolled `SqlDatabase` seam +
+raw SQL strings to **Drizzle ORM** (`drizzle-orm@rc` / `drizzle-kit@rc`) over the
+Turso drivers. What changed and why:
+
+- **Schema as source of truth.** `src/schema.ts` is now Drizzle `sqliteTable`
+  definitions, faithfully reproducing the prior DDL (every table, column type,
+  `NOT NULL`, default, `UNIQUE`, `AUTOINCREMENT`, and index). Column DB names
+  stay snake_case and identical to the legacy schema; the TS property names are
+  also snake_case so the inferred row types drop in for the old hand-written row
+  types without renaming anything downstream (the public API keeps stable
+  names). `drizzle-kit generate` produced the initial migration under
+  `packages/domain/drizzle/`; `src/migrate.ts` runs it via Drizzle's built-in
+  Turso migrator. The old `SCHEMA_SQL` / `applySchema` are gone.
+- **Inferred types replace hand-written row types.** `TagRow`, `Note`, and
+  `MaterialRequest` are now `typeof <table>.$inferSelect` re-exported under the
+  same names; `Tag` (the public dict), `EventRow` (coalesced), `BolDoc`/`BolLineItem`
+  (parsed JSON / boolean), and the `*Result` shapes stay hand-written as
+  genuinely domain-level types. `src/types.ts` no longer duplicates table shapes.
+- **Repos use Drizzle.** All `src/repo/*.ts` and `src/importer/importLegacy.ts`
+  take a shared `DomainDb = TursoDatabaseDatabase` (the precise async SQLite
+  database type Drizzle's Turso driver returns — no `any`, no schema generic
+  needed since `db.select().from(table)` is typed from the table). The builder
+  API is used everywhere; the `inventoryTree` aggregation (CASE over the
+  named-type set, GROUP BY over computed columns, joined note counts) and the
+  importer's id-preserving inserts use Drizzle's `sql` template operator with
+  typed result mapping — the preferred shape for complex aggregates and
+  dynamic-but-whitelisted identifiers. All queries stay parameterized.
+  `withTransaction` now wraps `db.run(sql\`BEGIN IMMEDIATE\` / COMMIT / ROLLBACK)`.
+- **Migrations via drizzle-kit.** `drizzle.config.ts` + `src/migrate.ts`; the
+  test harness (`src/testing/openTestDb.ts`) opens an in-memory Turso database,
+  wraps it with Drizzle, and applies migrations. The generated migration SQL
+  matches the old DDL semantics (defaults, uniques, indexes, autoincrement).
+- **Old seam removed.** `src/sql.ts` and the `wrapTurso` `SqlDatabase` adapter
+  are deleted; the importer/migrator go through `db.run(sql\`...\`)`. The main
+  `src/index.ts` entry no longer re-exports the Node-only test helpers (they
+  live in `src/testing/`, a separate entry) so the main entry pulls no Node
+  Turso driver at runtime; `db.ts`'s driver import is type-only.
+
+Net: 30/30 tests green, `pnpm --filter @rfid/domain typecheck` clean, no
+`react-native` imports, no `any`/`as unknown as`/`@ts-*` in the package source.
+The one test-body change: the schema table-list assertion now filters out the
+drizzle migrations journal (`__drizzle_migrations`) and the Turso 0.7
+per-AUTOINCREMENT internal sequence tables (`__turso_internal_seq_*`), which
+the mandated driver + migrator introduce and which are not domain tables; the
+domain-table set assertion remains strict.

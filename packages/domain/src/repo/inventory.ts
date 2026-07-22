@@ -3,8 +3,15 @@
  * export, and the finder (db.py:859-1112).
  *
  * Dynamic identifiers (`group_by`) are mapped through the typed
- * `GROUP_COLUMNS` whitelist and never reach SQL from a caller string.
+ * `GROUP_COLUMNS` whitelist and never reach SQL from a caller string. The
+ * `inventoryTree` aggregation (CASE over the named-type set, GROUP BY over
+ * computed columns, joined note counts) fights the query builder, so it uses
+ * Drizzle's `sql` template operator with typed result mapping — the preferred
+ * shape for complex aggregates.
  */
+
+import { and, asc, eq, inArray, like, ne, sql, type SQL } from "drizzle-orm";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 
 import {
   GROUP_COLUMNS,
@@ -13,8 +20,9 @@ import {
   STATUS_IN,
   STATUS_PARTIAL,
 } from "../constants.js";
-import type { SqlDatabase } from "../sql.js";
-import { withTransaction } from "../sql.js";
+import type { DomainDb } from "../db.js";
+import { withTransaction } from "../db.js";
+import { notes, tags } from "../schema.js";
 import type {
   CompareInventoryResult,
   FlaggedTag,
@@ -30,45 +38,33 @@ import type {
 import { logEvent } from "./events.js";
 import { dateOf, now, tagDict } from "./util.js";
 
-/** Shared warehouse-filter WHERE builder (db.py:926-955). */
-function filterWhere(filters: InventoryFilters | null | undefined): {
-  clause: string;
-  params: unknown[];
-} {
+/** Map a whitelisted group column name to its Drizzle column on `tags`. */
+const GROUP_COLUMN: Record<string, AnySQLiteColumn> = {
+  bol_number: tags.bol_number,
+  building: tags.building,
+  item_name: tags.item_name,
+};
+
+/** Shared warehouse-filter WHERE builder (db.py:926-955), as a Drizzle SQL fragment. */
+function filterWhere(filters: InventoryFilters | null | undefined): SQL | undefined {
   const f = filters ?? {};
-  const where: string[] = [];
-  const params: unknown[] = [];
-  if (f.bol) {
-    where.push("bol_number LIKE ?");
-    params.push(`%${f.bol}%`);
-  }
-  if (f.building) {
-    where.push("building = ?");
-    params.push(String(f.building));
-  }
-  if (f.received_from) {
-    where.push("substr(received_at, 1, 10) >= ?");
-    params.push(f.received_from);
-  }
-  if (f.received_to) {
-    where.push("substr(received_at, 1, 10) <= ?");
-    params.push(f.received_to);
-  }
+  const conds: SQL[] = [];
+  if (f.bol) conds.push(like(tags.bol_number, `%${f.bol}%`));
+  if (f.building) conds.push(eq(tags.building, String(f.building)));
+  if (f.received_from) conds.push(sql`substr(${tags.received_at}, 1, 10) >= ${f.received_from}`);
+  if (f.received_to) conds.push(sql`substr(${tags.received_at}, 1, 10) <= ${f.received_to}`);
   if (f.checked_out_from) {
-    where.push("delivered_at != '' AND substr(delivered_at, 1, 10) >= ?");
-    params.push(f.checked_out_from);
+    conds.push(sql`${tags.delivered_at} != '' AND substr(${tags.delivered_at}, 1, 10) >= ${f.checked_out_from}`);
   }
   if (f.checked_out_to) {
-    where.push("delivered_at != '' AND substr(delivered_at, 1, 10) <= ?");
-    params.push(f.checked_out_to);
+    conds.push(sql`${tags.delivered_at} != '' AND substr(${tags.delivered_at}, 1, 10) <= ${f.checked_out_to}`);
   }
-  const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
-  return { clause, params };
+  return and(...conds);
 }
 
 /** Inventory sweep (db.py:859-901). Read-only for quantities; logs `COUNT` per tag. */
 export async function recordInventory(
-  db: SqlDatabase,
+  db: DomainDb,
   epcs: string[],
 ): Promise<RecordInventoryResult> {
   const counts: Record<string, number> = {};
@@ -81,7 +77,8 @@ export async function recordInventory(
 
   await withTransaction(db, async () => {
     for (const epc of ordered) {
-      const row = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [epc]);
+      const rows = await db.select().from(tags).where(eq(tags.epc, epc));
+      const row = rows[0];
       if (!row) {
         unknown.push(epc);
         await logEvent(db, "COUNT", epc, "UNKNOWN");
@@ -90,10 +87,10 @@ export async function recordInventory(
       items.push(tagDict(row));
       if (row.remaining <= 0) {
         const flag = `Checked out ${dateOf(row.delivered_at)}; detected in sweep`;
-        await db.run(
-          "UPDATE tags SET flag=?, flagged_at=?, updated_at=? WHERE epc=?",
-          [flag, ts, ts, epc],
-        );
+        await db
+          .update(tags)
+          .set({ flag, flagged_at: ts, updated_at: ts })
+          .where(eq(tags.epc, epc));
         await logEvent(
           db,
           "FLAG",
@@ -135,13 +132,15 @@ export async function recordInventory(
 
 /** Reconcile a sweep session against expected warehouse contents (db.py:903-923). */
 export async function compareInventory(
-  db: SqlDatabase,
+  db: DomainDb,
   epcs: string[],
 ): Promise<CompareInventoryResult> {
   const scanned = new Set(epcs.map((e) => e.toUpperCase()));
-  const rows = await db.all<TagRow>(
-    "SELECT * FROM tags WHERE remaining > 0 ORDER BY item_type, bol_number, epc",
-  );
+  const rows = await db
+    .select()
+    .from(tags)
+    .where(sql`${tags.remaining} > 0`)
+    .orderBy(asc(tags.item_type), asc(tags.bol_number), asc(tags.epc));
   const foundEpcs: string[] = [];
   const missing: Tag[] = [];
   for (const row of rows) {
@@ -188,22 +187,28 @@ interface TypeNoteRow {
  * Nested warehouse view (db.py:957-1064): item type -> groups (by BOL# or
  * Building#, or by `item_name` for named types) with derived qty/status, plus
  * `other_values`, `vendors`, `flagged`, and note counts.
+ *
+ * The CASE-over-named-types + GROUP-BY-computed-columns shape fights the query
+ * builder, so this uses the `sql` template operator with typed result mapping.
+ * Column names (`gcol`/`ocol`) come from the `GROUP_COLUMNS` whitelist and are
+ * injected as raw identifiers; the named-type set and filter values are bound
+ * parameters.
  */
 export async function inventoryTree(
-  db: SqlDatabase,
+  db: DomainDb,
   groupBy = "bol",
   filters: InventoryFilters | null = null,
 ): Promise<InventoryTreeResult> {
   const gcol = GROUP_COLUMNS[groupBy] ?? "bol_number";
   const ocol = gcol === "bol_number" ? "building" : "bol_number";
   const named = NAMED_ITEM_TYPES;
-  const namedIn = named.map(() => "?").join(",") || "''";
-  const { clause, params } = filterWhere(filters);
+  const namedIn = inArray(tags.item_type, named);
+  const where = filterWhere(filters);
 
-  const rows = await db.all<TreeRow>(
-    `SELECT item_type,
-       CASE WHEN item_type IN (${namedIn}) THEN item_name ELSE ${gcol} END AS gval,
-       CASE WHEN item_type IN (${namedIn}) THEN ${gcol} ELSE ${ocol} END AS oval,
+  const rows = await db.all<TreeRow>(sql`
+    SELECT item_type,
+       CASE WHEN ${namedIn} THEN ${tags.item_name} ELSE ${sql.raw(gcol)} END AS gval,
+       CASE WHEN ${namedIn} THEN ${sql.raw(gcol)} ELSE ${sql.raw(ocol)} END AS oval,
        vendor,
        COALESCE(SUM(remaining), 0) AS in_wh,
        COALESCE(SUM(quantity), 0) AS capacity,
@@ -211,19 +216,19 @@ export async function inventoryTree(
        SUM(CASE WHEN flag <> '' THEN 1 ELSE 0 END) AS flagged,
        MIN(received_at) AS first_received,
        MAX(bol_doc_id) AS doc_id
-FROM tags
-${clause}
-GROUP BY item_type, gval, oval, vendor
-ORDER BY item_type, gval, oval`,
-    [...named, ...named, ...params],
-  );
+    FROM tags
+    ${where ? sql`WHERE ${where}` : sql``}
+    GROUP BY item_type, gval, oval, vendor
+    ORDER BY item_type, gval, oval
+  `);
 
-  const noteRows = await db.all<NoteCountRow>(
-    `SELECT item_type, ${gcol} AS gval, COUNT(*) AS n FROM notes GROUP BY item_type, gval`,
-  );
-  const typeNoteRows = await db.all<TypeNoteRow>(
-    "SELECT item_type, COUNT(*) AS n FROM notes GROUP BY item_type",
-  );
+  const noteRows = await db.all<NoteCountRow>(sql`
+    SELECT item_type, ${sql.raw(gcol)} AS gval, COUNT(*) AS n
+    FROM notes GROUP BY item_type, gval
+  `);
+  const typeNoteRows = await db.all<TypeNoteRow>(sql`
+    SELECT item_type, COUNT(*) AS n FROM notes GROUP BY item_type
+  `);
 
   const noteCounts = new Map<string, number>();
   for (const r of noteRows) noteCounts.set(`${r.item_type}\0${r.gval ?? ""}`, r.n);
@@ -323,7 +328,7 @@ ORDER BY item_type, gval, oval`,
 
 /** Tags within one (item_type, group) cell, for drill-down (db.py:1066-1083). */
 export async function groupTags(
-  db: SqlDatabase,
+  db: DomainDb,
   itemType: string,
   groupBy: string,
   value: string,
@@ -332,40 +337,42 @@ export async function groupTags(
   const gcol = NAMED_ITEM_TYPES.includes(itemType)
     ? "item_name"
     : GROUP_COLUMNS[groupBy] ?? "bol_number";
-  const { clause, params } = filterWhere(filters);
-  const andClause = clause.replace(" WHERE ", " AND ");
-  const rows = await db.all<TagRow>(
-    `SELECT * FROM tags WHERE item_type=? AND ${gcol}=?${andClause} ORDER BY received_at, epc`,
-    [itemType, value, ...params],
-  );
+  const where = and(eq(tags.item_type, itemType), eq(GROUP_COLUMN[gcol] ?? tags.bol_number, value), filterWhere(filters));
+  const rows = await db
+    .select()
+    .from(tags)
+    .where(where)
+    .orderBy(asc(tags.received_at), asc(tags.epc));
   return { item_type: itemType, group_by: groupBy, value, tags: rows.map(tagDict) };
 }
 
 /** Flat per-box rows for CSV/PDF export (db.py:1085-1094). */
 export async function exportRows(
-  db: SqlDatabase,
+  db: DomainDb,
   filters: InventoryFilters | null = null,
 ): Promise<Tag[]> {
-  const { clause, params } = filterWhere(filters);
-  const rows = await db.all<TagRow>(
-    `SELECT * FROM tags${clause} ORDER BY item_type, bol_number, received_at, epc`,
-    params,
-  );
+  const where = filterWhere(filters);
+  const rows = await db
+    .select()
+    .from(tags)
+    .where(where)
+    .orderBy(asc(tags.item_type), asc(tags.bol_number), asc(tags.received_at), asc(tags.epc));
   return rows.map(tagDict);
 }
 
 /** Return a single tag dict (for the finder) or null (db.py:1096-1102). */
-export async function findTag(db: SqlDatabase, epc: string): Promise<Tag | null> {
+export async function findTag(db: DomainDb, epc: string): Promise<Tag | null> {
   const upper = epc.toUpperCase();
-  const row = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
-  return row ? tagDict(row) : null;
+  const rows = await db.select().from(tags).where(eq(tags.epc, upper));
+  return rows[0] ? tagDict(rows[0]) : null;
 }
 
 /** Distinct component names already used for a type (autocomplete, db.py:1104-1112). */
-export async function itemNameSuggestions(db: SqlDatabase, itemType: string): Promise<string[]> {
-  const rows = await db.all<{ item_name: string }>(
-    "SELECT DISTINCT item_name FROM tags WHERE item_type=? AND item_name != '' ORDER BY item_name COLLATE NOCASE",
-    [itemType],
-  );
+export async function itemNameSuggestions(db: DomainDb, itemType: string): Promise<string[]> {
+  const rows = await db
+    .select({ item_name: tags.item_name })
+    .from(tags)
+    .where(and(eq(tags.item_type, itemType), ne(tags.item_name, "")))
+    .orderBy(sql`${tags.item_name} COLLATE NOCASE`);
   return rows.map((r) => r.item_name);
 }

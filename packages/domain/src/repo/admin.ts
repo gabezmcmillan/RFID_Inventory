@@ -6,19 +6,42 @@
  * storage (no `os.remove` here).
  */
 
-import { EDITABLE_FIELDS, GROUP_COLUMNS, NAMED_ITEM_TYPES, STATUS_DELIVERED, STATUS_IN, STATUS_PARTIAL } from "../constants.js";
-import type { SqlDatabase } from "../sql.js";
-import { withTransaction } from "../sql.js";
-import type { ClearAllResult, ClearFlagResult, DeleteGroupResult, Tag, TagRow, UpdateTagResult } from "../types.js";
+import { and, count, eq, sql, type SQL } from "drizzle-orm";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
+
+import {
+  EDITABLE_FIELDS,
+  GROUP_COLUMNS,
+  NAMED_ITEM_TYPES,
+  STATUS_DELIVERED,
+  STATUS_IN,
+  STATUS_PARTIAL,
+} from "../constants.js";
+import type { DomainDb } from "../db.js";
+import { withTransaction } from "../db.js";
+import { bolDocs, notes, tags } from "../schema.js";
+import type {
+  ClearAllResult,
+  ClearFlagResult,
+  DeleteGroupResult,
+  UpdateTagResult,
+} from "../types.js";
 import { logEvent } from "./events.js";
 import { asQuantity, now, tagDict } from "./util.js";
 
 /** Admin-editable fields keyed by string (values are strings/numbers as supplied). */
 export type UpdateTagFields = Record<string, unknown>;
 
+/** Map a whitelisted group column name to its Drizzle column on `tags`. */
+const GROUP_COLUMN_MAP: Record<string, AnySQLiteColumn> = {
+  bol_number: tags.bol_number,
+  building: tags.building,
+  item_name: tags.item_name,
+};
+
 /** Admin: overwrite editable fields on a tag (db.py:1218-1295). */
 export async function updateTag(
-  db: SqlDatabase,
+  db: DomainDb,
   epc: string,
   fields: UpdateTagFields,
 ): Promise<UpdateTagResult> {
@@ -26,14 +49,18 @@ export async function updateTag(
   const ts = now();
 
   return withTransaction(db, async () => {
-    const row = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
+    const rows = await db.select().from(tags).where(eq(tags.epc, upper));
+    const row = rows[0];
     if (!row) return { ok: false, message: `${upper} is not registered.`, epc: upper };
 
-    const sets: string[] = [];
-    const params: unknown[] = [];
+    const setFragments: SQL[] = [];
     const changes: string[] = [];
     let statusInSets = false;
     const newQuantity = "quantity" in fields ? asQuantity(fields["quantity"]) : row.quantity;
+
+    const setCol = (col: string, value: string | number): void => {
+      setFragments.push(sql`${sql.raw(col)} = ${value}`);
+    };
 
     for (const key of EDITABLE_FIELDS) {
       if (!(key in fields)) continue;
@@ -50,24 +77,21 @@ export async function updateTag(
       }
       const oldStr = String(row[key] ?? "");
       if (String(newVal) !== oldStr) {
-        sets.push(`${key}=?`);
+        setCol(key, newVal);
         if (key === "status") statusInSets = true;
-        params.push(newVal);
         changes.push(`${key}: '${row[key]}' -> '${newVal}'`);
       }
     }
 
     if ("status" in fields && !("remaining" in fields)) {
       if (fields["status"] === STATUS_IN) {
-        sets.push("remaining=?", "delivered_at=?", "flag=?", "flagged_at=?");
-        params.push(newQuantity, "", "", "");
+        setCol("remaining", newQuantity);
+        setCol("delivered_at", "");
+        setCol("flag", "");
+        setCol("flagged_at", "");
       } else if (fields["status"] === STATUS_DELIVERED) {
-        sets.push("remaining=?");
-        params.push(0);
-        if (!row.delivered_at) {
-          sets.push("delivered_at=?");
-          params.push(ts);
-        }
+        setCol("remaining", 0);
+        if (!row.delivered_at) setCol("delivered_at", ts);
       }
     } else if ("remaining" in fields) {
       let n = asQuantity(fields["remaining"], 0);
@@ -79,26 +103,22 @@ export async function updateTag(
           : newRemaining === newQuantity
             ? STATUS_IN
             : STATUS_PARTIAL;
-      if (!statusInSets) {
-        sets.push("status=?");
-        params.push(derived);
-      }
+      if (!statusInSets) setCol("status", derived);
       if (derived === STATUS_DELIVERED && !row.delivered_at) {
-        sets.push("delivered_at=?");
-        params.push(ts);
+        setCol("delivered_at", ts);
       } else if (derived === STATUS_IN) {
-        sets.push("delivered_at=?", "flag=?", "flagged_at=?");
-        params.push("", "", "");
+        setCol("delivered_at", "");
+        setCol("flag", "");
+        setCol("flagged_at", "");
       }
     }
 
-    if (sets.length === 0) {
+    if (setFragments.length === 0) {
       return { ok: true, message: "No changes.", tag: tagDict(row) } satisfies UpdateTagResult;
     }
 
-    sets.push("updated_at=?");
-    params.push(ts, upper);
-    await db.run(`UPDATE tags SET ${sets.join(", ")} WHERE epc=?`, params);
+    setCol("updated_at", ts);
+    await db.run(sql`UPDATE tags SET ${sql.join(setFragments, sql`, `)} WHERE epc = ${upper}`);
     const itemTypeForLog =
       fields["item_type"] !== undefined ? String(fields["item_type"]) : row.item_type;
     await logEvent(
@@ -112,32 +132,30 @@ export async function updateTag(
       changes.join("; ") || "status/flag reset",
     );
 
-    const updated = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
-    return { ok: true, message: `Updated ${upper}.`, tag: updated ? tagDict(updated) : undefined };
+    const updated = await db.select().from(tags).where(eq(tags.epc, upper));
+    return { ok: true, message: `Updated ${upper}.`, tag: updated[0] ? tagDict(updated[0]) : undefined };
   });
 }
 
 /** Admin: clear a tag's warning flag (db.py:1297-1315). */
-export async function clearFlag(db: SqlDatabase, epc: string): Promise<ClearFlagResult> {
+export async function clearFlag(db: DomainDb, epc: string): Promise<ClearFlagResult> {
   const upper = epc.toUpperCase();
   const ts = now();
 
   return withTransaction(db, async () => {
-    const row = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
+    const rows = await db.select().from(tags).where(eq(tags.epc, upper));
+    const row = rows[0];
     if (!row) return { ok: false, message: `${upper} is not registered.`, epc: upper };
-    await db.run(
-      "UPDATE tags SET flag=?, flagged_at=?, updated_at=? WHERE epc=?",
-      ["", "", ts, upper],
-    );
+    await db.update(tags).set({ flag: "", flagged_at: "", updated_at: ts }).where(eq(tags.epc, upper));
     await logEvent(db, "UNFLAG", upper, row.item_type);
-    const updated = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
-    return { ok: true, message: `Cleared flag on ${upper}.`, tag: updated ? tagDict(updated) : undefined };
+    const updated = await db.select().from(tags).where(eq(tags.epc, upper));
+    return { ok: true, message: `Cleared flag on ${upper}.`, tag: updated[0] ? tagDict(updated[0]) : undefined };
   });
 }
 
 /** Admin: delete every tag in one (item_type, group) cell (db.py:1178-1211). */
 export async function deleteGroup(
-  db: SqlDatabase,
+  db: DomainDb,
   itemType: string,
   groupBy: string,
   value: string,
@@ -152,14 +170,18 @@ export async function deleteGroup(
         ? "Building"
         : "BOL";
   const blank = value || "(blank)";
+  const col = GROUP_COLUMN_MAP[gcol] ?? tags.bol_number;
 
   return withTransaction(db, async () => {
-    const row = await db.get<{ boxes: number; units: number }>(
-      `SELECT COUNT(*) AS boxes, COALESCE(SUM(remaining), 0) AS units FROM tags WHERE item_type=? AND ${gcol}=?`,
-      [itemType, value],
-    );
-    const boxes = row?.boxes ?? 0;
-    const units = row?.units ?? 0;
+    const agg = await db
+      .select({
+        boxes: count(),
+        units: sql<number>`COALESCE(SUM(${tags.remaining}), 0)`,
+      })
+      .from(tags)
+      .where(and(eq(tags.item_type, itemType), eq(col, value)));
+    const boxes = agg[0]?.boxes ?? 0;
+    const units = agg[0]?.units ?? 0;
     if (!boxes) {
       return {
         ok: false,
@@ -167,7 +189,7 @@ export async function deleteGroup(
         message: `No ${itemType} boxes found for ${label} '${blank}'.`,
       } satisfies DeleteGroupResult;
     }
-    await db.run(`DELETE FROM tags WHERE item_type=? AND ${gcol}=?`, [itemType, value]);
+    await db.delete(tags).where(and(eq(tags.item_type, itemType), eq(col, value)));
     await logEvent(
       db,
       "DELETE",
@@ -187,15 +209,15 @@ export async function deleteGroup(
 }
 
 /** Admin: delete every tag and BOL document; events kept as audit trail (db.py:1154-1176). */
-export async function clearAll(db: SqlDatabase): Promise<ClearAllResult> {
+export async function clearAll(db: DomainDb): Promise<ClearAllResult> {
   return withTransaction(db, async () => {
-    const countRow = await db.get<{ n: number }>("SELECT COUNT(*) AS n FROM tags");
-    const removed = countRow?.n ?? 0;
-    const docRows = await db.all<{ filename: string }>("SELECT filename FROM bol_docs");
+    const countRows = await db.select({ n: count() }).from(tags);
+    const removed = countRows[0]?.n ?? 0;
+    const docRows = await db.select({ filename: bolDocs.filename }).from(bolDocs);
     const bolFiles = docRows.map((r) => r.filename);
-    await db.run("DELETE FROM tags");
-    await db.run("DELETE FROM bol_docs");
-    await db.run("DELETE FROM notes");
+    await db.delete(tags);
+    await db.delete(bolDocs);
+    await db.delete(notes);
     await logEvent(
       db,
       "CLEAR",

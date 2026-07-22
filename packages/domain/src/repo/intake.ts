@@ -4,14 +4,17 @@
  * multi-device EPC layout (plan 002 standing decision).
  */
 
+import { eq } from "drizzle-orm";
+
 import {
   EPC_DEVICE_LEN,
   EPC_SERIAL_LEN,
   PRINTER_EPC_PREFIX,
   STATUS_IN,
 } from "../constants.js";
-import type { SqlDatabase } from "../sql.js";
-import { withTransaction } from "../sql.js";
+import type { DomainDb } from "../db.js";
+import { withTransaction } from "../db.js";
+import { tags } from "../schema.js";
 import type { AmendCheckinResult, ReceiveShipmentResult, Tag, TagRow } from "../types.js";
 import { logEvent } from "./events.js";
 import {
@@ -48,7 +51,7 @@ function normalizeDeviceId(value: string): string {
  * assigns `local_meta.device_id` on first run).
  */
 export async function allocateEpcs(
-  db: SqlDatabase,
+  db: DomainDb,
   count = 1,
   deviceId = "",
 ): Promise<string[]> {
@@ -64,8 +67,11 @@ export async function allocateEpcs(
       prefix +
       dev +
       serial.toString(16).toUpperCase().padStart(EPC_SERIAL_LEN, "0");
-    const existing = await db.get<{ epc: string }>("SELECT epc FROM tags WHERE epc=?", [epc]);
-    if (!existing) epcs.push(epc);
+    const existing = await db
+      .select({ epc: tags.epc })
+      .from(tags)
+      .where(eq(tags.epc, epc));
+    if (existing.length === 0) epcs.push(epc);
   }
   await setMeta(db, "epc_serial", String(serial));
   return epcs;
@@ -78,7 +84,7 @@ export async function allocateEpcs(
  * quantity = remaining = units and logs an `IN` event with the same detail.
  */
 export async function receiveShipment(
-  db: SqlDatabase,
+  db: DomainDb,
   epcs: string[],
   itemType: string,
   building: string,
@@ -104,8 +110,8 @@ export async function receiveShipment(
   await withTransaction(db, async () => {
     const existing = new Set<string>();
     for (const epc of ordered) {
-      const row = await db.get<{ epc: string }>("SELECT epc FROM tags WHERE epc=?", [epc]);
-      if (row) existing.add(epc);
+      const rows = await db.select({ epc: tags.epc }).from(tags).where(eq(tags.epc, epc));
+      if (rows.length > 0) existing.add(epc);
     }
 
     for (const epc of ordered) {
@@ -113,32 +119,26 @@ export async function receiveShipment(
         duplicates.push(epc);
         continue;
       }
-      await db.run(
-        "INSERT INTO tags (epc, item_type, item_name, bol_number, po_number, " +
-          "bol_doc_id, building, sector, vendor, sku, mfc_date, quantity, " +
-          "remaining, status, received_at, delivered_at, created_at, updated_at) " +
-          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [
-          epc,
-          itemType,
-          itemName,
-          bolNumber,
-          poNumber,
-          bolDocId,
-          building,
-          sector,
-          vendor,
-          sku,
-          mfcDate,
-          units,
-          units,
-          STATUS_IN,
-          ts,
-          "",
-          ts,
-          ts,
-        ],
-      );
+      await db.insert(tags).values({
+        epc,
+        item_type: itemType,
+        item_name: itemName,
+        bol_number: bolNumber,
+        po_number: poNumber,
+        bol_doc_id: bolDocId,
+        building,
+        sector,
+        vendor,
+        sku,
+        mfc_date: mfcDate,
+        quantity: units,
+        remaining: units,
+        status: STATUS_IN,
+        received_at: ts,
+        delivered_at: "",
+        created_at: ts,
+        updated_at: ts,
+      });
       let detail = `qty ${units}`;
       if (itemName) detail += `, name ${itemName}`;
       if (poNumber) detail += `, PO ${poNumber}`;
@@ -186,7 +186,7 @@ export async function receiveShipment(
  * box). Logs an `EDIT` event with `"check-in fix: field: 'old' -> 'new'"`.
  */
 export async function amendCheckin(
-  db: SqlDatabase,
+  db: DomainDb,
   epc: string,
   fields: { item_name?: string | null; sku?: string | null; mfc_date?: string | null; quantity?: unknown },
 ): Promise<AmendCheckinResult> {
@@ -194,13 +194,13 @@ export async function amendCheckin(
   const ts = now();
 
   return withTransaction(db, async () => {
-    const row = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
+    const rows = await db.select().from(tags).where(eq(tags.epc, upper));
+    const row = rows[0];
     if (!row) {
       return { ok: false, message: `${upper} is not registered.`, epc: upper, tag: null, qty: 0 } satisfies AmendCheckinResult;
     }
 
-    const sets: string[] = [];
-    const params: unknown[] = [];
+    const set: Partial<TagRow> = {};
     const changes: string[] = [];
 
     for (const key of ["item_name", "sku", "mfc_date"] as const) {
@@ -208,24 +208,22 @@ export async function amendCheckin(
       const newVal = (fields[key] === null || fields[key] === undefined ? "" : String(fields[key])).trim();
       const oldVal = row[key] ?? "";
       if (newVal !== oldVal) {
-        sets.push(`${key}=?`);
-        params.push(newVal);
+        set[key] = newVal;
         changes.push(`${key}: '${oldVal}' -> '${newVal}'`);
       }
     }
     if ("quantity" in fields) {
       const newQty = asQuantity(fields.quantity);
       if (newQty !== row.quantity) {
-        sets.push("quantity=?", "remaining=?");
-        params.push(newQty, newQty);
+        set.quantity = newQty;
+        set.remaining = newQty;
         changes.push(`quantity: '${row.quantity}' -> '${newQty}'`);
       }
     }
 
-    if (sets.length > 0) {
-      sets.push("updated_at=?");
-      params.push(ts, upper);
-      await db.run(`UPDATE tags SET ${sets.join(", ")} WHERE epc=?`, params);
+    if (Object.keys(set).length > 0) {
+      set.updated_at = ts;
+      await db.update(tags).set(set).where(eq(tags.epc, upper));
       await logEvent(
         db,
         "EDIT",
@@ -238,11 +236,12 @@ export async function amendCheckin(
       );
     }
 
-    const updated = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
+    const updatedRows = await db.select().from(tags).where(eq(tags.epc, upper));
+    const updated = updatedRows[0];
     const qty = await groupInWarehouseQty(db, row.item_type, row.bol_number, row.building);
     return {
       ok: true,
-      message: sets.length > 0 ? `Updated ${upper}.` : "No changes.",
+      message: Object.keys(set).length > 0 ? `Updated ${upper}.` : "No changes.",
       tag: updated ? tagDict(updated) : null,
       qty,
     } satisfies AmendCheckinResult;

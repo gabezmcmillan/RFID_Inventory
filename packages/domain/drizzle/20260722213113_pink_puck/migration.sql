@@ -1,0 +1,93 @@
+CREATE TABLE `bol_docs` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`bol_number` text NOT NULL,
+	`filename` text NOT NULL,
+	`source` text DEFAULT 'scan' NOT NULL,
+	`pages` integer DEFAULT 1 NOT NULL,
+	`vendor` text DEFAULT '' NOT NULL,
+	`po_number` text DEFAULT '' NOT NULL,
+	`ocr_text` text DEFAULT '' NOT NULL,
+	`line_items` text DEFAULT '[]' NOT NULL,
+	`auto_named` integer DEFAULT 1 NOT NULL,
+	`created_at` text NOT NULL,
+	`storage_url` text DEFAULT '' NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `events` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`ts` text NOT NULL,
+	`action` text NOT NULL,
+	`epc` text,
+	`item_type` text,
+	`bol_number` text,
+	`building` text,
+	`vendor` text,
+	`detail` text
+);
+--> statement-breakpoint
+CREATE TABLE `local_meta` (
+	`key` text PRIMARY KEY,
+	`value` text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `notes` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`ts` text NOT NULL,
+	`item_type` text NOT NULL,
+	`bol_number` text DEFAULT '' NOT NULL,
+	`building` text DEFAULT '' NOT NULL,
+	`text` text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `requests` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`item_type` text NOT NULL,
+	`item_name` text DEFAULT '' NOT NULL,
+	`quantity` integer DEFAULT 1 NOT NULL,
+	`building` text DEFAULT '' NOT NULL,
+	`jobsite` text DEFAULT '' NOT NULL,
+	`requester` text DEFAULT '' NOT NULL,
+	`contact` text DEFAULT '' NOT NULL,
+	`note` text DEFAULT '' NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`created_at` text DEFAULT '' NOT NULL,
+	`handled_at` text DEFAULT '' NOT NULL,
+	`handler_note` text DEFAULT '' NOT NULL,
+	`order_ref` text DEFAULT '' NOT NULL,
+	`updated_at` text DEFAULT '' NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `tags` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`epc` text NOT NULL UNIQUE,
+	`item_type` text NOT NULL,
+	`item_name` text DEFAULT '' NOT NULL,
+	`bol_number` text DEFAULT '' NOT NULL,
+	`po_number` text DEFAULT '' NOT NULL,
+	`building` text DEFAULT '' NOT NULL,
+	`sector` text DEFAULT '' NOT NULL,
+	`vendor` text DEFAULT '' NOT NULL,
+	`sku` text DEFAULT '' NOT NULL,
+	`mfc_date` text DEFAULT '' NOT NULL,
+	`quantity` integer DEFAULT 1 NOT NULL,
+	`remaining` integer DEFAULT 1 NOT NULL,
+	`status` text DEFAULT 'In Warehouse' NOT NULL,
+	`received_at` text NOT NULL,
+	`delivered_at` text DEFAULT '' NOT NULL,
+	`checkout_building` text DEFAULT '' NOT NULL,
+	`flag` text DEFAULT '' NOT NULL,
+	`flagged_at` text DEFAULT '' NOT NULL,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	`bol_doc_id` integer
+);
+--> statement-breakpoint
+CREATE TABLE `vendors` (
+	`name` text PRIMARY KEY
+);
+--> statement-breakpoint
+CREATE INDEX `idx_events_action` ON `events` (`action`);--> statement-breakpoint
+CREATE INDEX `idx_events_epc` ON `events` (`epc`);--> statement-breakpoint
+CREATE INDEX `idx_notes_group` ON `notes` (`item_type`,`bol_number`,`building`);--> statement-breakpoint
+CREATE INDEX `idx_tags_group` ON `tags` (`item_type`,`bol_number`,`building`);--> statement-breakpoint
+CREATE INDEX `idx_tags_status` ON `tags` (`status`);

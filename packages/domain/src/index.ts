@@ -1,17 +1,28 @@
 /**
  * `@rfid/domain` — the single source of warehouse domain truth.
  *
- * Pure TypeScript over the {@link SqlDatabase} interface; runs unchanged on the
- * device (Turso React Native), in Node tests, and in the importer. Never
- * imports React Native.
+ * Pure TypeScript over a Drizzle {@link DomainDb}; runs unchanged on the
+ * device (Turso React Native, via `drizzle-orm/tursodatabase-sync`), in Node
+ * tests, and in the importer. Never imports React Native. The Node-only Turso
+ * driver and test harness live in `src/testing/` (a separate entry) so the main
+ * entry stays driver-free.
  */
 
-// SQL surface + transaction helper
-export { withTransaction } from "./sql.js";
-export type { RunResult, SqlDatabase } from "./sql.js";
+// Drizzle database type + transaction helper
+export { withTransaction } from "./db.js";
+export type { DomainDb } from "./db.js";
 
-// Schema
-export { SCHEMA_SQL, applySchema } from "./schema.js";
+// Schema (source of truth) — tables + the schema bundle
+export {
+  bolDocs,
+  events,
+  localMeta,
+  notes,
+  requests,
+  schema,
+  tags,
+  vendors,
+} from "./schema.js";
 
 // Constants
 export {
@@ -44,7 +55,7 @@ export {
 } from "./constants.js";
 export type { FieldDef, FieldScope, FieldType } from "./constants.js";
 
-// Types
+// Types (row types inferred from the schema; the rest are domain-level shapes)
 export type {
   AddNoteResult,
   AmendCheckinResult,
@@ -132,5 +143,10 @@ export type { CreateRequestInput } from "./repo/requests.js";
 export { clearAll, clearFlag, deleteGroup, updateTag } from "./repo/admin.js";
 export type { UpdateTagFields } from "./repo/admin.js";
 
-// Node test harness (Node-only; not imported by repository code)
-export { openTestDb, openTursoSql, wrapTurso } from "./testing/openTestDb.js";
+// The legacy importer and the Node test harness live in their own modules
+// (`src/importer/`, `src/testing/`) — separate, Node-only entries — so the main
+// entry pulls no Node Turso driver. Import them directly:
+//   - `./importer/importLegacy.js` (and `./importer/cli.js` for the CLI)
+//   - `./testing/openTestDb.js` (`openTestDb`, `openTursoDb`, `wrapTurso`)
+//   - `./migrate.js` (`migrateDb`)
+

@@ -4,20 +4,24 @@
  * fulfillment can apply several draws inside one transaction.
  */
 
+import { eq } from "drizzle-orm";
+
 import { STATUS_DELIVERED, STATUS_PARTIAL } from "../constants.js";
-import type { SqlDatabase } from "../sql.js";
-import { withTransaction } from "../sql.js";
+import type { DomainDb } from "../db.js";
+import { withTransaction } from "../db.js";
+import { tags } from "../schema.js";
 import type { DeliverUnitsResult, LookupForCheckoutResult, TagRow } from "../types.js";
 import { logEvent } from "./events.js";
 import { asQuantity, groupInWarehouseQty, now, today } from "./util.js";
 
 /** Check Out step 1: look a box up for the two-step confirm UI (db.py:744-769). */
 export async function lookupForCheckout(
-  db: SqlDatabase,
+  db: DomainDb,
   epc: string,
 ): Promise<LookupForCheckoutResult> {
   const upper = epc.toUpperCase();
-  const row = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
+  const rows = await db.select().from(tags).where(eq(tags.epc, upper));
+  const row = rows[0];
 
   if (!row) {
     return { ok: false, message: `${upper} is not registered.`, epc: upper };
@@ -58,7 +62,7 @@ export async function lookupForCheckout(
  * box was received for, the tag is flagged and a `FLAG` event is logged.
  */
 export async function deliverUnitsInTx(
-  db: SqlDatabase,
+  db: DomainDb,
   epc: string,
   amount?: number | null,
   checkoutBuilding?: string | null,
@@ -68,7 +72,8 @@ export async function deliverUnitsInTx(
   const deliveredDate = today();
   const checkoutBldg = (checkoutBuilding ?? "").toString().trim();
 
-  const row = await db.get<TagRow>("SELECT * FROM tags WHERE epc=?", [upper]);
+  const rows = await db.select().from(tags).where(eq(tags.epc, upper));
+  const row = rows[0];
 
   if (!row) {
     await logEvent(db, "OUT", upper, "UNKNOWN", "", "", "", "not registered");
@@ -97,18 +102,18 @@ export async function deliverUnitsInTx(
     flag = `Checked out to Bldg ${checkoutBldg} but received for Bldg ${row.building}`;
   }
 
-  const sets = ["remaining=?", "status=?", "delivered_at=?", "updated_at=?"];
-  const params: unknown[] = [newRemaining, newStatus, deliveredAt, ts];
-  if (checkoutBldg) {
-    sets.push("checkout_building=?");
-    params.push(checkoutBldg);
-  }
+  const set: Partial<TagRow> = {
+    remaining: newRemaining,
+    status: newStatus,
+    delivered_at: deliveredAt,
+    updated_at: ts,
+  };
+  if (checkoutBldg) set.checkout_building = checkoutBldg;
   if (mismatch) {
-    sets.push("flag=?", "flagged_at=?");
-    params.push(flag, ts);
+    set.flag = flag;
+    set.flagged_at = ts;
   }
-  params.push(upper);
-  await db.run(`UPDATE tags SET ${sets.join(", ")} WHERE epc=?`, params);
+  await db.update(tags).set(set).where(eq(tags.epc, upper));
 
   const dest = checkoutBldg ? ` to Bldg ${checkoutBldg}` : "";
   await logEvent(
@@ -145,7 +150,7 @@ export async function deliverUnitsInTx(
 
 /** Check Out step 2: draw `amount` units out of a box and commit (db.py:771-783). */
 export async function deliverUnits(
-  db: SqlDatabase,
+  db: DomainDb,
   epc: string,
   amount?: number | null,
   checkoutBuilding?: string | null,

@@ -1,6 +1,8 @@
+import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 
 import { clearFlag, deliverUnits, receiveShipment, updateTag } from "../../index";
+import { tags } from "../../index";
 import { openTestDb } from "../../testing/openTestDb.js";
 
 describe("admin", () => {
@@ -9,10 +11,11 @@ describe("admin", () => {
     const epc = "AA" + "0".repeat(22);
     await receiveShipment(db, [epc], "TSC", "6", "BOL1", "Acme", { quantity: 4 });
     await deliverUnits(db, epc, 2, "7"); // partial + mismatch flag
-    const tag = await db.get<{ flag: string; delivered_at: string; remaining: number; quantity: number; status: string }>(
-      "SELECT flag, delivered_at, remaining, quantity, status FROM tags WHERE epc=?",
-      [epc],
-    );
+    const rows = await db
+      .select({ flag: tags.flag, delivered_at: tags.delivered_at, remaining: tags.remaining, quantity: tags.quantity, status: tags.status })
+      .from(tags)
+      .where(eq(tags.epc, epc));
+    const tag = rows[0];
     expect(tag?.flag).not.toBe("");
     const res = await updateTag(db, epc, { status: "In Warehouse" });
     expect(res.ok).toBe(true);

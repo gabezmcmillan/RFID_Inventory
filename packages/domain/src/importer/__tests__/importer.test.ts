@@ -2,11 +2,11 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { importLegacy } from "../importLegacy.js";
-import { applySchema } from "../../schema.js";
-import { openTursoSql } from "../../testing/openTestDb.js";
+import { openTursoDb } from "../../testing/openTestDb.js";
 
 // Legacy DDL, copied from apps/warehouse/db.py:105-200 (base schema, no migration
 // columns: no tags.bol_doc_id, no bol_docs.storage_url; requests keeps status_dirty;
@@ -140,11 +140,9 @@ describe("importer", () => {
     expect(report.epcSerial).toBe(42);
 
     // Spot-check the tag round-trips with its id preserved.
-    const target = await openTursoSql(targetPath);
-    await applySchema(target);
+    const target = await openTursoDb(targetPath);
     const tag = await target.get<{ id: number; epc: string; status: string; remaining: number; bol_doc_id: number | null }>(
-      "SELECT id, epc, status, remaining, bol_doc_id FROM tags WHERE epc=?",
-      ["42473031" + "000000000000000A"],
+      sql`SELECT id, epc, status, remaining, bol_doc_id FROM tags WHERE epc=${"42473031" + "000000000000000A"}`,
     );
     expect(tag?.id).toBe(7);
     expect(tag?.status).toBe("Partial");
@@ -153,8 +151,7 @@ describe("importer", () => {
 
     // requests: status_dirty dropped, updated_at present.
     const req = await target.get<{ status_dirty?: number; updated_at: string; order_ref: string }>(
-      "SELECT * FROM requests WHERE id=?",
-      [11],
+      sql`SELECT * FROM requests WHERE id=${11}`,
     );
     expect(req?.status_dirty).toBeUndefined();
     expect(req?.updated_at).toBe("");
@@ -162,15 +159,14 @@ describe("importer", () => {
 
     // bol_docs: storage_url present and blank.
     const doc = await target.get<{ id: number; storage_url: string; pages: number }>(
-      "SELECT id, storage_url, pages FROM bol_docs WHERE id=?",
-      [3],
+      sql`SELECT id, storage_url, pages FROM bol_docs WHERE id=${3}`,
     );
     expect(doc?.id).toBe(3);
     expect(doc?.storage_url).toBe("");
     expect(doc?.pages).toBe(2);
 
     // local_meta seeded.
-    const meta = await target.get<{ value: string }>("SELECT value FROM local_meta WHERE key='epc_serial'");
+    const meta = await target.get<{ value: string }>(sql`SELECT value FROM local_meta WHERE key='epc_serial'`);
     expect(meta?.value).toBe("42");
   });
 

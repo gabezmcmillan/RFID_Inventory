@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -7,11 +8,17 @@ import {
   listRequests,
   receiveShipment,
   setRequestStatus,
+  tags,
 } from "../../index";
 import { openTestDb } from "../../testing/openTestDb.js";
 
 async function seedBox(db: Awaited<ReturnType<typeof openTestDb>>, epc: string, qty = 2) {
   await receiveShipment(db, [epc], "TSC", "6", "BOL1", "Acme", { quantity: qty });
+}
+
+async function remaining(db: Awaited<ReturnType<typeof openTestDb>>, epc: string): Promise<number | undefined> {
+  const rows = await db.select({ remaining: tags.remaining }).from(tags).where(eq(tags.epc, epc));
+  return rows[0]?.remaining;
 }
 
 describe("requests", () => {
@@ -46,12 +53,12 @@ describe("requests", () => {
     await seedBox(db, epc, 2);
     const r = await createRequest(db, { item_type: "TSC", quantity: 5 }); // request more than available
     await setRequestStatus(db, r.request!.id, "staging");
-    const before = await db.get<{ remaining: number }>("SELECT remaining FROM tags WHERE epc=?", [epc]);
+    const before = await remaining(db, epc);
     const res = await fulfillRequest(db, r.request!.id, [{ epc, amount: 2, building: "6" }]);
     expect(res.ok).toBe(false);
     expect(res.note_required).toBe(true);
-    const after = await db.get<{ remaining: number }>("SELECT remaining FROM tags WHERE epc=?", [epc]);
-    expect(after?.remaining).toBe(before?.remaining); // rolled back
+    const after = await remaining(db, epc);
+    expect(after).toBe(before); // rolled back
     // Request is still staging (not fulfilled).
     const stillOpen = await listRequests(db, "staging");
     expect(stillOpen).toHaveLength(1);
@@ -75,8 +82,7 @@ describe("requests", () => {
     expect(res.short).toBe(true);
     expect(res.request?.status).toBe("fulfilled");
     expect(res.request?.handler_note).toBe("2 of 4 supplied -- partial stock");
-    const tag = await db.get<{ remaining: number }>("SELECT remaining FROM tags WHERE epc=?", [epc]);
-    expect(tag?.remaining).toBe(0); // decremented
+    expect(await remaining(db, epc)).toBe(0); // decremented
   });
 
   test("fulfillRequest with nothing delivered rolls back and reports nothing", async () => {

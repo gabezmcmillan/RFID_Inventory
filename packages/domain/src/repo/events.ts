@@ -3,14 +3,17 @@
  * (db.py:1117-1151).
  */
 
+import { and, desc, inArray, like } from "drizzle-orm";
+
 import { EVENT_FILTERS } from "../constants.js";
-import type { SqlDatabase } from "../sql.js";
+import type { DomainDb } from "../db.js";
+import { events } from "../schema.js";
 import type { EventRow } from "../types.js";
 import { now } from "./util.js";
 
 /** Append one audit row (db.py `_log`). */
 export async function logEvent(
-  db: SqlDatabase,
+  db: DomainDb,
   action: string,
   epc = "",
   itemType = "",
@@ -19,44 +22,26 @@ export async function logEvent(
   vendor = "",
   detail = "",
 ): Promise<void> {
-  await db.run(
-    "INSERT INTO events (ts, action, epc, item_type, bol_number, building, vendor, detail) " +
-      "VALUES (?,?,?,?,?,?,?,?)",
-    [now(), action, epc, itemType, bolNumber, building, vendor, detail],
-  );
-}
-
-interface RawEventRow {
-  id: number;
-  ts: string;
-  action: string;
-  epc: string | null;
-  item_type: string | null;
-  bol_number: string | null;
-  building: string | null;
-  vendor: string | null;
-  detail: string | null;
+  await db.insert(events).values({
+    ts: now(),
+    action,
+    epc,
+    item_type: itemType,
+    bol_number: bolNumber,
+    building,
+    vendor,
+    detail,
+  });
 }
 
 /** Audit-log read: events newest-first, optionally narrowed (db.py:1117-1151). */
 export async function listEvents(
-  db: SqlDatabase,
+  db: DomainDb,
   filter = "all",
   epc?: string | null,
   limit = 500,
 ): Promise<EventRow[]> {
-  const where: string[] = [];
-  const params: unknown[] = [];
   const actions = filter ? EVENT_FILTERS[filter] : undefined;
-  if (actions && actions.length > 0) {
-    where.push(`action IN (${actions.map(() => "?").join(",")})`);
-    params.push(...actions);
-  }
-  if (epc) {
-    where.push("epc LIKE ?");
-    params.push(`%${epc.toUpperCase()}%`);
-  }
-  const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
 
   let cap: number;
   if (typeof limit === "number" && Number.isFinite(limit)) {
@@ -64,15 +49,29 @@ export async function listEvents(
   } else {
     cap = 500;
   }
-  params.push(cap);
 
-  const rows = await db.all<RawEventRow>(
-    "SELECT id, ts, action, epc, item_type, bol_number, building, vendor, detail " +
-      "FROM events" +
-      clause +
-      " ORDER BY id DESC LIMIT ?",
-    params,
+  const where = and(
+    actions && actions.length > 0 ? inArray(events.action, actions) : undefined,
+    epc ? like(events.epc, `%${epc.toUpperCase()}%`) : undefined,
   );
+
+  const rows = await db
+    .select({
+      id: events.id,
+      ts: events.ts,
+      action: events.action,
+      epc: events.epc,
+      item_type: events.item_type,
+      bol_number: events.bol_number,
+      building: events.building,
+      vendor: events.vendor,
+      detail: events.detail,
+    })
+    .from(events)
+    .where(where)
+    .orderBy(desc(events.id))
+    .limit(cap);
+
   return rows.map((r) => ({
     id: r.id,
     ts: r.ts,

@@ -5,8 +5,11 @@
  * returns the filename instead of unlinking (no `os.remove` equivalent here).
  */
 
-import type { SqlDatabase } from "../sql.js";
-import { withTransaction } from "../sql.js";
+import { desc, eq, sql } from "drizzle-orm";
+
+import type { DomainDb } from "../db.js";
+import { withTransaction } from "../db.js";
+import { bolDocs, tags } from "../schema.js";
 import type {
   BolDoc,
   BolDocWithBoxes,
@@ -17,20 +20,8 @@ import type {
 import { logEvent } from "./events.js";
 import { now } from "./util.js";
 
-interface BolDocRow {
-  id: number;
-  bol_number: string;
-  filename: string;
-  source: string;
-  pages: number;
-  vendor: string;
-  po_number: string;
-  ocr_text: string;
-  line_items: string;
-  auto_named: number;
-  created_at: string;
-  storage_url: string;
-}
+/** Raw `bol_docs` row shape (inferred from the Drizzle schema). */
+type BolDocRow = typeof bolDocs.$inferSelect;
 
 function parseLineItems(raw: string): BolLineItem[] {
   try {
@@ -60,7 +51,7 @@ function bolDocDict(row: BolDocRow): BolDoc {
 
 /** Register a scanned/uploaded BOL PDF and log a `BOL_SCAN` event (db.py:505-532). */
 export async function createBolDoc(
-  db: SqlDatabase,
+  db: DomainDb,
   bolNumber: string,
   filename: string,
   source = "scan",
@@ -71,60 +62,77 @@ export async function createBolDoc(
   lineItems: BolLineItem[] | null = null,
 ): Promise<BolDoc> {
   const ts = now();
-  let docId = 0;
-  await withTransaction(db, async () => {
-    const res = await db.run(
-      "INSERT INTO bol_docs (bol_number, filename, source, pages, vendor, po_number, ocr_text, line_items, created_at) " +
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-      [bolNumber, filename, source, pages, vendor, poNumber, ocrText, JSON.stringify(lineItems ?? []), ts],
-    );
-    docId = Number(res.lastInsertRowid);
-    const parts: string[] = [];
-    if (vendor) parts.push(`vendor ${vendor}`);
-    if (poNumber) parts.push(`PO ${poNumber}`);
-    const extracted = parts.join(", ");
-    let detail = `${source}: ${filename} (${pages} page(s))`;
-    if (extracted) detail += `; OCR: ${extracted}`;
-    await logEvent(db, "BOL_SCAN", "", "", bolNumber, "", vendor, detail);
-  });
-  const row = await db.get<BolDocRow>("SELECT * FROM bol_docs WHERE id=?", [docId]);
-  // `row` is always present immediately after a successful insert.
-  return bolDocDict(row as BolDocRow);
+  const inserted = await db
+    .insert(bolDocs)
+    .values({
+      bol_number: bolNumber,
+      filename,
+      source,
+      pages,
+      vendor,
+      po_number: poNumber,
+      ocr_text: ocrText,
+      line_items: JSON.stringify(lineItems ?? []),
+      created_at: ts,
+    })
+    .returning();
+  const row = inserted[0];
+  if (!row) throw new Error("createBolDoc: insert returned no row");
+  const parts: string[] = [];
+  if (vendor) parts.push(`vendor ${vendor}`);
+  if (poNumber) parts.push(`PO ${poNumber}`);
+  const extracted = parts.join(", ");
+  let detail = `${source}: ${filename} (${pages} page(s))`;
+  if (extracted) detail += `; OCR: ${extracted}`;
+  await logEvent(db, "BOL_SCAN", "", "", bolNumber, "", vendor, detail);
+  return bolDocDict(row);
 }
 
 /** Fetch one BOL doc, or null (db.py:534-538). */
-export async function getBolDoc(db: SqlDatabase, docId: number): Promise<BolDoc | null> {
-  const row = await db.get<BolDocRow>("SELECT * FROM bol_docs WHERE id=?", [docId]);
-  return row ? bolDocDict(row) : null;
+export async function getBolDoc(db: DomainDb, docId: number): Promise<BolDoc | null> {
+  const rows = await db.select().from(bolDocs).where(eq(bolDocs.id, docId));
+  return rows[0] ? bolDocDict(rows[0]) : null;
 }
 
 /** BOL documents (newest first), each with its linked box count (db.py:540-560). */
-export async function listBolDocs(db: SqlDatabase, limit = 15): Promise<BolDocWithBoxes[]> {
-  let sql =
-    "SELECT d.*, (SELECT COUNT(*) FROM tags t WHERE t.bol_doc_id = d.id) AS boxes " +
-    "FROM bol_docs d ORDER BY d.id DESC";
-  const params: unknown[] = [];
-  if (limit) {
-    sql += " LIMIT ?";
-    params.push(limit);
-  }
-  const rows = await db.all<BolDocRow & { boxes: number }>(sql, params);
+export async function listBolDocs(db: DomainDb, limit = 15): Promise<BolDocWithBoxes[]> {
+  const boxes = sql<number>`(SELECT COUNT(*) FROM ${tags} WHERE ${tags.bol_doc_id} = ${bolDocs.id})`;
+  const rows = await db
+    .select({
+      id: bolDocs.id,
+      bol_number: bolDocs.bol_number,
+      filename: bolDocs.filename,
+      source: bolDocs.source,
+      pages: bolDocs.pages,
+      vendor: bolDocs.vendor,
+      po_number: bolDocs.po_number,
+      ocr_text: bolDocs.ocr_text,
+      line_items: bolDocs.line_items,
+      auto_named: bolDocs.auto_named,
+      created_at: bolDocs.created_at,
+      storage_url: bolDocs.storage_url,
+      boxes,
+    })
+    .from(bolDocs)
+    .orderBy(desc(bolDocs.id))
+    .limit(limit ?? 0);
   return rows.map((r) => ({ ...bolDocDict(r), boxes: r.boxes }));
 }
 
 /** Admin: delete a BOL document row; boxes keep their BOL number (db.py:562-594). */
-export async function deleteBolDoc(db: SqlDatabase, docId: number): Promise<DeleteBolDocResult> {
-  const row = await db.get<BolDocRow>("SELECT * FROM bol_docs WHERE id=?", [docId]);
+export async function deleteBolDoc(db: DomainDb, docId: number): Promise<DeleteBolDocResult> {
+  const rows = await db.select().from(bolDocs).where(eq(bolDocs.id, docId));
+  const row = rows[0];
   if (!row) return { ok: false, message: `BOL document ${docId} not found.`, unlinked: 0, id: docId };
 
   let unlinked = 0;
   await withTransaction(db, async () => {
-    const cur = await db.run(
-      "UPDATE tags SET bol_doc_id=NULL, updated_at=? WHERE bol_doc_id=?",
-      [now(), docId],
-    );
+    const cur = await db
+      .update(tags)
+      .set({ bol_doc_id: null, updated_at: now() })
+      .where(eq(tags.bol_doc_id, docId));
     unlinked = cur.changes;
-    await db.run("DELETE FROM bol_docs WHERE id=?", [docId]);
+    await db.delete(bolDocs).where(eq(bolDocs.id, docId));
     await logEvent(
       db,
       "BOL_DELETE",
@@ -146,23 +154,24 @@ export async function deleteBolDoc(db: SqlDatabase, docId: number): Promise<Dele
 
 /** Set a document's BOL number; tags filed under it follow (db.py:596-623). */
 export async function renameBolDoc(
-  db: SqlDatabase,
+  db: DomainDb,
   docId: number,
   newNumber: string,
 ): Promise<RenameBolDocResult> {
   const clean = (newNumber ?? "").toString().trim();
   if (!clean) return { ok: false, message: "BOL number cannot be empty." };
-  const row = await db.get<BolDocRow>("SELECT * FROM bol_docs WHERE id=?", [docId]);
+  const rows = await db.select().from(bolDocs).where(eq(bolDocs.id, docId));
+  const row = rows[0];
   if (!row) return { ok: false, message: `BOL document ${docId} not found.` };
 
   const old = row.bol_number;
   let updated = 0;
   await withTransaction(db, async () => {
-    await db.run("UPDATE bol_docs SET bol_number=?, auto_named=0 WHERE id=?", [clean, docId]);
-    const cur = await db.run(
-      "UPDATE tags SET bol_number=?, updated_at=? WHERE bol_doc_id=?",
-      [clean, now(), docId],
-    );
+    await db.update(bolDocs).set({ bol_number: clean, auto_named: 0 }).where(eq(bolDocs.id, docId));
+    const cur = await db
+      .update(tags)
+      .set({ bol_number: clean, updated_at: now() })
+      .where(eq(tags.bol_doc_id, docId));
     updated = cur.changes;
     await logEvent(
       db,
@@ -176,18 +185,18 @@ export async function renameBolDoc(
     );
   });
 
-  const refreshed = await db.get<BolDocRow>("SELECT * FROM bol_docs WHERE id=?", [docId]);
+  const refreshed = await db.select().from(bolDocs).where(eq(bolDocs.id, docId));
   return {
     ok: true,
     message: `BOL renamed to '${clean}'.`,
-    doc: refreshed ? bolDocDict(refreshed) : undefined,
+    doc: refreshed[0] ? bolDocDict(refreshed[0]) : undefined,
     tags_updated: updated,
   };
 }
 
 /** Update the stored page count after an Add-page rescan (db.py:625-630). */
-export async function setBolDocPages(db: SqlDatabase, docId: number, pages: number): Promise<void> {
-  await db.run("UPDATE bol_docs SET pages=? WHERE id=?", [pages, docId]);
+export async function setBolDocPages(db: DomainDb, docId: number, pages: number): Promise<void> {
+  await db.update(bolDocs).set({ pages }).where(eq(bolDocs.id, docId));
 }
 
 /**
@@ -198,7 +207,7 @@ export async function setBolDocPages(db: SqlDatabase, docId: number, pages: numb
  * empty. ocr_text is always refreshed.
  */
 export async function applyBolExtraction(
-  db: SqlDatabase,
+  db: DomainDb,
   docId: number,
   bolNumber = "",
   vendor = "",
@@ -206,27 +215,31 @@ export async function applyBolExtraction(
   ocrText = "",
   lineItems: BolLineItem[] | null = null,
 ): Promise<BolDoc | null> {
-  const row = await db.get<BolDocRow>("SELECT * FROM bol_docs WHERE id=?", [docId]);
+  const rows = await db.select().from(bolDocs).where(eq(bolDocs.id, docId));
+  const row = rows[0];
   if (!row) return null;
 
   await withTransaction(db, async () => {
-    await db.run("UPDATE bol_docs SET ocr_text=? WHERE id=?", [ocrText, docId]);
+    await db.update(bolDocs).set({ ocr_text: ocrText }).where(eq(bolDocs.id, docId));
     const li = row.line_items || "[]";
     if (lineItems && lineItems.length > 0 && (li === "" || li === "[]")) {
-      await db.run("UPDATE bol_docs SET line_items=? WHERE id=?", [JSON.stringify(lineItems), docId]);
+      await db.update(bolDocs).set({ line_items: JSON.stringify(lineItems) }).where(eq(bolDocs.id, docId));
     }
     if (vendor && !row.vendor) {
-      await db.run("UPDATE bol_docs SET vendor=? WHERE id=?", [vendor, docId]);
+      await db.update(bolDocs).set({ vendor }).where(eq(bolDocs.id, docId));
     }
     if (poNumber && !row.po_number) {
-      await db.run("UPDATE bol_docs SET po_number=? WHERE id=?", [poNumber, docId]);
+      await db.update(bolDocs).set({ po_number: poNumber }).where(eq(bolDocs.id, docId));
     }
     if (bolNumber && row.auto_named !== 0 && bolNumber !== row.bol_number) {
-      await db.run("UPDATE bol_docs SET bol_number=? WHERE id=?", [bolNumber, docId]);
-      await db.run("UPDATE tags SET bol_number=?, updated_at=? WHERE bol_doc_id=?", [bolNumber, now(), docId]);
+      await db.update(bolDocs).set({ bol_number: bolNumber }).where(eq(bolDocs.id, docId));
+      await db
+        .update(tags)
+        .set({ bol_number: bolNumber, updated_at: now() })
+        .where(eq(tags.bol_doc_id, docId));
     }
   });
 
-  const refreshed = await db.get<BolDocRow>("SELECT * FROM bol_docs WHERE id=?", [docId]);
-  return refreshed ? bolDocDict(refreshed) : null;
+  const refreshed = await db.select().from(bolDocs).where(eq(bolDocs.id, docId));
+  return refreshed[0] ? bolDocDict(refreshed[0]) : null;
 }

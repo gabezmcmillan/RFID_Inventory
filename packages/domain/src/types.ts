@@ -1,38 +1,19 @@
 /**
- * Precise row and result types for the domain package.
+ * Domain-level types for the domain package.
  *
- * Row types mirror the table columns (strings/numbers as stored — no JS Date
- * objects). Result types mirror the exact shapes returned by the Python
- * repository functions in `apps/warehouse/db.py` so the UI plans can consume
- * them without translation.
+ * Row types that duplicate a table's shape are inferred from the Drizzle schema
+ * (`typeof tags.$inferSelect` etc.) and re-exported under the names the public
+ * API already uses, so `src/index.ts` keeps stable names. Genuinely domain-level
+ * types — enum/union literals, computed result shapes (inventory tree nodes,
+ * importer report types, the public tag dict, the coalesced event row) — stay
+ * hand-written here.
  */
 
+import type { notes, requests, tags } from "./schema.js";
+
 // -- tags ---------------------------------------------------------------------
-/** Full `tags` row as stored (used for internal SELECT * reads). */
-export interface TagRow {
-  id: number;
-  epc: string;
-  item_type: string;
-  item_name: string;
-  bol_number: string;
-  po_number: string;
-  building: string;
-  sector: string;
-  vendor: string;
-  sku: string;
-  mfc_date: string;
-  quantity: number;
-  remaining: number;
-  status: string;
-  received_at: string;
-  delivered_at: string;
-  checkout_building: string;
-  flag: string;
-  flagged_at: string;
-  created_at: string;
-  updated_at: string;
-  bol_doc_id: number | null;
-}
+/** Full `tags` row as stored (inferred from the Drizzle schema). */
+export type TagRow = typeof tags.$inferSelect;
 
 /** Public tag dict (Python `_tag_dict`, db.py:316-337): no id/created/updated. */
 export interface Tag {
@@ -96,33 +77,12 @@ export interface BolDoc {
 export type BolDocWithBoxes = BolDoc & { boxes: number };
 
 // -- notes -------------------------------------------------------------------
-export interface Note {
-  id: number;
-  ts: string;
-  item_type: string;
-  bol_number: string;
-  building: string;
-  text: string;
-}
+/** `notes` row as stored (inferred from the Drizzle schema). */
+export type Note = typeof notes.$inferSelect;
 
 // -- requests ----------------------------------------------------------------
-export interface MaterialRequest {
-  id: number;
-  item_type: string;
-  item_name: string;
-  quantity: number;
-  building: string;
-  jobsite: string;
-  requester: string;
-  contact: string;
-  note: string;
-  status: string;
-  created_at: string;
-  handled_at: string;
-  handler_note: string;
-  order_ref: string;
-  updated_at: string;
-}
+/** `requests` row as stored (inferred from the Drizzle schema). */
+export type MaterialRequest = typeof requests.$inferSelect;
 
 // -- intake results -----------------------------------------------------------
 export interface ReceiveShipmentResult {
@@ -153,6 +113,7 @@ export interface ReceiveShipmentResult {
 export interface AmendCheckinResult {
   ok: boolean;
   message: string;
+  epc?: string;
   tag: Tag | null;
   qty: number;
 }
@@ -160,7 +121,7 @@ export interface AmendCheckinResult {
 // -- checkout results ---------------------------------------------------------
 export interface LookupForCheckoutResult {
   ok: boolean;
-  message: string;
+  message?: string;
   epc: string;
   item_type?: string;
   item_name?: string;

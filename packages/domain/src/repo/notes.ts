@@ -6,35 +6,18 @@
  * recorded with a blank value.
  */
 
-import type { SqlDatabase } from "../sql.js";
-import { withTransaction } from "../sql.js";
+import { and, asc, eq } from "drizzle-orm";
+
+import type { DomainDb } from "../db.js";
+import { withTransaction } from "../db.js";
+import { notes } from "../schema.js";
 import type { AddNoteResult, DeleteNoteResult, Note } from "../types.js";
 import { logEvent } from "./events.js";
 import { now } from "./util.js";
 
-interface NoteRow {
-  id: number;
-  ts: string;
-  item_type: string;
-  bol_number: string;
-  building: string;
-  text: string;
-}
-
-function noteDict(row: NoteRow): Note {
-  return {
-    id: row.id,
-    ts: row.ts,
-    item_type: row.item_type,
-    bol_number: row.bol_number,
-    building: row.building,
-    text: row.text,
-  };
-}
-
 /** Attach a timestamped note to a shipment and log a `NOTE` event (db.py:685-709). */
 export async function addNote(
-  db: SqlDatabase,
+  db: DomainDb,
   itemType: string,
   bolNumber: string,
   building: string,
@@ -50,49 +33,39 @@ export async function addNote(
 
   let noteId = 0;
   await withTransaction(db, async () => {
-    const res = await db.run(
-      "INSERT INTO notes (ts, item_type, bol_number, building, text) VALUES (?,?,?,?,?)",
-      [ts, cleanType, cleanBol, cleanBuilding, cleanText],
-    );
-    noteId = Number(res.lastInsertRowid);
+    const inserted = await db
+      .insert(notes)
+      .values({ ts, item_type: cleanType, bol_number: cleanBol, building: cleanBuilding, text: cleanText })
+      .returning({ id: notes.id });
+    noteId = inserted[0]?.id ?? 0;
     const detail = cleanText.length <= 200 ? cleanText : cleanText.slice(0, 197) + "...";
     await logEvent(db, "NOTE", "", cleanType, cleanBol, cleanBuilding, "", detail);
   });
 
-  const row = await db.get<NoteRow>("SELECT * FROM notes WHERE id=?", [noteId]);
-  return { ok: true, message: "Note added.", note: row ? noteDict(row) : undefined };
+  const rows = await db.select().from(notes).where(eq(notes.id, noteId));
+  return { ok: true, message: "Note added.", note: rows[0] };
 }
 
 /** Notes for a shipment, oldest first (db.py:711-729). */
 export async function listNotes(
-  db: SqlDatabase,
+  db: DomainDb,
   itemType: string,
   bolNumber?: string | null,
   building?: string | null,
 ): Promise<Note[]> {
-  const where = ["item_type = ?"];
-  const params: unknown[] = [itemType];
-  if (bolNumber !== undefined && bolNumber !== null) {
-    where.push("bol_number = ?");
-    params.push(bolNumber);
-  }
-  if (building !== undefined && building !== null) {
-    where.push("building = ?");
-    params.push(building);
-  }
-  const rows = await db.all<NoteRow>(
-    `SELECT * FROM notes WHERE ${where.join(" AND ")} ORDER BY id`,
-    params,
-  );
-  return rows.map(noteDict);
+  const conds = [eq(notes.item_type, itemType)];
+  if (bolNumber !== undefined && bolNumber !== null) conds.push(eq(notes.bol_number, bolNumber));
+  if (building !== undefined && building !== null) conds.push(eq(notes.building, building));
+  return db.select().from(notes).where(and(...conds)).orderBy(asc(notes.id));
 }
 
 /** Admin: remove a note and log a `NOTE_DEL` event (db.py:731-742). */
-export async function deleteNote(db: SqlDatabase, noteId: number): Promise<DeleteNoteResult> {
-  const row = await db.get<NoteRow>("SELECT * FROM notes WHERE id=?", [noteId]);
+export async function deleteNote(db: DomainDb, noteId: number): Promise<DeleteNoteResult> {
+  const rows = await db.select().from(notes).where(eq(notes.id, noteId));
+  const row = rows[0];
   if (!row) return { ok: false, message: `Note ${noteId} not found.` };
   await withTransaction(db, async () => {
-    await db.run("DELETE FROM notes WHERE id=?", [noteId]);
+    await db.delete(notes).where(eq(notes.id, noteId));
     await logEvent(
       db,
       "NOTE_DEL",
