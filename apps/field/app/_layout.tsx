@@ -52,6 +52,7 @@ export default function RootLayout(): React.ReactNode {
           <Stack.Screen name="sweep" options={{ title: "Sweep & Count" }} />
           <Stack.Screen name="warehouse" options={{ title: "Warehouse" }} />
           <Stack.Screen name="warehouse-group" options={{ title: "Group" }} />
+          <Stack.Screen name="bol-docs" options={{ title: "BOL Documents" }} />
           <Stack.Screen name="finder" options={{ title: "Find a Tag" }} />
           <Stack.Screen name="events" options={{ title: "Event Log" }} />
           <Stack.Screen name="admin" options={{ title: "Admin" }} />

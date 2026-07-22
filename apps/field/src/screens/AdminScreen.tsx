@@ -23,26 +23,13 @@ import {
   updateTag,
   type Tag,
 } from "@rfid/domain";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useDb } from "../db/provider";
-
-/** AsyncStorage key for the admin PIN. */
-const ADMIN_PIN_KEY = "rfid.field.adminPin";
-/** Default PIN (config.py:159). */
-const DEFAULT_PIN = "1234";
+import { PinPrompt, saveAdminPin } from "./adminPin";
 
 const STATUS_OPTIONS = [STATUS_IN, STATUS_PARTIAL, STATUS_DELIVERED];
-
-async function loadPin(): Promise<string> {
-  return (await AsyncStorage.getItem(ADMIN_PIN_KEY)) ?? DEFAULT_PIN;
-}
-
-async function savePin(pin: string): Promise<void> {
-  await AsyncStorage.setItem(ADMIN_PIN_KEY, pin);
-}
 
 export function AdminScreen(): React.ReactNode {
   const [unlocked, setUnlocked] = useState(false);
@@ -50,40 +37,6 @@ export function AdminScreen(): React.ReactNode {
     return <PinPrompt onUnlock={() => setUnlocked(true)} />;
   }
   return <AdminTools />;
-}
-
-/** PIN entry; unlocks on a match against the stored PIN. */
-function PinPrompt({ onUnlock }: { onUnlock: () => void }): React.ReactNode {
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (): Promise<void> => {
-    const stored = await loadPin();
-    if (pin === stored) {
-      onUnlock();
-    } else {
-      setError("Invalid PIN.");
-      setPin("");
-    }
-  };
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Admin PIN</Text>
-      <TextInput
-        style={styles.input}
-        value={pin}
-        onChangeText={setPin}
-        placeholder="PIN"
-        secureTextEntry
-        keyboardType="number-pad"
-      />
-      <Pressable style={styles.primary} onPress={() => void submit()}>
-        <Text style={styles.primaryText}>Unlock</Text>
-      </Pressable>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-    </View>
-  );
 }
 
 /** The unlocked admin surface: tag editor, clear flag, delete group, vendor, clear db, change PIN. */
@@ -353,7 +306,7 @@ function ChangePinSection({ onMsg }: { onMsg: (m: string) => void }): React.Reac
       onMsg("PIN cannot be empty.");
       return;
     }
-    await savePin(clean);
+    await saveAdminPin(clean);
     setPin("");
     onMsg("PIN updated.");
   };
@@ -375,7 +328,6 @@ function ChangePinSection({ onMsg }: { onMsg: (m: string) => void }): React.Reac
 
 const styles = StyleSheet.create({
   container: { padding: 20, paddingBottom: 60, gap: 10 },
-  title: { fontSize: 22, fontWeight: "bold", marginBottom: 8 },
   section: { borderWidth: 1, borderColor: "#eee", borderRadius: 8, padding: 12, backgroundColor: "white" },
   sectionTitle: { fontSize: 16, fontWeight: "bold", marginBottom: 8 },
   row: { flexDirection: "row", gap: 8, alignItems: "center" },
@@ -392,7 +344,6 @@ const styles = StyleSheet.create({
   primaryText: { color: "white", fontWeight: "600" },
   danger: { backgroundColor: "#c33" },
   btnDisabled: { backgroundColor: "#9ab" },
-  error: { color: "#c33", marginTop: 8 },
   hint: { color: "#888", fontStyle: "italic" },
   vendorRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6 },
   vendorName: { fontSize: 15 },

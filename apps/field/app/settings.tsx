@@ -19,6 +19,7 @@ import {
   savePrinterHost,
 } from "../src/printer/printerSettings";
 import { printerStatus, PRINTER_PORT } from "../src/printer/printerClient";
+import { MISTRAL_API_KEY_STORAGE, loadMistralApiKey, saveMistralApiKey } from "../src/bol/mistralKey";
 
 const MIN_POWER = 10;
 const MAX_POWER = 29;
@@ -29,6 +30,7 @@ export default function SettingsScreen(): React.ReactNode {
   const [busy, setBusy] = useState(false);
   const [printerHost, setPrinterHost] = useState("");
   const [cloudBaseUrl, setCloudBaseUrl] = useState("");
+  const [mistralKey, setMistralKey] = useState("");
   const [testing, setTesting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [statusOk, setStatusOk] = useState<boolean | null>(null);
@@ -42,6 +44,10 @@ export default function SettingsScreen(): React.ReactNode {
       setPrinterHost(s.printerHost);
       setCloudBaseUrl(s.cloudBaseUrl);
     });
+  }, []);
+
+  useEffect(() => {
+    void loadMistralApiKey().then(setMistralKey);
   }, []);
 
   const toggleTransport = async (value: boolean): Promise<void> => {
@@ -68,6 +74,11 @@ export default function SettingsScreen(): React.ReactNode {
   const onCloudBaseUrlChange = (value: string): void => {
     setCloudBaseUrl(value);
     void saveCloudBaseUrl(value);
+  };
+
+  const onMistralKeyChange = (value: string): void => {
+    setMistralKey(value);
+    void saveMistralApiKey(value);
   };
 
   const testPrinter = async (): Promise<void> => {
@@ -140,11 +151,25 @@ export default function SettingsScreen(): React.ReactNode {
         keyboardType="url"
       />
 
+      <Text style={styles.sectionLabel}>Mistral OCR API key</Text>
+      <Text style={styles.hint}>Enables online BOL extraction (empty = local on-device OCR only)</Text>
+      <TextInput
+        style={styles.input}
+        value={mistralKey}
+        onChangeText={onMistralKeyChange}
+        placeholder="sk-…"
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry
+        keyboardType="default"
+      />
+
       {Platform.OS === "ios" ? (
         <Text style={styles.note}>
           Toggle key: <Text style={styles.mono}>{USE_NATIVE_TRANSPORT_KEY}</Text>; printer key:{" "}
           <Text style={styles.mono}>{PRINTER_HOST_KEY}</Text>; cloud key:{" "}
-          <Text style={styles.mono}>{CLOUD_BASE_URL_KEY}</Text>
+          <Text style={styles.mono}>{CLOUD_BASE_URL_KEY}</Text>; Mistral key:{" "}
+          <Text style={styles.mono}>{MISTRAL_API_KEY_STORAGE}</Text>
         </Text>
       ) : null}
     </View>

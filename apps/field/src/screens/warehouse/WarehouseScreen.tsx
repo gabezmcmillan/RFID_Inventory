@@ -123,6 +123,13 @@ export function WarehouseScreen(): React.ReactNode {
                   {g.vendors.length > 0 ? ` · ${g.vendors.join(", ")}` : ""}
                   {g.other_values.length > 0 ? ` · ${g.other_values.join(", ")}` : ""}
                 </Text>
+                {g.bol_doc_id ? (
+                  <Link href={{ pathname: "/bol-docs", params: { docId: String(g.bol_doc_id) } }} asChild>
+                    <Pressable style={styles.docLink}>
+                      <Text style={styles.docLinkText}>BOL document →</Text>
+                    </Pressable>
+                  </Link>
+                ) : null}
               </Pressable>
             </Link>
           ))}
@@ -212,6 +219,8 @@ const styles = StyleSheet.create({
   statusChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   statusChipText: { color: "white", fontSize: 11, fontWeight: "700" },
   groupMeta: { fontSize: 12, color: "#666", marginTop: 4 },
+  docLink: { alignSelf: "flex-start", marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#eef", borderRadius: 6 },
+  docLinkText: { fontSize: 12, color: "#336", fontWeight: "600" },
   hint: { color: "#888", fontStyle: "italic", marginVertical: 12 },
   exportBtn: { backgroundColor: "#06c", padding: 14, borderRadius: 8, alignItems: "center", marginTop: 12 },
   exportBtnDisabled: { backgroundColor: "#9ab" },
