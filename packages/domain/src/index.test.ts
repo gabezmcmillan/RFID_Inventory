@@ -1,6 +1,9 @@
 import { expect, test } from "vitest";
-import { DOMAIN_PACKAGE } from "./index";
 
-test("package loads", () => {
-  expect(DOMAIN_PACKAGE).toBe("@rfid/domain");
+import { STATUS_IN, applySchema, openTestDb } from "./index";
+
+test("package re-exports the domain surface", async () => {
+  const db = await openTestDb();
+  await applySchema(db);
+  expect(STATUS_IN).toBe("In Warehouse");
 });
