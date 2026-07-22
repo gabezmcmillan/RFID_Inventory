@@ -35,7 +35,7 @@ database files).
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001 | Scaffold the TypeScript monorepo (field app, web app, domain package) | P1 | S | — | TODO |
+| 001 | Scaffold the TypeScript monorepo (field app, web app, domain package) | P1 | S | — | DONE |
 | 002 | Domain package: schema, constants, repositories, importer | P1 | L | 001 | TODO |
 | 003 | Reader module: TSL ASCII 2.0 over Bluetooth + simulated reader | P1 | L | 001 | TODO |
 | 004 | Check In (scan path): arm shipment, trigger intake, amend, vendors, notes | P1 | M | 002, 003 | TODO |

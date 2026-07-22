@@ -29,6 +29,12 @@ apps/cloud/contract/
 # OS
 .DS_Store
 
+# Node / JS
+node_modules/
+.expo/
+.next/
+*.tsbuildinfo
+
 # Cursor plan files (local working notes; rules stay tracked)
 .cursor/plans/
 test_intake.py

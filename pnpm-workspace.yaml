@@ -1,0 +1,5 @@
+packages:
+  - "apps/field"
+  - "apps/web"
+  - "packages/domain"
+  - "packages/reader-protocol"
