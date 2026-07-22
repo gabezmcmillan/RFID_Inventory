@@ -12,7 +12,8 @@
       "infoPlist": {
         "UISupportedExternalAccessoryProtocols": [
           "com.uk.tsl.rfid"
-        ]
+        ],
+        "NSCameraUsageDescription": "The camera scans bill of lading documents during check-in."
       },
       "bundleIdentifier": "com.jcourson.field",
       "appleTeamId": "KDEGJ8G33R"
