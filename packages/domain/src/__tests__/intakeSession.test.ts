@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 
-import { IntakeSession, listEvents, NO_SHIPMENT_ARMED, receiveShipment, type PrintDeps } from "../index.js";
-import type { ItemFields } from "../index.js";
-import { openTestDb } from "../testing/openTestDb.js";
+import { IntakeSession, listEvents, NO_SHIPMENT_ARMED, receiveShipment, type PrintDeps } from "../index";
+import type { ItemFields } from "../index";
+import { openTestDb } from "../testing/openTestDb";
 
 const EPC = "AAAA11112222333344445555";
 

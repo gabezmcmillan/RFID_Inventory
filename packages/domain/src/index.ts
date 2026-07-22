@@ -9,13 +9,13 @@
  */
 
 // Drizzle database type + transaction helper
-export { withTransaction } from "./db.js";
-export type { DomainDb } from "./db.js";
+export { withTransaction } from "./db";
+export type { DomainDb } from "./db";
 
 // React-Native-safe migration runner + the checked-in migration bundle
-export { applyMigrations } from "./applyMigrations.js";
-export { MIGRATIONS } from "./migrations.js";
-export type { MigrationEntry } from "./migrations.js";
+export { applyMigrations } from "./applyMigrations";
+export { MIGRATIONS } from "./migrations";
+export type { MigrationEntry } from "./migrations";
 
 // Schema (source of truth) — tables + the schema bundle
 export {
@@ -27,7 +27,7 @@ export {
   schema,
   tags,
   vendors,
-} from "./schema.js";
+} from "./schema";
 
 // Constants
 export {
@@ -58,8 +58,8 @@ export {
   STATUS_IN,
   STATUS_PARTIAL,
   TYPE_FIELDS,
-} from "./constants.js";
-export type { FieldDef, FieldScope, FieldType } from "./constants.js";
+} from "./constants";
+export type { FieldDef, FieldScope, FieldType } from "./constants";
 
 // Types (row types inferred from the schema; the rest are domain-level shapes)
 export type {
@@ -95,21 +95,21 @@ export type {
   TagRow,
   UpdateTagResult,
   VendorResult,
-} from "./types.js";
+} from "./types";
 
 // Repository: events
-export { logEvent, listEvents } from "./repo/events.js";
+export { logEvent, listEvents } from "./repo/events";
 
 // Repository: intake
-export { allocateEpcs, amendCheckin, receiveShipment } from "./repo/intake.js";
-export type { ItemFields } from "./repo/intake.js";
+export { allocateEpcs, amendCheckin, receiveShipment } from "./repo/intake";
+export type { ItemFields } from "./repo/intake";
 
 // Intake session (Check In armed-shipment state machine)
-export { IntakeSession, NO_SHIPMENT_ARMED } from "./intakeSession.js";
-export type { ArmedShipment, CheckInPrintedResult, CheckInScannedResult, PrintDeps } from "./intakeSession.js";
+export { IntakeSession, NO_SHIPMENT_ARMED } from "./intakeSession";
+export type { ArmedShipment, CheckInPrintedResult, CheckInScannedResult, PrintDeps } from "./intakeSession";
 
 // Repository: checkout
-export { deliverUnits, deliverUnitsInTx, lookupForCheckout } from "./repo/checkout.js";
+export { deliverUnits, deliverUnitsInTx, lookupForCheckout } from "./repo/checkout";
 
 // Repository: inventory
 export {
@@ -120,7 +120,7 @@ export {
   inventoryTree,
   itemNameSuggestions,
   recordInventory,
-} from "./repo/inventory.js";
+} from "./repo/inventory";
 
 // Warehouse CSV export (column layout + RFC 4180 formatter)
 export {
@@ -129,14 +129,14 @@ export {
   exportCsv,
   EXPORT_COLUMNS,
   EXPORT_HEADER_ROW,
-} from "./repo/exportCsv.js";
-export type { ExportColumn } from "./repo/exportCsv.js";
+} from "./repo/exportCsv";
+export type { ExportColumn } from "./repo/exportCsv";
 
 // Repository: vendors
-export { addVendor, listVendors, removeVendor } from "./repo/vendors.js";
+export { addVendor, listVendors, removeVendor } from "./repo/vendors";
 
 // Repository: notes
-export { addNote, deleteNote, listNotes } from "./repo/notes.js";
+export { addNote, deleteNote, listNotes } from "./repo/notes";
 
 // Repository: bol docs
 export {
@@ -147,7 +147,7 @@ export {
   listBolDocs,
   renameBolDoc,
   setBolDocPages,
-} from "./repo/bolDocs.js";
+} from "./repo/bolDocs";
 
 // Repository: requests
 export {
@@ -156,8 +156,8 @@ export {
   fulfillRequest,
   listRequests,
   setRequestStatus,
-} from "./repo/requests.js";
-export type { CreateRequestInput } from "./repo/requests.js";
+} from "./repo/requests";
+export type { CreateRequestInput } from "./repo/requests";
 
 // Repository: web jobsite (stock browse, cart, orders, counts)
 export {
@@ -169,7 +169,7 @@ export {
   nowUtc,
   parseStrictQuantity,
   stockRows,
-} from "./repo/webStock.js";
+} from "./repo/webStock";
 export type {
   CartLineError,
   CartLineInput,
@@ -181,28 +181,28 @@ export type {
   StockComponent,
   StockGroup,
   StockRow,
-} from "./repo/webStock.js";
+} from "./repo/webStock";
 
 // Repository: admin
-export { clearAll, clearFlag, deleteGroup, updateTag } from "./repo/admin.js";
-export type { UpdateTagFields } from "./repo/admin.js";
+export { clearAll, clearFlag, deleteGroup, updateTag } from "./repo/admin";
+export type { UpdateTagFields } from "./repo/admin";
 
 // Repository: local_meta key/value helpers
-export { getMeta, setMeta } from "./repo/util.js";
+export { getMeta, setMeta } from "./repo/util";
 
 // Label printing: ZPL builder (pure TS; the TCP transport lives in apps/field)
-export { buildLabelZpl, descLayout, PrintError } from "./label/zpl.js";
-export type { BuildLabelZplParams, DescLayout } from "./label/zpl.js";
+export { buildLabelZpl, descLayout, PrintError } from "./label/zpl";
+export type { BuildLabelZplParams, DescLayout } from "./label/zpl";
 
 // BOL extraction: local heuristics (pure TS; the Mistral client lives in
 // `./bol/mistral.js` and is imported directly where needed)
-export { cleanValue, extractFields, matchVendor, sequenceRatio } from "./bol/extract.js";
-export type { ExtractedFields } from "./bol/extract.js";
+export { cleanValue, extractFields, matchVendor, sequenceRatio } from "./bol/extract";
+export type { ExtractedFields } from "./bol/extract";
 
 // BOL extraction: Mistral OCR cloud client (pure TS; takes `fetchImpl` so the
 // domain package never assumes a fetch global)
-export { extractFieldsViaMistral } from "./bol/mistral.js";
-export type { ExtractViaMistralInput, FetchImpl, MistralDocument, MistralExtraction, MistralLineItem } from "./bol/mistral.js";
+export { extractFieldsViaMistral } from "./bol/mistral";
+export type { ExtractViaMistralInput, FetchImpl, MistralDocument, MistralExtraction, MistralLineItem } from "./bol/mistral";
 
 // The legacy importer and the Node test harness live in their own modules
 // (`src/importer/`, `src/testing/`) — separate, Node-only entries — so the main

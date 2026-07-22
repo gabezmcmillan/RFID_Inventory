@@ -16,18 +16,18 @@ import {
   STATUS_DELIVERED,
   STATUS_IN,
   STATUS_PARTIAL,
-} from "../constants.js";
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { bolDocs, notes, tags } from "../schema.js";
+} from "../constants";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { bolDocs, notes, tags } from "../schema";
 import type {
   ClearAllResult,
   ClearFlagResult,
   DeleteGroupResult,
   UpdateTagResult,
-} from "../types.js";
-import { logEvent } from "./events.js";
-import { asQuantity, now, tagDict } from "./util.js";
+} from "../types";
+import { logEvent } from "./events";
+import { asQuantity, now, tagDict } from "./util";
 
 /** Admin-editable fields keyed by string (values are strings/numbers as supplied). */
 export type UpdateTagFields = Record<string, unknown>;

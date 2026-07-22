@@ -21,7 +21,7 @@
  * passes its own fetch (or the RN global); tests pass a stub.
  */
 
-import { matchVendor } from "./extract.js";
+import { matchVendor } from "./extract";
 
 /** The OCR endpoint (ocr_mistral.py `_OCR_URL`). */
 const OCR_URL = "https://api.mistral.ai/v1/ocr";

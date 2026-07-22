@@ -9,7 +9,7 @@
  * hand-written here.
  */
 
-import type { notes, requests, tags } from "./schema.js";
+import type { notes, requests, tags } from "./schema";
 
 // -- tags ---------------------------------------------------------------------
 /** Full `tags` row as stored (inferred from the Drizzle schema). */

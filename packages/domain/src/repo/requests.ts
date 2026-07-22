@@ -14,20 +14,20 @@ import {
   REQUEST_FULFILLED,
   REQUEST_PENDING,
   REQUEST_STAGING,
-} from "../constants.js";
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { requests } from "../schema.js";
+} from "../constants";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { requests } from "../schema";
 import type {
   CreateRequestResult,
   FulfillDraw,
   FulfillRequestResult,
   MaterialRequest,
   SetRequestStatusResult,
-} from "../types.js";
-import { deliverUnitsInTx } from "./checkout.js";
-import { logEvent } from "./events.js";
-import { asQuantity, now } from "./util.js";
+} from "../types";
+import { deliverUnitsInTx } from "./checkout";
+import { logEvent } from "./events";
+import { asQuantity, now } from "./util";
 
 /** Raw `requests` row shape (inferred from the Drizzle schema). */
 type RequestRow = typeof requests.$inferSelect;

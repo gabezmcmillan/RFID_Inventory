@@ -5,11 +5,11 @@
 
 import { eq, sql } from "drizzle-orm";
 
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { vendors } from "../schema.js";
-import type { VendorResult } from "../types.js";
-import { logEvent } from "./events.js";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { vendors } from "../schema";
+import type { VendorResult } from "../types";
+import { logEvent } from "./events";
 
 /** All vendor names, case-insensitive order (db.py:1318-1322). */
 export async function listVendors(db: DomainDb): Promise<string[]> {

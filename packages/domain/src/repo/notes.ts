@@ -8,12 +8,12 @@
 
 import { and, asc, eq } from "drizzle-orm";
 
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { notes } from "../schema.js";
-import type { AddNoteResult, DeleteNoteResult, Note } from "../types.js";
-import { logEvent } from "./events.js";
-import { now } from "./util.js";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { notes } from "../schema";
+import type { AddNoteResult, DeleteNoteResult, Note } from "../types";
+import { logEvent } from "./events";
+import { now } from "./util";
 
 /** Attach a timestamped note to a shipment and log a `NOTE` event (db.py:685-709). */
 export async function addNote(

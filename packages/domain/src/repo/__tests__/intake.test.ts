@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { allocateEpcs, amendCheckin, receiveShipment } from "../../index";
-import { openTestDb } from "../../testing/openTestDb.js";
+import { openTestDb } from "../../testing/openTestDb";
 
 describe("intake", () => {
   test("receiving 3 EPCs reports the group qty as the sum of units", async () => {

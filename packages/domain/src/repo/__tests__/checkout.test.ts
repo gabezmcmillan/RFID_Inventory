@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { deliverUnits, listEvents, lookupForCheckout, receiveShipment } from "../../index";
-import { openTestDb } from "../../testing/openTestDb.js";
+import { openTestDb } from "../../testing/openTestDb";
 
 describe("checkout", () => {
   test("a full draw marks the box Delivered", async () => {

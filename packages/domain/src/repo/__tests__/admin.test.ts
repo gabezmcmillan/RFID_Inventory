@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 
 import { clearFlag, deliverUnits, receiveShipment, updateTag } from "../../index";
 import { tags } from "../../index";
-import { openTestDb } from "../../testing/openTestDb.js";
+import { openTestDb } from "../../testing/openTestDb";
 
 describe("admin", () => {
   test("updateTag status -> In Warehouse resets remaining/delivered_at/flag", async () => {

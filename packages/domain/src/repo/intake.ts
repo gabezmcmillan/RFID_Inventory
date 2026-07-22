@@ -11,12 +11,12 @@ import {
   EPC_SERIAL_LEN,
   PRINTER_EPC_PREFIX,
   STATUS_IN,
-} from "../constants.js";
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { tags } from "../schema.js";
-import type { AmendCheckinResult, ReceiveShipmentResult, Tag, TagRow } from "../types.js";
-import { logEvent } from "./events.js";
+} from "../constants";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { tags } from "../schema";
+import type { AmendCheckinResult, ReceiveShipmentResult, Tag, TagRow } from "../types";
+import { logEvent } from "./events";
 import {
   asQuantity,
   getMeta,
@@ -24,7 +24,7 @@ import {
   now,
   setMeta,
   tagDict,
-} from "./util.js";
+} from "./util";
 
 /** Per-unit item fields accepted at check-in. */
 export interface ItemFields {

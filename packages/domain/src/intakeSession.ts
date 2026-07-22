@@ -18,12 +18,12 @@
  * `disarm()` (or arming a new shipment) clears it.
  */
 
-import type { DomainDb } from "./db.js";
-import { allocateEpcs, amendCheckin, receiveShipment } from "./repo/intake.js";
-import type { ItemFields } from "./repo/intake.js";
-import { buildLabelZpl } from "./label/zpl.js";
-import { MAX_LABELS_PER_PRINT } from "./constants.js";
-import type { AmendCheckinResult, ReceiveShipmentResult } from "./types.js";
+import type { DomainDb } from "./db";
+import { allocateEpcs, amendCheckin, receiveShipment } from "./repo/intake";
+import type { ItemFields } from "./repo/intake";
+import { buildLabelZpl } from "./label/zpl";
+import { MAX_LABELS_PER_PRINT } from "./constants";
+import type { AmendCheckinResult, ReceiveShipmentResult } from "./types";
 
 /** The armed shipment: an item type plus its shipment-scope fields. */
 export interface ArmedShipment {

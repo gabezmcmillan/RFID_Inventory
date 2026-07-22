@@ -11,7 +11,7 @@
  * newline; inner double quotes are doubled; rows are terminated by `\r\n`.
  */
 
-import type { Tag } from "../types.js";
+import type { Tag } from "../types";
 
 /** One export column: the human header and the {@link Tag} key it reads. */
 export interface ExportColumn {

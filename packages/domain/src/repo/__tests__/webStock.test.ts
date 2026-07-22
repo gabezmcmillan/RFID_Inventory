@@ -9,7 +9,7 @@ import {
   buildings,
   deliverUnits,
 } from "../../index";
-import { openTestDb } from "../../testing/openTestDb.js";
+import { openTestDb } from "../../testing/openTestDb";
 
 const E = (s: string) => s + "0".repeat(24 - s.length);
 

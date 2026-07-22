@@ -6,13 +6,13 @@
 
 import { eq } from "drizzle-orm";
 
-import { STATUS_DELIVERED, STATUS_PARTIAL } from "../constants.js";
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { tags } from "../schema.js";
-import type { DeliverUnitsResult, LookupForCheckoutResult, TagRow } from "../types.js";
-import { logEvent } from "./events.js";
-import { asQuantity, groupInWarehouseQty, now, today } from "./util.js";
+import { STATUS_DELIVERED, STATUS_PARTIAL } from "../constants";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { tags } from "../schema";
+import type { DeliverUnitsResult, LookupForCheckoutResult, TagRow } from "../types";
+import { logEvent } from "./events";
+import { asQuantity, groupInWarehouseQty, now, today } from "./util";
 
 /** Check Out step 1: look a box up for the two-step confirm UI (db.py:744-769). */
 export async function lookupForCheckout(

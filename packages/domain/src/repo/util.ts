@@ -8,9 +8,9 @@
 
 import { and, eq, sql } from "drizzle-orm";
 
-import type { DomainDb } from "../db.js";
-import { localMeta, tags } from "../schema.js";
-import type { Tag, TagRow } from "../types.js";
+import type { DomainDb } from "../db";
+import { localMeta, tags } from "../schema";
+import type { Tag, TagRow } from "../types";
 
 /** Local now as ISO seconds, e.g. "2026-07-22T11:09:00" (db.py:66-67). */
 export function now(): string {

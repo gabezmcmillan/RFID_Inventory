@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 
-import { openTestDb } from "../testing/openTestDb.js";
+import { openTestDb } from "../testing/openTestDb";
 
 describe("schema", () => {
   test("creates exactly the expected tables", async () => {

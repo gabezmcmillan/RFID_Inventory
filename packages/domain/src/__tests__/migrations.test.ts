@@ -7,9 +7,9 @@ import { sql } from "drizzle-orm";
 import { connect } from "@tursodatabase/database";
 import { describe, expect, test } from "vitest";
 
-import { applyMigrations } from "../applyMigrations.js";
-import { MIGRATIONS } from "../migrations.js";
-import { wrapTurso } from "../testing/openTestDb.js";
+import { applyMigrations } from "../applyMigrations";
+import { MIGRATIONS } from "../migrations";
+import { wrapTurso } from "../testing/openTestDb";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drizzleDir = join(here, "..", "..", "drizzle");

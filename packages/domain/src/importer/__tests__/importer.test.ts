@@ -5,8 +5,8 @@ import Database from "better-sqlite3";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { importLegacy } from "../importLegacy.js";
-import { openTursoDb } from "../../testing/openTestDb.js";
+import { importLegacy } from "../importLegacy";
+import { openTursoDb } from "../../testing/openTestDb";
 
 // Legacy DDL, copied from apps/warehouse/db.py:105-200 (base schema, no migration
 // columns: no tags.bol_doc_id, no bol_docs.storage_url; requests keeps status_dirty;

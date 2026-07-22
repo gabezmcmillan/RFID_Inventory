@@ -16,10 +16,10 @@
 import Database from "better-sqlite3";
 import { sql } from "drizzle-orm";
 
-import { PRINTER_EPC_PREFIX } from "../constants.js";
-import type { DomainDb } from "../db.js";
-import { setMeta } from "../repo/util.js";
-import { openTursoDb } from "../testing/openTestDb.js";
+import { PRINTER_EPC_PREFIX } from "../constants";
+import type { DomainDb } from "../db";
+import { setMeta } from "../repo/util";
+import { openTursoDb } from "../testing/openTestDb";
 
 export interface ImportTableCount {
   table: string;

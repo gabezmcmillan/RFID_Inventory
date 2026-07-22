@@ -6,7 +6,7 @@
  * nonzero on any mismatch.
  */
 
-import { importLegacy } from "./importLegacy.js";
+import { importLegacy } from "./importLegacy";
 
 function parseArgs(argv: string[]): { from: string; to: string } {
   let from = "";

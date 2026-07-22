@@ -5,11 +5,11 @@
 
 import { and, desc, inArray, like } from "drizzle-orm";
 
-import { EVENT_FILTERS } from "../constants.js";
-import type { DomainDb } from "../db.js";
-import { events } from "../schema.js";
-import type { EventRow } from "../types.js";
-import { now } from "./util.js";
+import { EVENT_FILTERS } from "../constants";
+import type { DomainDb } from "../db";
+import { events } from "../schema";
+import type { EventRow } from "../types";
+import { now } from "./util";
 
 /** Append one audit row (db.py `_log`). */
 export async function logEvent(

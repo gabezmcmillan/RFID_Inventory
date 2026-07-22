@@ -16,9 +16,9 @@
 
 import { sql } from "drizzle-orm";
 
-import type { DomainDb } from "./db.js";
-import { withTransaction } from "./db.js";
-import { MIGRATIONS } from "./migrations.js";
+import type { DomainDb } from "./db";
+import { withTransaction } from "./db";
+import { MIGRATIONS } from "./migrations";
 
 /** The Drizzle migrations journal table name (matches the Node migrator). */
 const JOURNAL_TABLE = "__drizzle_migrations";

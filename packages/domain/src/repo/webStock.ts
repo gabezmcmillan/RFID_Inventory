@@ -19,12 +19,12 @@
 
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 
-import { REQUEST_PENDING, REQUEST_STAGING } from "../constants.js";
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { requests, tags } from "../schema.js";
-import type { MaterialRequest } from "../types.js";
-import { listRequests } from "./requests.js";
+import { REQUEST_PENDING, REQUEST_STAGING } from "../constants";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { requests, tags } from "../schema";
+import type { MaterialRequest } from "../types";
+import { listRequests } from "./requests";
 
 /** One BOL breakdown row in a plain-type stock row drill-down. */
 export interface StockGroup {

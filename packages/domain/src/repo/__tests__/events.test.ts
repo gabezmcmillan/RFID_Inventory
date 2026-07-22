@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { listEvents, logEvent, receiveShipment } from "../../index";
-import { openTestDb } from "../../testing/openTestDb.js";
+import { openTestDb } from "../../testing/openTestDb";
 
 describe("events", () => {
   test("listEvents('checkout') returns only OUT actions", async () => {

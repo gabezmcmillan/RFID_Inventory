@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
-import { buildLabelZpl, descLayout, PrintError } from "./zpl.js";
+import { buildLabelZpl, descLayout, PrintError } from "./zpl";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturePath = join(here, "__fixtures__", "label-basic.zpl");

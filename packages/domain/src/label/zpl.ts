@@ -11,7 +11,7 @@
  * command (RFID calibration lives in the printer). Do not add them.
  */
 
-import { textwrapWrap } from "./textwrap.js";
+import { textwrapWrap } from "./textwrap";
 
 /** Label could not be built; the message is safe to show the operator. */
 export class PrintError extends Error {

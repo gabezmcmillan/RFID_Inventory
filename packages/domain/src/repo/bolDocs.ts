@@ -7,18 +7,18 @@
 
 import { desc, eq, sql } from "drizzle-orm";
 
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { bolDocs, tags } from "../schema.js";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { bolDocs, tags } from "../schema";
 import type {
   BolDoc,
   BolDocWithBoxes,
   BolLineItem,
   DeleteBolDocResult,
   RenameBolDocResult,
-} from "../types.js";
-import { logEvent } from "./events.js";
-import { now } from "./util.js";
+} from "../types";
+import { logEvent } from "./events";
+import { now } from "./util";
 
 /** Raw `bol_docs` row shape (inferred from the Drizzle schema). */
 type BolDocRow = typeof bolDocs.$inferSelect;

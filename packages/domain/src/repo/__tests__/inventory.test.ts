@@ -8,7 +8,7 @@ import {
   receiveShipment,
   recordInventory,
 } from "../../index";
-import { openTestDb } from "../../testing/openTestDb.js";
+import { openTestDb } from "../../testing/openTestDb";
 
 describe("inventory", () => {
   test("a sweep of a delivered tag flags it and excludes it from counts", async () => {

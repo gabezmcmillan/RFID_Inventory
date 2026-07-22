@@ -9,7 +9,7 @@
 import { migrate } from "drizzle-orm/tursodatabase/migrator";
 import { fileURLToPath } from "node:url";
 
-import type { DomainDb } from "./db.js";
+import type { DomainDb } from "./db";
 
 /** Absolute path to the generated migrations folder (`packages/domain/drizzle`). */
 const migrationsFolder = fileURLToPath(new URL("../drizzle/", import.meta.url));

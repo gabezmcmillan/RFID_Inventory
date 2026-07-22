@@ -19,10 +19,10 @@ import {
   STATUS_DELIVERED,
   STATUS_IN,
   STATUS_PARTIAL,
-} from "../constants.js";
-import type { DomainDb } from "../db.js";
-import { withTransaction } from "../db.js";
-import { notes, tags } from "../schema.js";
+} from "../constants";
+import type { DomainDb } from "../db";
+import { withTransaction } from "../db";
+import { notes, tags } from "../schema";
 import type {
   CompareInventoryResult,
   FlaggedTag,
@@ -34,9 +34,9 @@ import type {
   RecordInventoryResult,
   Tag,
   TagRow,
-} from "../types.js";
-import { logEvent } from "./events.js";
-import { dateOf, now, tagDict } from "./util.js";
+} from "../types";
+import { logEvent } from "./events";
+import { dateOf, now, tagDict } from "./util";
 
 /** Map a whitelisted group column name to its Drizzle column on `tags`. */
 const GROUP_COLUMN: Record<string, AnySQLiteColumn> = {

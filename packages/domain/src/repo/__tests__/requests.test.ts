@@ -10,7 +10,7 @@ import {
   setRequestStatus,
   tags,
 } from "../../index";
-import { openTestDb } from "../../testing/openTestDb.js";
+import { openTestDb } from "../../testing/openTestDb";
 
 async function seedBox(db: Awaited<ReturnType<typeof openTestDb>>, epc: string, qty = 2) {
   await receiveShipment(db, [epc], "TSC", "6", "BOL1", "Acme", { quantity: qty });
