@@ -38,3 +38,8 @@ node_modules/
 # Cursor plan files (local working notes; rules stay tracked)
 .cursor/plans/
 test_intake.py
+
+# Web local dev database (Turso file + WAL)
+.dev-data/
+*.db-wal
+*.db-shm
