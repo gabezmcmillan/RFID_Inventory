@@ -164,6 +164,7 @@ export {
   buildings,
   counts,
   createCartRequest,
+  lastUpdated,
   listOrders,
   newOrderRef,
   nowUtc,

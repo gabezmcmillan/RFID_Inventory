@@ -290,6 +290,18 @@ export async function counts(db: DomainDb): Promise<Counts> {
 }
 
 /**
+ * Last-updated timestamp for the site header: the max `tags.updated_at` across
+ * all boxes (the mirror's "last synced" concept no longer exists; the warehouse
+ * device stamps `updated_at` on every change). "" when there are no tags yet.
+ */
+export async function lastUpdated(db: DomainDb): Promise<string> {
+  const rows = await db
+    .select({ max: sql<string>`MAX(${tags.updated_at})` })
+    .from(tags);
+  return rows[0]?.max ?? "";
+}
+
+/**
  * Units on hand for an item type + component name ('' for types without
  * component names), optionally scoped to the building the stock is assigned to
  * ('' = unassigned). Runs on the caller db so checks and inserts share one

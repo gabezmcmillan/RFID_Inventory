@@ -1,9 +1,24 @@
-import { STATUS_IN } from "@rfid/domain";
+import { buildings, stockRows } from "@rfid/domain";
 
-export default function Home() {
+import { Header } from "@/components/Header";
+import { getDb } from "@/lib/db";
+import { getUser } from "@/lib/session";
+import { Cart } from "./cart/Cart";
+
+/** Jobsite stock browse + cart. Server fetches the stock rows and delivery
+ * buildings; the client `<Cart>` handles cart state and submits via the
+ * `submitCart` server action. */
+export default async function Home() {
+  const db = await getDb();
+  const [stock, buildingList] = await Promise.all([stockRows(db), buildings(db)]);
+  const user = await getUser();
   return (
-    <main>
-      <h1>RFID Web — domain wired ({STATUS_IN})</h1>
-    </main>
+    <>
+      <Header active="stock" />
+      <main className="container">
+        <h1>Stock &amp; requests</h1>
+        <Cart stock={stock} buildings={buildingList} user={user} />
+      </main>
+    </>
   );
 }

@@ -20,9 +20,6 @@
     ],
     "paths": {
       "@/*": ["./src/*"]
-    },
-    "extensionAlias": {
-      ".js": [".ts", ".tsx"]
     }
   },
   "include": [

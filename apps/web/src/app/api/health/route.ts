@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { counts } from "@rfid/domain";
 
 import { getDb } from "@/lib/db";
 
@@ -6,7 +6,9 @@ import { getDb } from "@/lib/db";
 export async function GET(): Promise<Response> {
   try {
     const db = await getDb();
-    await db.all<{ one: number }>(sql`SELECT 1 AS one`);
+    // A lightweight domain aggregate doubles as a `SELECT 1` — and keeps all
+    // SQL inside the domain package (the web app writes no SQL).
+    await counts(db);
     return Response.json({ ok: true });
   } catch (err) {
     return Response.json(
