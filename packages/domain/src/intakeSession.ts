@@ -19,8 +19,10 @@
  */
 
 import type { DomainDb } from "./db.js";
-import { amendCheckin, receiveShipment } from "./repo/intake.js";
+import { allocateEpcs, amendCheckin, receiveShipment } from "./repo/intake.js";
 import type { ItemFields } from "./repo/intake.js";
+import { buildLabelZpl } from "./label/zpl.js";
+import { MAX_LABELS_PER_PRINT } from "./constants.js";
 import type { AmendCheckinResult, ReceiveShipmentResult } from "./types.js";
 
 /** The armed shipment: an item type plus its shipment-scope fields. */
@@ -33,6 +35,29 @@ export interface ArmedShipment {
 export type CheckInScannedResult =
   | { readonly ok: false; readonly message: string }
   | ReceiveShipmentResult;
+
+/**
+ * Injected print-path dependencies (intake.py:87-140). The field app supplies
+ * `printLabel` — typically `zpl => sendZpl(host, 9100, zpl)` — so the domain
+ * never imports the React-Native TCP transport. `cloudBaseUrl` builds the
+ * label QR URL (`{cloudBaseUrl}/tag/{epc}`); empty means no QR.
+ */
+export interface PrintDeps {
+  /** Send one built ZPL job to the printer; reject on any failure. */
+  readonly printLabel: (zpl: string) => Promise<void>;
+  /** Cloud base URL for label QR codes, or "" to omit the QR block. */
+  readonly cloudBaseUrl: string;
+}
+
+/**
+ * Result of a print-path Check In. On total failure (no label printed) it is
+ * `{ok:false, message:"Label not printed: <err>"}`; otherwise a
+ * {@link ReceiveShipmentResult} carrying `printed` (how many labels printed)
+ * and, on a partial print, the "Printing stopped after N of M labels" suffix.
+ */
+export type CheckInPrintedResult =
+  | { readonly ok: false; readonly message: string }
+  | (ReceiveShipmentResult & { readonly ok: true; readonly printed: number });
 
 /**
  * Message returned by {@link IntakeSession.checkInScanned} when no shipment is
@@ -49,6 +74,22 @@ function asDocId(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const n = Number.parseInt(String(value).trim(), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Format a Date as `MM/DD/YYYY` (intake.py `now.strftime("%m/%d/%Y")`). */
+function formatReceivedDate(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${mm}/${dd}/${d.getFullYear()}`;
+}
+
+/** Format a Date as `H:MM AM/PM` without a leading zero (intake.py `strftime("%I:%M %p").lstrip("0")`). */
+function formatReceivedTime(d: Date): string {
+  const raw = d.getHours() % 12;
+  const h = raw === 0 ? 12 : raw;
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ampm = d.getHours() < 12 ? "AM" : "PM";
+  return `${h}:${mm} ${ampm}`;
 }
 
 /**
@@ -96,19 +137,109 @@ export class IntakeSession {
     if (!armed) {
       return { ok: false, message: NO_SHIPMENT_ARMED };
     }
-    const f = armed.fields;
+    return this.receive(db, [epc], armed.itemType, armed.fields, this._itemFields);
+  }
+
+  /**
+   * Record a shipment's tags under the armed shipment — the shared recording
+   * path for both check-in entry points (intake.py `_receive`, lines 154-163).
+   * Maps the shipment fields exactly as the Python original.
+   */
+  private async receive(
+    db: DomainDb,
+    epcs: readonly string[],
+    itemType: string,
+    fields: Record<string, string>,
+    itemFields: ItemFields,
+  ): Promise<ReceiveShipmentResult> {
     return receiveShipment(
       db,
-      [epc],
-      armed.itemType,
-      f.building_number ?? "",
-      f.bol_number ?? "",
-      f.vendor ?? "",
-      this._itemFields,
-      asDocId(f.bol_doc_id),
-      f.po_number ?? "",
-      f.sector ?? "",
+      [...epcs],
+      itemType,
+      fields.building_number ?? "",
+      fields.bol_number ?? "",
+      fields.vendor ?? "",
+      itemFields,
+      asDocId(fields.bol_doc_id),
+      fields.po_number ?? "",
+      fields.sector ?? "",
     );
+  }
+
+  /**
+   * Print-path Check In (intake.py `check_in_printed`, lines 87-140): mint
+   * `count` EPCs, print + encode a label per EPC, and record **only** the
+   * labels that actually printed — so a dead printer never creates phantom
+   * inventory. `count` is clamped to `[1, {@link MAX_LABELS_PER_PRINT}]`.
+   *
+   * Named types (W.I.F.) print `"TYPE | component name"` as the description.
+   * EPCs are minted up front via {@link allocateEpcs}; labels are then sent
+   * sequentially via {@link PrintDeps.printLabel}, stopping at the first
+   * rejection. With none printed → `{ok:false, message:"Label not printed: <err>"}`;
+   * with some printed the recorded result carries `printed` and, on a partial
+   * print, the `"Printing stopped after N of M labels: <err>"` suffix.
+   *
+   * The session must be armed (the print path records under the armed
+   * shipment); returns the "no shipment armed" message otherwise.
+   */
+  async checkInPrinted(
+    db: DomainDb,
+    deps: PrintDeps,
+    count = 1,
+  ): Promise<CheckInPrintedResult> {
+    const armed = this._armed;
+    if (!armed) {
+      return { ok: false, message: NO_SHIPMENT_ARMED };
+    }
+    const clamped = Math.max(1, Math.min(count || 1, MAX_LABELS_PER_PRINT));
+    const fields = armed.fields;
+    const itemFields = this._itemFields;
+    const itemName = (itemFields.item_name ?? "").toString().trim();
+    const description = itemName ? `${armed.itemType} | ${itemName}` : armed.itemType;
+    const now = new Date();
+    const receivedDate = formatReceivedDate(now);
+    const receivedTime = formatReceivedTime(now);
+    const cloudBase = deps.cloudBaseUrl.trim().replace(/\/+$/, "");
+
+    const epcs = await allocateEpcs(db, clamped);
+    const printed: string[] = [];
+    let printError = "";
+    for (const epc of epcs) {
+      const zpl = buildLabelZpl({
+        epc,
+        building: fields.building_number ?? "",
+        sector: fields.sector ?? "",
+        description,
+        supplier: fields.vendor ?? "",
+        sku: itemFields.sku ?? "",
+        quantity: String(itemFields.quantity || "1"),
+        poNumber: fields.po_number ?? "",
+        receivedDate,
+        receivedTime,
+        qrUrl: cloudBase ? `${cloudBase}/tag/${epc}` : "",
+      });
+      try {
+        await deps.printLabel(zpl);
+        printed.push(epc);
+      } catch (err) {
+        printError = err instanceof Error ? err.message : String(err);
+        break;
+      }
+    }
+
+    if (printed.length === 0) {
+      return { ok: false, message: `Label not printed: ${printError}` };
+    }
+    const result = await this.receive(db, printed, armed.itemType, fields, itemFields);
+    const withPrinted: ReceiveShipmentResult & { ok: true; printed: number } = {
+      ...result,
+      ok: true as const,
+      printed: printed.length,
+    };
+    if (printError) {
+      withPrinted.message += ` Printing stopped after ${printed.length} of ${clamped} labels: ${printError}`;
+    }
+    return withPrinted;
   }
 
   /**

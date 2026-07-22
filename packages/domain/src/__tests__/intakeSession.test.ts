@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { IntakeSession, NO_SHIPMENT_ARMED, receiveShipment } from "../index.js";
+import { IntakeSession, listEvents, NO_SHIPMENT_ARMED, receiveShipment, type PrintDeps } from "../index.js";
 import type { ItemFields } from "../index.js";
 import { openTestDb } from "../testing/openTestDb.js";
 
@@ -83,5 +83,62 @@ describe("IntakeSession", () => {
     expect(res2.ok).toBe(true);
     if (!res2.ok) return;
     expect(res2.bol_doc_id).toBeNull();
+  });
+
+  test("checkInPrinted with nothing armed returns the no-shipment message", async () => {
+    const db = await openTestDb();
+    const session = new IntakeSession();
+    const deps: PrintDeps = { cloudBaseUrl: "", printLabel: async () => {} };
+    const res = await session.checkInPrinted(db, deps, 3);
+    expect(res).toEqual({ ok: false, message: NO_SHIPMENT_ARMED });
+  });
+
+  test("checkInPrinted records only the labels that printed; partial print appends the stop suffix", async () => {
+    const db = await openTestDb();
+    const session = new IntakeSession();
+    session.arm("TSC", { building_number: "6", bol_number: "BOL1", vendor: "Acme" });
+    session.setItemFields({ quantity: 4 });
+    const sent: string[] = [];
+    let calls = 0;
+    const deps: PrintDeps = {
+      cloudBaseUrl: "",
+      printLabel: async (zpl: string) => {
+        calls += 1;
+        if (calls === 3) throw new Error("paper jam");
+        sent.push(zpl);
+      },
+    };
+    const res = await session.checkInPrinted(db, deps, 3);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.printed).toBe(2);
+    expect(res.added).toBe(2);
+    expect(res.added_units).toBe(8); // 2 boxes × 4 units
+    expect(res.message).toContain("Printing stopped after 2 of 3 labels: paper jam");
+    // Exactly 2 tags recorded → 2 IN events, no phantom third.
+    const events = await listEvents(db, "checkin");
+    expect(events.filter((e) => e.action === "IN")).toHaveLength(2);
+    // The two printed EPCs are the ones minted first; the third was never sent.
+    expect(sent).toHaveLength(2);
+  });
+
+  test("checkInPrinted with all-fail records zero tags and no IN events (no phantom inventory)", async () => {
+    const db = await openTestDb();
+    const session = new IntakeSession();
+    session.arm("TSC", { building_number: "6", bol_number: "BOL1", vendor: "Acme" });
+    session.setItemFields({ quantity: 4 });
+    const deps: PrintDeps = {
+      cloudBaseUrl: "https://cloud.example.com",
+      printLabel: async () => {
+        throw new Error("printer unreachable");
+      },
+    };
+    const res = await session.checkInPrinted(db, deps, 3);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.message).toBe("Label not printed: printer unreachable");
+    // Zero tags and zero IN events — a dead printer never creates inventory.
+    const events = await listEvents(db, "checkin");
+    expect(events).toHaveLength(0);
   });
 });

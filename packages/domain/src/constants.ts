@@ -125,3 +125,6 @@ export const EDITABLE_FIELDS = [
 
 /** Operator-correctable per-unit fields right after check-in (intake.py:42). */
 export const AMENDABLE_FIELDS = ["item_name", "sku", "mfc_date", "quantity"] as const;
+
+/** Max labels minted + printed in one print-path check-in (intake.py:44). */
+export const MAX_LABELS_PER_PRINT = 25;

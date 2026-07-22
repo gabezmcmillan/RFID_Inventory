@@ -45,6 +45,7 @@ export {
   ITEM_FIELDS,
   ITEM_NAME_FIELD,
   ITEM_TYPES,
+  MAX_LABELS_PER_PRINT,
   NAMED_ITEM_TYPES,
   PRINTER_EPC_PREFIX,
   REQUEST_DECLINED,
@@ -105,7 +106,7 @@ export type { ItemFields } from "./repo/intake.js";
 
 // Intake session (Check In armed-shipment state machine)
 export { IntakeSession, NO_SHIPMENT_ARMED } from "./intakeSession.js";
-export type { ArmedShipment, CheckInScannedResult } from "./intakeSession.js";
+export type { ArmedShipment, CheckInPrintedResult, CheckInScannedResult, PrintDeps } from "./intakeSession.js";
 
 // Repository: checkout
 export { deliverUnits, deliverUnitsInTx, lookupForCheckout } from "./repo/checkout.js";

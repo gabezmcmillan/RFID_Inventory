@@ -1,16 +1,21 @@
 /**
  * `ResultCard` — one entry in the check-in session list: the intake result
  * message, the EPC, and the group qty. Duplicates render as a warning (amber).
- * The newest card shows an "Edit" button opening the amend sheet.
+ * The newest card shows an "Edit" button opening the amend sheet. Accepts both
+ * the scan-path result and the print-path failure (`{ok:false, message}`) so
+ * neither path needs a type assertion to build a card.
  */
 
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { ReceiveShipmentResult } from "@rfid/domain";
 
+/** A card may show a full receive result or a print-path failure message. */
+export type CardResult = ReceiveShipmentResult | { readonly ok: false; readonly message: string };
+
 export interface CheckInResult {
   readonly epc: string;
-  readonly result: ReceiveShipmentResult;
+  readonly result: CardResult;
   readonly duplicate: boolean;
 }
 
@@ -22,18 +27,20 @@ interface ResultCardProps {
 
 export function ResultCard({ entry, newest, onAmend }: ResultCardProps): React.ReactNode {
   const { result, duplicate } = entry;
+  const qty = "qty" in result ? result.qty : undefined;
+  const isDuplicate = duplicate || (result.ok && "added" in result && result.added === 0);
   return (
-    <View style={[styles.card, duplicate && styles.cardDup]}>
+    <View style={[styles.card, isDuplicate && styles.cardDup]}>
       <View style={styles.head}>
-        <Text style={[styles.message, duplicate && styles.messageDup]}>{result.message}</Text>
-        {newest && !duplicate ? (
+        <Text style={[styles.message, isDuplicate && styles.messageDup]}>{result.message}</Text>
+        {newest && !isDuplicate ? (
           <Pressable onPress={() => onAmend(entry.epc)} style={styles.editBtn}>
             <Text style={styles.editText}>Edit</Text>
           </Pressable>
         ) : null}
       </View>
       <Text style={styles.meta}>EPC: {entry.epc}</Text>
-      <Text style={styles.meta}>Group qty: {result.qty}</Text>
+      <Text style={styles.meta}>Group qty: {qty ?? "—"}</Text>
     </View>
   );
 }

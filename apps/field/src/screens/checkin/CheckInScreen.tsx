@@ -18,7 +18,6 @@ import {
   TYPE_FIELDS,
   type FieldDef,
   type ItemFields,
-  type ReceiveShipmentResult,
 } from "@rfid/domain";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
@@ -27,6 +26,12 @@ import { useDb } from "../../db/provider";
 import { useReaderEvents } from "../../hooks/useReaderEvents";
 import { readerService } from "../../reader/readerService";
 import { intakeSession } from "../../intake/session";
+import { sendZpl, PRINTER_PORT } from "../../printer/printerClient";
+import {
+  loadPrinterSettings,
+  printingEnabled,
+  type PrinterSettings,
+} from "../../printer/printerSettings";
 import { AmendSheet } from "./AmendSheet";
 import { FieldRow } from "./FieldRow";
 import { ResultCard, type CheckInResult } from "./ResultCard";
@@ -63,6 +68,9 @@ export function CheckInScreen(): React.ReactNode {
   const [results, setResults] = useState<CheckInResult[]>([]);
   const [amendEpc, setAmendEpc] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
+  const [printer, setPrinter] = useState<PrinterSettings>({ printerHost: "", cloudBaseUrl: "" });
+  const [printCount, setPrintCount] = useState(1);
+  const [printing, setPrinting] = useState(false);
 
   const typeFields = TYPE_FIELDS[itemType] ?? [];
   const shipmentFields = typeFields.filter((f) => f.scope === "shipment");
@@ -88,13 +96,18 @@ export function CheckInScreen(): React.ReactNode {
   useReaderEvents((event) => {
     if (event.event !== "scan" || event.mode !== "checkin") return;
     void (async () => {
-      const result = (await intakeSession.checkInScanned(db, event.epc)) as ReceiveShipmentResult;
+      const result = await intakeSession.checkInScanned(db, event.epc);
       setResults((prev) => [
         ...prev,
-        { epc: event.epc, result, duplicate: result.ok && result.added === 0 },
+        { epc: event.epc, result, duplicate: result.ok && "added" in result && result.added === 0 },
       ]);
     })();
   });
+
+  // Load printer settings (printer_host empty → printing disabled, button hidden).
+  useEffect(() => {
+    void loadPrinterSettings().then(setPrinter);
+  }, []);
 
   // Leaving the screen disarms and idles the reader (app.py:944-947).
   useEffect(() => {
@@ -137,6 +150,27 @@ export function CheckInScreen(): React.ReactNode {
     if (!noteText.trim()) return;
     await addNote(db, itemType, shipment.bol_number ?? "", shipment.building_number ?? "", noteText.trim());
     setNoteText("");
+  };
+
+  const onPrintLabels = async (): Promise<void> => {
+    const host = printer.printerHost.trim();
+    if (!host || printing) return;
+    setPrinting(true);
+    try {
+      const result = await intakeSession.checkInPrinted(
+        db,
+        { cloudBaseUrl: printer.cloudBaseUrl, printLabel: (zpl) => sendZpl(host, PRINTER_PORT, zpl) },
+        printCount,
+      );
+      const epc = result.ok ? result.epc : "";
+      setResults((prev) => [...prev, { epc, result, duplicate: false }]);
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const adjustPrintCount = (delta: number): void => {
+    setPrintCount((n) => Math.min(25, Math.max(1, n + delta)));
   };
 
   if (phase === "setup") {
@@ -207,6 +241,24 @@ export function CheckInScreen(): React.ReactNode {
         ))
       )}
 
+      {printingEnabled(printer) ? (
+        <View style={styles.printRow}>
+          <Text style={styles.printLabel}>Print &amp; encode labels</Text>
+          <View style={styles.stepper}>
+            <Pressable style={styles.stepBtn} onPress={() => adjustPrintCount(-1)}>
+              <Text style={styles.stepText}>−</Text>
+            </Pressable>
+            <Text style={styles.printCount}>{printCount}</Text>
+            <Pressable style={styles.stepBtn} onPress={() => adjustPrintCount(1)}>
+              <Text style={styles.stepText}>+</Text>
+            </Pressable>
+          </View>
+          <Pressable style={[styles.printBtn, printing && styles.printBtnDisabled]} disabled={printing} onPress={() => void onPrintLabels()}>
+            <Text style={styles.printBtnText}>{printing ? "Printing…" : `Print ${printCount} label${printCount === 1 ? "" : "s"}`}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <View style={styles.noteRow}>
         <TextInput style={styles.noteInput} value={noteText} onChangeText={setNoteText} placeholder="Add a note…" />
         <Pressable style={styles.noteBtn} onPress={onAddNote}>
@@ -254,4 +306,13 @@ const styles = StyleSheet.create({
   noteBtnText: { color: "white", fontWeight: "600" },
   simBtn: { backgroundColor: "#eee", padding: 12, borderRadius: 8, alignItems: "center", marginTop: 16 },
   simBtnText: { color: "#333", fontWeight: "600" },
+  printRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 16, flexWrap: "wrap" },
+  printLabel: { fontSize: 14, fontWeight: "600", color: "#333" },
+  stepper: { flexDirection: "row", alignItems: "center", gap: 8 },
+  stepBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#eee", alignItems: "center", justifyContent: "center" },
+  stepText: { fontSize: 20, fontWeight: "600" },
+  printCount: { fontSize: 16, fontWeight: "600", minWidth: 28, textAlign: "center" },
+  printBtn: { backgroundColor: "#06c", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8 },
+  printBtnDisabled: { backgroundColor: "#9ab" },
+  printBtnText: { color: "white", fontWeight: "600" },
 });
