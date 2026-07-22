@@ -88,6 +88,12 @@ REJECTED (one-line rationale).
   reads/writes, `db.run(sql\`...\`)` for raw statements, and the `sql` template
   operator with typed result mapping for complex aggregates) — no hand-rolled
   SQL seam.
+- **No un-aliased builder joins in `packages/domain` (2026-07-22)**: the field
+  app's RN driver adapter (`apps/field/src/db/drizzleTursoRnDriver.ts`) derives
+  Drizzle's array-mode rows from object rows, so a builder join selecting
+  duplicate column names (two `id`s) would collapse and misalign columns. Any
+  builder join must use an explicit `.select({...})` projection with unique
+  aliases; raw `sql` aggregates with named result columns are unaffected.
 
 ## Considered and rejected
 

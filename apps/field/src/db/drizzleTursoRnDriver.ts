@@ -24,6 +24,12 @@
  * adapter is not structurally assignable. It is isolated to a single line at
  * the driver boundary (`as unknown as TursoClient`) and documented here.
  *
+ * CONSTRAINT (see plans/README.md standing decisions): because array rows are
+ * derived from object rows, a builder query whose SELECT list contains
+ * duplicate column names (e.g. an un-aliased join selecting two `id` columns)
+ * would collapse duplicates and misalign columns. No domain query joins tables
+ * today; any future builder join must select explicitly aliased columns.
+ *
  * TODO: replace when drizzle ships an official React Native Turso driver.
  */
 
