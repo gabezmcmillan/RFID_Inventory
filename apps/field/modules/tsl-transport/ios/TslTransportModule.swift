@@ -20,6 +20,11 @@ public class TslTransportModule: Module {
   private var session: EASession?
   private var streamThread: StreamThread?
 
+  /// `StreamDelegate` requires `NSObjectProtocol`, and Expo `Module` subclasses
+  /// are not `NSObject`s — so a small NSObject proxy owns the conformance and
+  /// forwards stream events back to this module.
+  private lazy var streamDelegate = StreamDelegateProxy(owner: self)
+
   /// Pending output bytes when the output stream has no space available.
   private let outputLock = NSLock()
   private var outputBuffer = Data()
@@ -72,10 +77,10 @@ public class TslTransportModule: Module {
 
     self.session = eaSession
     if let input = eaSession.inputStream {
-      input.delegate = self
+      input.delegate = streamDelegate
     }
     if let output = eaSession.outputStream {
-      output.delegate = self
+      output.delegate = streamDelegate
     }
 
     let thread = StreamThread(
@@ -152,8 +157,24 @@ public class TslTransportModule: Module {
 
 // MARK: - Stream delegate
 
-extension TslTransportModule: StreamDelegate {
-  public func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
+/// NSObject proxy owning the `StreamDelegate` conformance (Expo `Module`
+/// subclasses cannot conform — `StreamDelegate` requires `NSObjectProtocol`).
+/// Holds its owner weakly; the module strongly retains the proxy.
+private final class StreamDelegateProxy: NSObject, StreamDelegate {
+  private weak var owner: TslTransportModule?
+
+  init(owner: TslTransportModule) {
+    self.owner = owner
+  }
+
+  func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
+    owner?.handleStreamEvent(aStream, eventCode)
+  }
+}
+
+extension TslTransportModule {
+  /// Dispatch a stream event from the delegate proxy.
+  fileprivate func handleStreamEvent(_ aStream: Stream, _ eventCode: Stream.Event) {
     switch eventCode {
     case .hasBytesAvailable:
       guard let input = aStream as? InputStream else { return }
