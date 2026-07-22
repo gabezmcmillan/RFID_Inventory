@@ -155,6 +155,10 @@ export type { UpdateTagFields } from "./repo/admin.js";
 // Repository: local_meta key/value helpers
 export { getMeta, setMeta } from "./repo/util.js";
 
+// Label printing: ZPL builder (pure TS; the TCP transport lives in apps/field)
+export { buildLabelZpl, descLayout, PrintError } from "./label/zpl.js";
+export type { BuildLabelZplParams, DescLayout } from "./label/zpl.js";
+
 // The legacy importer and the Node test harness live in their own modules
 // (`src/importer/`, `src/testing/`) — separate, Node-only entries — so the main
 // entry pulls no Node Turso driver. Import them directly:
