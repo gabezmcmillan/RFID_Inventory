@@ -42,7 +42,7 @@ database files).
 | 005 | Label printing: ZPL over TCP, EPC minting, print-path intake | P1 | M | 004 | DONE |
 | 006 | Check Out, Sweep & Count, Warehouse browse, Find a Tag, Admin | P1 | L | 004 | DONE |
 | 007 | BOL capture with the camera + OCR field extraction | P1 | L | 004 | DONE |
-| 008 | Requests: badge, staging, fulfill, decline | P1 | M | 006 | TODO |
+| 008 | Requests: badge, staging, fulfill, decline | P1 | M | 006 | DONE |
 | 009 | Web app: jobsite stock, cart, orders, tag pages, office browse, auth | P1 | L | 002 | TODO |
 | 010 | Turso sync wiring, ops (EAS/Sentry), data import + cutover runbook | P1 | M | all | TODO |
 
