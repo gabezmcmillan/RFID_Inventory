@@ -1,5 +1,8 @@
 # Secrets
 credentials.json
+# Per-machine config with secrets (mistral_api_key, sync_token);
+# copy settings.example.ini to settings.ini and fill it in locally.
+settings.ini
 
 # Local database
 *.db

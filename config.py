@@ -121,7 +121,8 @@ OCR_LANG = "eng"
 # /v1/ocr endpoint first (see ocr_mistral.py) and only falls back to the
 # local Tesseract text layer + heuristics when the call fails or the key is
 # blank. The stored PDF and its NAPS2 text layer are unaffected either way.
-MISTRAL_API_KEY = "XQOekdK3blrHbZlI4IuxgOKBBi8CXH8H"
+# The key itself lives only in settings.ini (untracked); never commit it here.
+MISTRAL_API_KEY = ""
 MISTRAL_OCR_MODEL = "mistral-ocr-latest"
 MISTRAL_OCR_TIMEOUT_SECONDS = 45
 
