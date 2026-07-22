@@ -170,6 +170,11 @@ export { getMeta, setMeta } from "./repo/util.js";
 export { buildLabelZpl, descLayout, PrintError } from "./label/zpl.js";
 export type { BuildLabelZplParams, DescLayout } from "./label/zpl.js";
 
+// BOL extraction: local heuristics (pure TS; the Mistral client lives in
+// `./bol/mistral.js` and is imported directly where needed)
+export { cleanValue, extractFields, matchVendor, sequenceRatio } from "./bol/extract.js";
+export type { ExtractedFields } from "./bol/extract.js";
+
 // The legacy importer and the Node test harness live in their own modules
 // (`src/importer/`, `src/testing/`) — separate, Node-only entries — so the main
 // entry pulls no Node Turso driver. Import them directly:
