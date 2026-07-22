@@ -71,7 +71,7 @@ public class TslTransportModule: Module {
             .first(where: { $0.protocolStrings.contains(protocolString) }) else {
       return false
     }
-    guard let eaSession = EASession(accessory: accessory, withProtocol: protocolString) else {
+    guard let eaSession = EASession(accessory: accessory, forProtocol: protocolString) else {
       return false
     }
 
