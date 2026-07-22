@@ -53,6 +53,8 @@ export default function RootLayout(): React.ReactNode {
           <Stack.Screen name="warehouse" options={{ title: "Warehouse" }} />
           <Stack.Screen name="warehouse-group" options={{ title: "Group" }} />
           <Stack.Screen name="finder" options={{ title: "Find a Tag" }} />
+          <Stack.Screen name="events" options={{ title: "Event Log" }} />
+          <Stack.Screen name="admin" options={{ title: "Admin" }} />
           <Stack.Screen name="settings" options={{ title: "Settings" }} />
           <Stack.Screen name="dev-tools" options={{ title: "Dev Tools" }} />
         </Stack>
