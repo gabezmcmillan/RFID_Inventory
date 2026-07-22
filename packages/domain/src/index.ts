@@ -12,6 +12,11 @@
 export { withTransaction } from "./db.js";
 export type { DomainDb } from "./db.js";
 
+// React-Native-safe migration runner + the checked-in migration bundle
+export { applyMigrations } from "./applyMigrations.js";
+export { MIGRATIONS } from "./migrations.js";
+export type { MigrationEntry } from "./migrations.js";
+
 // Schema (source of truth) — tables + the schema bundle
 export {
   bolDocs,
