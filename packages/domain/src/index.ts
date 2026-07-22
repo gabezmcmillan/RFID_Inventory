@@ -103,6 +103,10 @@ export { logEvent, listEvents } from "./repo/events.js";
 export { allocateEpcs, amendCheckin, receiveShipment } from "./repo/intake.js";
 export type { ItemFields } from "./repo/intake.js";
 
+// Intake session (Check In armed-shipment state machine)
+export { IntakeSession, NO_SHIPMENT_ARMED } from "./intakeSession.js";
+export type { ArmedShipment, CheckInScannedResult } from "./intakeSession.js";
+
 // Repository: checkout
 export { deliverUnits, deliverUnitsInTx, lookupForCheckout } from "./repo/checkout.js";
 
