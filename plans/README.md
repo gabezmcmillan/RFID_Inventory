@@ -88,6 +88,15 @@ REJECTED (one-line rationale).
   reads/writes, `db.run(sql\`...\`)` for raw statements, and the `sql` template
   operator with typed result mapping for complex aggregates) — no hand-rolled
   SQL seam.
+- **Auth: Better Auth, not Auth.js/NextAuth (2026-07-22, operator decision)**:
+  plan 009 halted before its auth step. When auth is picked back up, use
+  [Better Auth](https://better-auth.com) with the Microsoft/Entra social
+  provider. Same requirements as the original step 4: session required for
+  everything except `/tag/*`, `/api/health`, and auth routes; signed-in
+  name/email prefill the checkout form; a dev bypass guarded by
+  `NODE_ENV !== "production"`. Remove the unused `next-auth` dependency from
+  `apps/web/package.json` when wiring it. `apps/web/src/lib/session.ts` holds
+  the `getUser()` stub (currently returns `null`; nothing is gated yet).
 - **No un-aliased builder joins in `packages/domain` (2026-07-22)**: the field
   app's RN driver adapter (`apps/field/src/db/drizzleTursoRnDriver.ts`) derives
   Drizzle's array-mode rows from object rows, so a builder join selecting
