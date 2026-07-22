@@ -122,6 +122,16 @@ export {
   recordInventory,
 } from "./repo/inventory.js";
 
+// Warehouse CSV export (column layout + RFC 4180 formatter)
+export {
+  csvEscape,
+  csvRow,
+  exportCsv,
+  EXPORT_COLUMNS,
+  EXPORT_HEADER_ROW,
+} from "./repo/exportCsv.js";
+export type { ExportColumn } from "./repo/exportCsv.js";
+
 // Repository: vendors
 export { addVendor, listVendors, removeVendor } from "./repo/vendors.js";
 

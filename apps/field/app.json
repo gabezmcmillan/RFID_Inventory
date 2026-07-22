@@ -14,7 +14,8 @@
           "com.uk.tsl.rfid"
         ]
       },
-      "bundleIdentifier": "com.jcourson.field"
+      "bundleIdentifier": "com.jcourson.field",
+      "appleTeamId": "KDEGJ8G33R"
     },
     "android": {
       "adaptiveIcon": {
