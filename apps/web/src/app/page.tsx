@@ -1,9 +1,9 @@
-import { DOMAIN_PACKAGE } from "@rfid/domain";
+import { STATUS_IN } from "@rfid/domain";
 
 export default function Home() {
   return (
     <main>
-      <h1>{DOMAIN_PACKAGE}</h1>
+      <h1>RFID Web — domain wired ({STATUS_IN})</h1>
     </main>
   );
 }

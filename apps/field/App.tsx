@@ -1,12 +1,12 @@
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { DOMAIN_PACKAGE } from '@rfid/domain';
+import { STATUS_IN } from '@rfid/domain';
 
 export default function App() {
   return (
     <View style={styles.container}>
-      <Text>{DOMAIN_PACKAGE}</Text>
+      <Text>RFID Field — domain wired ({STATUS_IN})</Text>
       <StatusBar style="auto" />
     </View>
   );
