@@ -102,7 +102,8 @@ export function WarehouseGroupScreen(): React.ReactNode {
               {tag.flag ? <Text style={styles.flag}>⚠ {tag.flag}</Text> : null}
               <View style={styles.btnRow}>
                 <Link href={{ pathname: "/finder", params: { epc: tag.epc } }} asChild>
-                  <Pressable style={[styles.btn, styles.btnFind]}>
+                  {/* Slot (asChild) rejects array styles — flatten to one object. */}
+                  <Pressable style={StyleSheet.flatten([styles.btn, styles.btnFind])}>
                     <Text style={styles.btnText}>Find</Text>
                   </Pressable>
                 </Link>

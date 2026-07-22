@@ -23,6 +23,7 @@ const MODES: readonly ModeCard[] = [
   { href: "/check-out", title: "Check Out", subtitle: "Draw units out for site", accent: "#06c" },
   { href: "/sweep", title: "Sweep & Count", subtitle: "Audit what's present", accent: "#7c5" },
   { href: "/warehouse", title: "Warehouse", subtitle: "Browse & find boxes", accent: "#a06" },
+  { href: "/bol-docs", title: "BOL Docs", subtitle: "Scanned bills of lading", accent: "#36c" },
   { href: "/events", title: "Event Log", subtitle: "Audit trail", accent: "#555" },
   { href: "/admin", title: "Admin", subtitle: "PIN-gated tools", accent: "#c63" },
   { href: "/settings", title: "Settings", subtitle: "Reader, printer, cloud", accent: "#444" },
@@ -49,7 +50,8 @@ export default function HomeScreen(): React.ReactNode {
       <View style={styles.grid}>
         {MODES.map((m) => (
           <Link key={m.href} href={m.href} asChild>
-            <Pressable style={[styles.card, { borderColor: m.accent }]}>
+            {/* Slot (asChild) rejects array styles — flatten to one object. */}
+            <Pressable style={StyleSheet.flatten([styles.card, { borderColor: m.accent }])}>
               <Text style={[styles.cardTitle, { color: m.accent }]}>{m.title}</Text>
               <Text style={styles.cardSubtitle}>{m.subtitle}</Text>
             </Pressable>
