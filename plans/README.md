@@ -37,7 +37,7 @@ database files).
 |------|-------|----------|--------|------------|--------|
 | 001 | Scaffold the TypeScript monorepo (field app, web app, domain package) | P1 | S | — | DONE |
 | 002 | Domain package: schema, constants, repositories, importer | P1 | L | 001 | DONE |
-| 003 | Reader module: TSL ASCII 2.0 over Bluetooth + simulated reader | P1 | L | 001 | TODO |
+| 003 | Reader module: TSL ASCII 2.0 over Bluetooth + simulated reader | P1 | L | 001 | DONE |
 | 004 | Check In (scan path): arm shipment, trigger intake, amend, vendors, notes | P1 | M | 002, 003 | TODO |
 | 005 | Label printing: ZPL over TCP, EPC minting, print-path intake | P1 | M | 004 | TODO |
 | 006 | Check Out, Sweep & Count, Warehouse browse, Find a Tag, Admin | P1 | L | 004 | TODO |
