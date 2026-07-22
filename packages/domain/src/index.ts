@@ -159,6 +159,30 @@ export {
 } from "./repo/requests.js";
 export type { CreateRequestInput } from "./repo/requests.js";
 
+// Repository: web jobsite (stock browse, cart, orders, counts)
+export {
+  buildings,
+  counts,
+  createCartRequest,
+  listOrders,
+  newOrderRef,
+  nowUtc,
+  parseStrictQuantity,
+  stockRows,
+} from "./repo/webStock.js";
+export type {
+  CartLineError,
+  CartLineInput,
+  CartOkResult,
+  CartErrResult,
+  Counts,
+  CreateCartRequestResult,
+  Order,
+  StockComponent,
+  StockGroup,
+  StockRow,
+} from "./repo/webStock.js";
+
 // Repository: admin
 export { clearAll, clearFlag, deleteGroup, updateTag } from "./repo/admin.js";
 export type { UpdateTagFields } from "./repo/admin.js";
