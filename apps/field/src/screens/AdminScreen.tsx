@@ -13,6 +13,7 @@ import {
   clearFlag,
   deleteGroup,
   EDITABLE_FIELDS,
+  findTag,
   ITEM_TYPES,
   listVendors,
   removeVendor,
@@ -166,7 +167,6 @@ function TagEditor({ onMsg }: { onMsg: (m: string) => void }): React.ReactNode {
 
   const lookup = async (): Promise<void> => {
     if (!epc.trim()) return;
-    const { findTag } = await import("@rfid/domain");
     const found = await findTag(db, epc.trim());
     if (!found) {
       onMsg(`${epc.trim()} is not registered.`);

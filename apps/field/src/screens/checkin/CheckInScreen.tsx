@@ -13,6 +13,7 @@ import {
   addNote,
   addVendor,
   ITEM_TYPES,
+  itemNameSuggestions,
   listVendors,
   NAMED_ITEM_TYPES,
   TYPE_FIELDS,
@@ -87,7 +88,6 @@ export function CheckInScreen(): React.ReactNode {
       return;
     }
     void (async () => {
-      const { itemNameSuggestions } = await import("@rfid/domain");
       setSuggestions(await itemNameSuggestions(db, itemType));
     })();
   }, [db, itemType, isNamed]);
