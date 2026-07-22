@@ -10,8 +10,11 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "UISupportedExternalAccessoryProtocols": ["com.uk.tsl.rfid"]
-      }
+        "UISupportedExternalAccessoryProtocols": [
+          "com.uk.tsl.rfid"
+        ]
+      },
+      "bundleIdentifier": "com.jcourson.field"
     },
     "android": {
       "adaptiveIcon": {
