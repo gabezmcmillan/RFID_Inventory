@@ -76,19 +76,19 @@ export class ReaderService {
   }
 
   /**
-   * Persist and apply a new transport choice. If a transport is connected it
-   * is disconnected and recreated with the new selection (reconnecting if it
-   * was connected).
+   * Persist and apply a new transport choice. The old transport is
+   * disconnected and replaced; switching to the native sled immediately
+   * attempts a connect (errors surface to the caller so the settings screen
+   * can show them — the sled may be off or unpaired).
    */
   async setUseNativeTransport(useNative: boolean): Promise<void> {
     await AsyncStorage.setItem(USE_NATIVE_TRANSPORT_KEY, useNative ? "true" : "false");
     if (this._useNative === useNative && this.transport !== null) return;
-    const wasConnected = this._connected;
     await this.disconnect();
     this._useNative = useNative;
     this.transport = await this.createTransport(useNative);
     this.wireTransport(this.transport);
-    if (wasConnected) await this.connect();
+    if (useNative) await this.connect();
   }
 
   /** Connect the underlying transport (initializing it first if needed). */
@@ -96,6 +96,21 @@ export class ReaderService {
     await this.init();
     if (this.transport === null) throw new Error("Reader transport not initialized");
     await this.transport.connect();
+  }
+
+  /**
+   * Init and, when the native sled transport is selected, attempt to connect —
+   * swallowing failure (the sled may be off or unpaired at app launch). Called
+   * from the app root so a paired sled is live without visiting settings.
+   */
+  async autoConnect(): Promise<void> {
+    await this.init();
+    if (!this._useNative) return;
+    try {
+      await this.connect();
+    } catch (err) {
+      console.warn("[reader] auto-connect failed:", err);
+    }
   }
 
   /** Disconnect the underlying transport. */

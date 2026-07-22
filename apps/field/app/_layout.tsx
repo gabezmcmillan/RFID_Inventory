@@ -13,10 +13,13 @@ import { DatabaseProvider, useDbStatus } from "../src/db/provider";
 import { readerService } from "../src/reader/readerService";
 import { useEffect } from "react";
 
-/** Loads the persisted reader-transport toggle once, before any connect(). */
+/**
+ * Loads the persisted reader-transport toggle once and auto-connects the sled
+ * when the native transport is selected (no-op for the simulated default).
+ */
 function useReaderInit(): void {
   useEffect(() => {
-    void readerService.init();
+    void readerService.autoConnect();
   }, []);
 }
 

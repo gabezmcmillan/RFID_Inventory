@@ -50,11 +50,19 @@ export default function SettingsScreen(): React.ReactNode {
     void loadMistralApiKey().then(setMistralKey);
   }, []);
 
+  const [transportMsg, setTransportMsg] = useState<string | null>(null);
+
   const toggleTransport = async (value: boolean): Promise<void> => {
     setBusy(true);
+    setTransportMsg(null);
     try {
       await readerService.setUseNativeTransport(value);
       setUseNative(value);
+      if (value) setTransportMsg("Sled connected.");
+    } catch (err) {
+      // Choice persists; the sled may be off/unpaired. Surface why.
+      setUseNative(value);
+      setTransportMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -107,6 +115,11 @@ export default function SettingsScreen(): React.ReactNode {
         </View>
         <Switch value={useNative} onValueChange={(v) => void toggleTransport(v)} disabled={busy} />
       </View>
+      {transportMsg !== null ? (
+        <Text style={[styles.statusMsg, transportMsg === "Sled connected." ? styles.statusOk : styles.statusBad]}>
+          {transportMsg}
+        </Text>
+      ) : null}
 
       <View style={styles.row}>
         <Text style={styles.label}>Check power</Text>
