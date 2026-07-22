@@ -43,7 +43,7 @@ database files).
 | 006 | Check Out, Sweep & Count, Warehouse browse, Find a Tag, Admin | P1 | L | 004 | DONE |
 | 007 | BOL capture with the camera + OCR field extraction | P1 | L | 004 | DONE |
 | 008 | Requests: badge, staging, fulfill, decline | P1 | M | 006 | DONE |
-| 009 | Web app: jobsite stock, cart, orders, tag pages, office browse, auth | P1 | L | 002 | TODO |
+| 009 | Web app: jobsite stock, cart, orders, tag pages, office browse, auth | P1 | L | 002 | IN PROGRESS — halted — auth will use Better Auth instead of Auth.js |
 | 010 | Turso sync wiring, ops (EAS/Sentry), data import + cutover runbook | P1 | M | all | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) |
