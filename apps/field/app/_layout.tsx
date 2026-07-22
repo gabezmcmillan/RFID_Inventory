@@ -55,6 +55,7 @@ export default function RootLayout(): React.ReactNode {
           <Stack.Screen name="bol-docs" options={{ title: "BOL Documents" }} />
           <Stack.Screen name="finder" options={{ title: "Find a Tag" }} />
           <Stack.Screen name="events" options={{ title: "Event Log" }} />
+          <Stack.Screen name="requests" options={{ title: "Requests" }} />
           <Stack.Screen name="admin" options={{ title: "Admin" }} />
           <Stack.Screen name="settings" options={{ title: "Settings" }} />
           <Stack.Screen name="dev-tools" options={{ title: "Dev Tools" }} />
