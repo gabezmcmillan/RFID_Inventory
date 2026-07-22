@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "rm -rf contract && cp -r ../../packages/contract/src/contract contract",
   "functions": {
     "app.py": {
       "maxDuration": 60,

@@ -22,10 +22,9 @@ alternative.
 docker run -d --name warehouse-pg -p 5433:5432 \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=warehouse postgres:16
 
-# 2. Cloud app (run from this apps/cloud directory -- requirements.txt
-#    installs the shared contract from ../../packages/contract, which pip
-#    resolves relative to the CWD)
-pip install -r requirements.txt
+# 2. Cloud app (run from this apps/cloud directory; the second pip argument
+#    installs the shared sync contract from packages/contract)
+pip install -r requirements.txt ../../packages/contract
 DATABASE_URL=postgresql://postgres:postgres@localhost:5433/warehouse \
 SYNC_TOKEN=dev-token \
 python -m uvicorn app:app --port 8100
@@ -52,11 +51,20 @@ python test_sync.py     # needs the Docker Postgres above; starts its own app
 ## Deploy to Vercel (current deployment)
 
 The app deploys to the org's Vercel account as a single Python serverless
-function; `vercel.json` and `requirements.txt` in this directory carry the
-config (there is deliberately no `pyproject.toml` here — Vercel would prefer
-it over `requirements.txt` and miss the relative-path install of the shared
-contract). Note: until sign-in is added, the site is public to anyone with
-the URL — accepted for the demo, revisit before real use.
+function; `vercel.json`, `requirements.txt` and `.python-version` in this
+directory carry the config (there is deliberately no `pyproject.toml` here —
+Vercel would prefer it over `requirements.txt`). Note: until sign-in is
+added, the site is public to anyone with the URL — accepted for the demo,
+revisit before real use.
+
+How the shared contract gets deployed: Vercel's builder resolves
+`requirements.txt` from a scratch directory, so a relative-path install of
+`../../packages/contract` breaks there. Instead, the `buildCommand` in
+`vercel.json` copies `packages/contract/src/contract` into the app root at
+build time — the function then imports it as a plain local directory, the
+same way `sync_contract.py` shipped before the monorepo split. The copy
+exists only on the build machine (and is gitignored in case it's ever made
+locally).
 
 1. In the Vercel dashboard: **Add New > Project**, import the
    `BG-BGI/RFID_Inventory` GitHub repo.
@@ -65,9 +73,9 @@ the URL — accepted for the demo, revisit before real use.
    Build Step" is enabled** (Project Settings > Build & Development; on by
    default for new projects). Both matter: the root directory keeps Vercel
    from trying to build the warehouse app, and the outside-root setting is
-   what lets the build install `../../packages/contract` from
-   `requirements.txt`. If a deploy ever fails with "no such file or
-   directory: ../../packages/contract", that toggle is off.
+   what gives the buildCommand access to `../../packages/contract`. If a
+   deploy fails with "No such file or directory" on that path, the toggle
+   is off.
 3. Add the database: project **Storage** tab > Create Database > Postgres
    (Neon). Connect it to the project; it injects `DATABASE_URL` as an env
    var. Make sure it is the **pooled** connection string (Neon's default

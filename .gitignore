@@ -22,6 +22,9 @@ dist/
 
 # Cloud app deploy bundle (generated; see apps/cloud/README.md)
 apps/cloud/deploy.zip
+# Build-time copy of packages/contract (made by the vercel.json buildCommand;
+# must never be committed -- a stale copy would shadow the real package)
+apps/cloud/contract/
 
 # OS
 .DS_Store
