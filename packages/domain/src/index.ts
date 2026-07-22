@@ -175,6 +175,11 @@ export type { BuildLabelZplParams, DescLayout } from "./label/zpl.js";
 export { cleanValue, extractFields, matchVendor, sequenceRatio } from "./bol/extract.js";
 export type { ExtractedFields } from "./bol/extract.js";
 
+// BOL extraction: Mistral OCR cloud client (pure TS; takes `fetchImpl` so the
+// domain package never assumes a fetch global)
+export { extractFieldsViaMistral } from "./bol/mistral.js";
+export type { ExtractViaMistralInput, FetchImpl, MistralDocument, MistralExtraction, MistralLineItem } from "./bol/mistral.js";
+
 // The legacy importer and the Node test harness live in their own modules
 // (`src/importer/`, `src/testing/`) — separate, Node-only entries — so the main
 // entry pulls no Node Turso driver. Import them directly:

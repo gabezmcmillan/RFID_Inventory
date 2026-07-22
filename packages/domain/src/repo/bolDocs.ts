@@ -27,7 +27,12 @@ function parseLineItems(raw: string): BolLineItem[] {
   try {
     const parsed = JSON.parse(raw || "[]") as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed as BolLineItem[];
+    const entries = parsed as Array<Record<string, unknown>>;
+    return entries.map((e) => ({
+      item_no: String(e["item_no"] ?? ""),
+      item_name: String(e["item_name"] ?? ""),
+      quantity: String(e["quantity"] ?? ""),
+    })) as BolLineItem[];
   } catch {
     return [];
   }

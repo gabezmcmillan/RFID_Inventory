@@ -56,6 +56,8 @@ export interface EventRow {
 export interface BolLineItem {
   item_no: string;
   item_name: string;
+  /** Shipped quantity as a positive-integer string (e.g. "700"); "" when absent. */
+  quantity: string;
 }
 
 /** Public BOL doc dict (Python `_bol_doc_dict`) plus the new `storage_url`. */
