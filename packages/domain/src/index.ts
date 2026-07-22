@@ -152,6 +152,9 @@ export type { CreateRequestInput } from "./repo/requests.js";
 export { clearAll, clearFlag, deleteGroup, updateTag } from "./repo/admin.js";
 export type { UpdateTagFields } from "./repo/admin.js";
 
+// Repository: local_meta key/value helpers
+export { getMeta, setMeta } from "./repo/util.js";
+
 // The legacy importer and the Node test harness live in their own modules
 // (`src/importer/`, `src/testing/`) — separate, Node-only entries — so the main
 // entry pulls no Node Turso driver. Import them directly:
