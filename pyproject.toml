@@ -1,0 +1,8 @@
+# Workspace root (the Python analog of pnpm-workspace.yaml): `uv sync` from
+# here sets up every member in one shot. Plain pip still works too -- each
+# app's requirements.txt pulls in packages/contract via a relative path.
+#
+# apps/cloud is deliberately NOT a member: Vercel builds it standalone from
+# its own requirements.txt (see apps/cloud/README.md).
+[tool.uv.workspace]
+members = ["apps/warehouse", "packages/contract"]

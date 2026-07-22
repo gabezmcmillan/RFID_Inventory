@@ -20,8 +20,8 @@ lazily, when a design conversation actually sharpens one.
 
 - **Exchange** — one `POST /sync/exchange` round trip: the exe pushes its
   snapshot/events/request-statuses, the cloud answers with an ack that
-  advances watermarks and lists what it still wants (`sync.py`,
-  `cloud/db.py apply_exchange`).
+  advances watermarks and lists what it still wants (`apps/warehouse/sync.py`,
+  `apps/cloud/db.py apply_exchange`).
 - **Snapshot** — full dump of the mirrored tables (tags, vendors, notes,
   bol_docs), sent only when its content hash differs from what the cloud
   last acked. Wholesale replace on the cloud; carries edits and deletes.
@@ -32,7 +32,8 @@ lazily, when a design conversation actually sharpens one.
   the source of truth; nothing on the cloud edits mirror rows. Types are
   deliberately permissive (TEXT/INTEGER).
 - **Sync contract** — the single definition of which tables and columns
-  cross the exe→cloud seam (lives in `cloud/`, imported by both sides).
+  cross the exe→cloud seam (lives in `packages/contract/`, installed and
+  imported by both apps).
   Replaces the four hand-kept column lists (local schema, `SELECT *`
   export, `MIRROR_COLUMNS`, cloud schema patches). Skew between exe and
   cloud versions is handled leniently: the exchange never fails over a

@@ -28,10 +28,9 @@ from datetime import datetime, timezone
 import psycopg
 from psycopg.rows import dict_row
 
-try:
-    import sync_contract                    # Vercel: cloud/ is the app root
-except ImportError:
-    from cloud import sync_contract         # repo root (tests, the .exe side)
+# Installed from packages/contract via requirements.txt (a relative-path
+# pip install), the same on Vercel and locally -- no more dual import.
+from contract import sync_contract
 
 # On serverless hosting (Vercel), each function instance opens its own
 # connection, so DATABASE_URL must be the POOLED connection string the

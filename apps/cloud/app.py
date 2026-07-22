@@ -17,7 +17,7 @@ function, with Vercel Postgres/Neon behind it -- see README.md):
 
 Run locally:
   DATABASE_URL=postgresql://postgres:postgres@localhost:5433/warehouse \
-  SYNC_TOKEN=dev-token uvicorn app:app --port 8100   (from cloud/)
+  SYNC_TOKEN=dev-token uvicorn app:app --port 8100   (from apps/cloud/)
 """
 
 import base64

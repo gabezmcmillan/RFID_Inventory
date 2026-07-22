@@ -1,0 +1,21 @@
+# Warehouse app metadata for the uv workspace. Keep the dependency list in
+# sync with requirements.txt, which remains the manifest the Windows build
+# box uses (build-windows.bat runs plain pip).
+[project]
+name = "rfid-inventory-warehouse"
+version = "0.1.0"
+description = "Local warehouse app: FastAPI server + RFID reader/printer/scanner + browser UI"
+requires-python = ">=3.10"
+dependencies = [
+    "pyserial>=3.5",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    "pypdf>=4.0",
+    "requests>=2.31",
+    "pywin32>=306; sys_platform == 'win32'",
+    "rfid-inventory-contract",
+]
+
+[tool.uv.sources]
+rfid-inventory-contract = { workspace = true }

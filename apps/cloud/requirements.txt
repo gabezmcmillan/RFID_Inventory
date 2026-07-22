@@ -1,0 +1,14 @@
+# The cloud app's single dependency manifest. Vercel installs from this file
+# (there is deliberately no pyproject.toml here: Vercel would prefer it and
+# skip the relative-path line below, which plain PEP 508 metadata can't
+# express). Install locally from this directory: pip install -r requirements.txt
+fastapi>=0.110
+uvicorn[standard]>=0.29
+jinja2>=3.1
+python-multipart>=0.0.9
+# psycopg v3 with bundled libpq binaries (no system packages needed).
+psycopg[binary]>=3.1
+# The shared sync contract (see packages/contract). Resolved relative to the
+# install CWD, so run pip from this directory. On Vercel this requires
+# "Include source files outside of the Root Directory" (see README.md).
+../../packages/contract

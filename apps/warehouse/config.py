@@ -165,7 +165,7 @@ HOST = "127.0.0.1"
 PORT = 8000
 
 # ---------------------------------------------------------------------------
-# Cloud sync (see sync.py and cloud/)
+# Cloud sync (see sync.py and apps/cloud/)
 # ---------------------------------------------------------------------------
 # The .exe keeps working entirely offline; when CLOUD_URL is set, a background
 # worker pushes inventory to the cloud app and pulls material requests every

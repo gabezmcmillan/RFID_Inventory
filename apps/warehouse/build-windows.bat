@@ -1,6 +1,8 @@
 @echo off
 REM Builds the standalone Windows app for the RFID Inventory tool.
-REM Run this on a Windows machine from the repo folder (double-click works).
+REM Run this on a Windows machine from this apps\warehouse folder (double-click
+REM works). Copy the WHOLE repo onto the machine, not just this folder --
+REM requirements.txt installs the shared contract from ..\..\packages\contract.
 REM Prereq: Python 3.10+ from python.org, installed with
 REM         "Add python.exe to PATH" checked.
 

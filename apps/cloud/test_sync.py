@@ -24,7 +24,8 @@ local SQLite Database + SyncWorker against it, and checks the full round trip:
      as TEXT (never dropped), the ack carries the cloud's contract hash, and
      a mismatch surfaces as a non-fatal warning on the exe side
 
-Run:  python test_sync.py   (from cloud/, any venv with both requirement sets)
+Run:  python test_sync.py   (from apps/cloud/, any venv with both
+                             requirement sets)
 """
 
 import os
@@ -37,13 +38,17 @@ import psycopg
 import requests as http
 
 CLOUD_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(CLOUD_DIR)
-sys.path.insert(0, ROOT)                      # local app modules (db, sync)
+ROOT = os.path.dirname(os.path.dirname(CLOUD_DIR))
+# The exe-side modules (db, sync) -- inserted ahead of CLOUD_DIR so `db`
+# resolves to the warehouse SQLite module, not this app's db.py. The contract
+# source is added too so the test runs without the package installed.
+sys.path.insert(0, os.path.join(ROOT, "packages", "contract", "src"))
+sys.path.insert(0, os.path.join(ROOT, "apps", "warehouse"))
 
 from db import Database                        # noqa: E402 (local SQLite side)
 from sync import (                             # noqa: E402
     K_EVENTS_PUSHED, K_SNAPSHOT_HASH, SyncWorker, snapshot_hash)
-from cloud import sync_contract                # noqa: E402 (the shared seam)
+from contract import sync_contract             # noqa: E402 (the shared seam)
 
 # The test drops and rebuilds its whole database, so it must never point at
 # the "real" dev DB (the one the manually-run cloud app uses). Default to a
@@ -102,7 +107,7 @@ def start_cloud():
         time.sleep(0.2)
     proc.terminate()
     raise SystemExit("cloud app did not come up; is Docker Postgres running? "
-                     "(see cloud/README.md)")
+                     "(see apps/cloud/README.md)")
 
 
 def main():

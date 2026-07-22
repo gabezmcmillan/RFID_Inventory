@@ -8,3 +8,7 @@ requests>=2.31
 # USB label printing via the Windows print spooler (printer.py); the network
 # (TCP 9100) path needs nothing extra. Not installed on macOS.
 pywin32>=306; sys_platform == "win32"
+# The shared sync contract (see packages/contract). Resolved relative to the
+# install CWD, so run pip from this directory -- build-windows.bat already
+# does. PyInstaller bundles it into the exe like any installed package.
+../../packages/contract

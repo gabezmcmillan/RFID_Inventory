@@ -22,7 +22,9 @@ alternative.
 docker run -d --name warehouse-pg -p 5433:5432 \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=warehouse postgres:16
 
-# 2. Cloud app (from this cloud/ directory)
+# 2. Cloud app (run from this apps/cloud directory -- requirements.txt
+#    installs the shared contract from ../../packages/contract, which pip
+#    resolves relative to the CWD)
 pip install -r requirements.txt
 DATABASE_URL=postgresql://postgres:postgres@localhost:5433/warehouse \
 SYNC_TOKEN=dev-token \
@@ -50,15 +52,22 @@ python test_sync.py     # needs the Docker Postgres above; starts its own app
 ## Deploy to Vercel (current deployment)
 
 The app deploys to the org's Vercel account as a single Python serverless
-function; `cloud/vercel.json` and `cloud/pyproject.toml` carry the config.
-Note: until sign-in is added, the site is public to anyone with the URL —
-accepted for the demo, revisit before real use.
+function; `vercel.json` and `requirements.txt` in this directory carry the
+config (there is deliberately no `pyproject.toml` here — Vercel would prefer
+it over `requirements.txt` and miss the relative-path install of the shared
+contract). Note: until sign-in is added, the site is public to anyone with
+the URL — accepted for the demo, revisit before real use.
 
 1. In the Vercel dashboard: **Add New > Project**, import the
    `BG-BGI/RFID_Inventory` GitHub repo.
-2. **Set Root Directory to `cloud`** (Project Settings > General). This is
-   required — the repo root has its own `app.py` (the warehouse exe app),
-   which would fail to build on Vercel.
+2. **Set Root Directory to `apps/cloud`** (Project Settings > General) and
+   make sure **"Include source files outside of the Root Directory in the
+   Build Step" is enabled** (Project Settings > Build & Development; on by
+   default for new projects). Both matter: the root directory keeps Vercel
+   from trying to build the warehouse app, and the outside-root setting is
+   what lets the build install `../../packages/contract` from
+   `requirements.txt`. If a deploy ever fails with "no such file or
+   directory: ../../packages/contract", that toggle is off.
 3. Add the database: project **Storage** tab > Create Database > Postgres
    (Neon). Connect it to the project; it injects `DATABASE_URL` as an env
    var. Make sure it is the **pooled** connection string (Neon's default
@@ -119,11 +128,18 @@ az webapp config set -g $RG -n $APP \
   --startup-file "python -m uvicorn app:app --host 0.0.0.0 --port 8000"
 ```
 
-Deploy the code (from this `cloud/` directory — the zip must contain
-`app.py` at its root):
+Deploy the code (from this `apps/cloud/` directory — the zip must contain
+`app.py` at its root). Note: these steps predate the apps/packages split;
+the zip build below vendors the shared contract in and strips the
+relative-path line from requirements.txt, since `../../packages/contract`
+does not exist inside the zip Azure builds from:
 
 ```bash
-zip -r deploy.zip app.py db.py requirements.txt templates static
+stage=$(mktemp -d)
+cp -r app.py db.py templates static "$stage/"
+cp -r ../../packages/contract/src/contract "$stage/contract"
+grep -v "packages/contract" requirements.txt > "$stage/requirements.txt"
+(cd "$stage" && zip -r deploy.zip .) && mv "$stage/deploy.zip" .
 az webapp deploy -g $RG -n $APP --src-path deploy.zip --type zip
 ```
 

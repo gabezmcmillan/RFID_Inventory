@@ -10,6 +10,26 @@ mirrors inventory to a small Vercel-hosted site
 (`rfid-inventory-sync.magnus.brasfieldgorrie.app`) where jobsite users can view
 stock and submit material requests that flow back into the app.
 
+## Repo layout
+
+The repo is organized as a workspace: `apps/` holds the two deployables,
+`packages/` holds code they share. Apps import from packages, never from
+each other.
+
+- `apps/warehouse/` — this app: the FastAPI server, the RFID
+  reader/printer/scanner drivers, the browser UI (`static/`), and the
+  PyInstaller build. Per-machine data (`inventory.db`, `scans/`,
+  `settings.ini`) lives here too, next to `config.py`.
+- `apps/cloud/` — the jobsite-facing site deployed to Vercel
+  ([apps/cloud/README.md](apps/cloud/README.md)).
+- `packages/contract/` — the sync contract: the single definition of which
+  tables and columns cross the exe→cloud seam. Both apps install it from
+  their `requirements.txt` and import it as `from contract import
+  sync_contract`.
+- The root `pyproject.toml` declares a [uv](https://docs.astral.sh/uv/)
+  workspace for one-command setup (`uv sync`); plain pip works fine too, as
+  below.
+
 ## Modes
 
 - **Check In** — a truckload starts by scanning its bill of lading on the
@@ -51,6 +71,7 @@ stock and submit material requests that flow back into the app.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+cd apps/warehouse
 pip install -r requirements.txt
 ```
 
@@ -86,7 +107,7 @@ pip install -r requirements.txt
 Label printing + RFID encoding is optional — with no printer configured the
 Print button is simply hidden. The printer speaks raw ZPL and is reached one
 of two ways; set exactly **one** of these in `settings.ini` (next to the exe,
-or in the repo root when running from source):
+or in `apps/warehouse/` when running from source):
 
 - **Network** — set `printer_host` to the printer's IP on the warehouse LAN
   (ZPL over TCP port 9100, no driver needed):
@@ -120,6 +141,7 @@ health is shown in the app and available at `/api/printer/status`.
 ## Run
 
 ```bash
+cd apps/warehouse
 python app.py
 ```
 
@@ -134,10 +156,12 @@ happen **on a Windows machine**:
 
 1. Install [Python 3.10+](https://www.python.org/downloads/windows/) with
    **"Add python.exe to PATH"** checked.
-2. Copy this repo onto the machine and double-click `build-windows.bat`
-   (it installs the requirements + PyInstaller and runs the spec).
-3. The result is `dist\RFIDInventory\` — copy that whole folder anywhere
-   (e.g. `C:\RFIDInventory`) and make a desktop shortcut to
+2. Copy this repo onto the machine (the whole repo — the build pulls the
+   shared contract from `packages\contract`) and double-click
+   `apps\warehouse\build-windows.bat` (it installs the requirements +
+   PyInstaller and runs the spec).
+3. The result is `apps\warehouse\dist\RFIDInventory\` — copy that whole
+   folder anywhere (e.g. `C:\RFIDInventory`) and make a desktop shortcut to
    `RFIDInventory.exe`.
 
 Double-clicking the exe starts the server in a console window (closing the
@@ -163,7 +187,7 @@ Notes for the machine that runs the exe:
 
 ## Cloud site + sync (optional)
 
-The `cloud/` directory holds a second, lightweight FastAPI app deployed to
+The `apps/cloud/` directory holds a second, lightweight FastAPI app deployed to
 **Vercel** (a Python serverless function + Vercel Postgres/Neon). It serves a
 **read-only inventory view** and a **material request form** for jobsite
 users; the warehouse app never needs to be reachable from the internet.
@@ -185,9 +209,9 @@ users; the warehouse app never needs to be reachable from the internet.
   ```
 
 - Running the cloud app locally (Docker Postgres), the end-to-end test
-  (`cloud/test_sync.py`), and the deployment walkthrough (Vercel — the
+  (`apps/cloud/test_sync.py`), and the deployment walkthrough (Vercel — the
   current deployment — plus Azure App Service kept as an unused alternative)
-  live in [cloud/README.md](cloud/README.md).
+  live in [apps/cloud/README.md](apps/cloud/README.md).
 
 ## Database tables (auto-created)
 

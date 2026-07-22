@@ -1,0 +1,24 @@
+# The shared exe<->cloud sync contract, packaged so both apps can import it
+# the normal way (`from contract import sync_contract`) instead of reaching
+# across the repo with path hacks.
+#
+# Consumers:
+#   apps/warehouse  - requirements.txt installs it via a relative path;
+#                     PyInstaller then bundles it into the exe like any
+#                     other installed package.
+#   apps/cloud      - requirements.txt installs it the same way on Vercel
+#                     (needs "Include source files outside of the Root
+#                     Directory" enabled -- see apps/cloud/README.md).
+[project]
+name = "rfid-inventory-contract"
+version = "0.1.0"
+description = "Sync contract shared by the warehouse exe and the cloud app (stdlib only)"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/contract"]

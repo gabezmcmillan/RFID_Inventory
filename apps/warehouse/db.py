@@ -34,7 +34,7 @@ import threading
 from datetime import datetime
 
 import config
-from cloud import sync_contract
+from contract import sync_contract
 
 STATUS_IN = "In Warehouse"
 STATUS_DELIVERED = "Delivered"
@@ -1349,7 +1349,7 @@ class Database:
     # snapshots -- which naturally carries edits and deletes -- and the
     # append-only events table is pushed incrementally above a watermark.
     # What crosses the wire is defined by the sync contract
-    # (cloud/sync_contract.py), shared with the cloud side.
+    # (packages/contract), shared with the cloud side.
 
     def export_snapshot(self):
         """Full dump of the mirrored tables, JSON-ready ({table: [rows...]}).

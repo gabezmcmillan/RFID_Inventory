@@ -39,7 +39,7 @@ from datetime import datetime
 import requests
 
 import config
-from cloud import sync_contract
+from contract import sync_contract
 
 PROTOCOL = 1
 EVENTS_BATCH = 1000          # max events pushed per exchange

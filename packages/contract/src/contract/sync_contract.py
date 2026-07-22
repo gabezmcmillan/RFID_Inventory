@@ -14,10 +14,11 @@ contract hash travels in the payload and the ack, so a mismatch surfaces as
 a warning in the exe's sync status; meanwhile the cloud stores unknown
 incoming columns as TEXT so no data is dropped while the two catch up.
 
-This file lives in cloud/ because that is the Vercel deployment root (the
-cloud can't import from the repo root). It is imported two ways -- as
-`cloud.sync_contract` from the repo root and as `sync_contract` on Vercel --
-so it must hold no state beyond plain data.
+This file lives in packages/contract/ -- the one place for code that both
+apps depend on. Each app installs the package from its requirements.txt
+(a relative-path pip install), so both sides import it the same way:
+`from contract import sync_contract`. It must hold no state beyond plain
+data.
 
 HARD RULE: stdlib only. Importing this module must never drag cloud-only
 dependencies (psycopg, fastapi) into the exe build.
