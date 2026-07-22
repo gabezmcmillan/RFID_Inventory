@@ -96,4 +96,61 @@ describe("requests", () => {
     expect(res.ok).toBe(false);
     expect(res.message).toContain("Nothing was delivered");
   });
+
+  test("a staged draw whose EPC was delivered between staging and confirm fails but others commit", async () => {
+    const db = await openTestDb();
+    const epcA = "DD" + "0".repeat(22);
+    const epcB = "EE" + "0".repeat(22);
+    await seedBox(db, epcA, 2);
+    await seedBox(db, epcB, 2);
+    const r = await createRequest(db, { item_type: "TSC", quantity: 2 });
+    await setRequestStatus(db, r.request!.id, "staging");
+    // Box A is delivered out from under us between staging and confirm.
+    await deliverUnits(db, epcA);
+    const res = await fulfillRequest(
+      db,
+      r.request!.id,
+      [
+        { epc: epcA, amount: 2, building: "6" },
+        { epc: epcB, amount: 2, building: "6" },
+      ],
+      "box A was already gone",
+    );
+    expect(res.ok).toBe(true);
+    expect(res.results).toHaveLength(2);
+    const aResult = res.results.find((x) => x.epc === epcA);
+    const bResult = res.results.find((x) => x.epc === epcB);
+    expect(aResult?.ok).toBe(false);
+    expect(bResult?.ok).toBe(true);
+    expect(res.delivered).toBe(2);
+    expect(res.requested).toBe(2);
+    expect(res.short).toBe(false);
+    expect(await remaining(db, epcB)).toBe(0); // B committed
+  });
+
+  test("cancel-staging (staging -> pending) leaves tags untouched", async () => {
+    const db = await openTestDb();
+    const epc = "FF" + "0".repeat(22);
+    await seedBox(db, epc, 2);
+    const r = await createRequest(db, { item_type: "TSC", quantity: 1 });
+    await setRequestStatus(db, r.request!.id, "staging");
+    const before = await remaining(db, epc);
+    const cancel = await setRequestStatus(db, r.request!.id, "pending");
+    expect(cancel.ok).toBe(true);
+    expect(cancel.request?.status).toBe("pending");
+    expect(await remaining(db, epc)).toBe(before); // nothing committed
+  });
+
+  test("fulfillRequest on an already-fulfilled request returns 'already fulfilled'", async () => {
+    const db = await openTestDb();
+    const epc = "GG" + "0".repeat(22);
+    await seedBox(db, epc, 2);
+    const r = await createRequest(db, { item_type: "TSC", quantity: 1 });
+    await setRequestStatus(db, r.request!.id, "staging");
+    const first = await fulfillRequest(db, r.request!.id, [{ epc, amount: 1, building: "6" }]);
+    expect(first.ok).toBe(true);
+    const second = await fulfillRequest(db, r.request!.id, [{ epc, amount: 1, building: "6" }]);
+    expect(second.ok).toBe(false);
+    expect(second.message).toContain("already fulfilled");
+  });
 });
