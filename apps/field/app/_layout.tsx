@@ -50,6 +50,8 @@ export default function RootLayout(): React.ReactNode {
           <Stack.Screen name="check-in" options={{ title: "Check In" }} />
           <Stack.Screen name="check-out" options={{ title: "Check Out" }} />
           <Stack.Screen name="sweep" options={{ title: "Sweep & Count" }} />
+          <Stack.Screen name="warehouse" options={{ title: "Warehouse" }} />
+          <Stack.Screen name="warehouse-group" options={{ title: "Group" }} />
           <Stack.Screen name="settings" options={{ title: "Settings" }} />
           <Stack.Screen name="dev-tools" options={{ title: "Dev Tools" }} />
         </Stack>
