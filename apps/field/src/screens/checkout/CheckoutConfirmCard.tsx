@@ -23,6 +23,8 @@ interface CheckoutConfirmCardProps {
   readonly onCommit: (amount: number, building: string) => void;
   /** True in plan 008's request-staging mode (commit labels as "Stage"). */
   readonly staged?: boolean;
+  /** Pre-filled destination building (staging mode defaults to the request's). */
+  readonly defaultBuilding?: string;
   /** Disable the commit button while a commit is in flight. */
   readonly busy?: boolean;
 }
@@ -35,17 +37,18 @@ export function CheckoutConfirmCard({
   lookupResult,
   onCommit,
   staged = false,
+  defaultBuilding = "",
   busy = false,
 }: CheckoutConfirmCardProps): React.ReactNode {
   const remaining = lookupResult.remaining ?? 0;
   const [amount, setAmount] = useState(remaining);
-  const [building, setBuilding] = useState("");
+  const [building, setBuilding] = useState(defaultBuilding);
 
   // Re-arm the stepper/destination whenever a new box is looked up.
   useEffect(() => {
     setAmount(remaining);
-    setBuilding("");
-  }, [lookupResult.epc, remaining]);
+    setBuilding(defaultBuilding);
+  }, [lookupResult.epc, remaining, defaultBuilding]);
 
   if (!lookupResult.ok) {
     return (
