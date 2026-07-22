@@ -49,6 +49,7 @@ export default function RootLayout(): React.ReactNode {
           <Stack.Screen name="index" options={{ title: "RFID Field" }} />
           <Stack.Screen name="check-in" options={{ title: "Check In" }} />
           <Stack.Screen name="check-out" options={{ title: "Check Out" }} />
+          <Stack.Screen name="sweep" options={{ title: "Sweep & Count" }} />
           <Stack.Screen name="settings" options={{ title: "Settings" }} />
           <Stack.Screen name="dev-tools" options={{ title: "Dev Tools" }} />
         </Stack>
