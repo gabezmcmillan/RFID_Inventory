@@ -2,7 +2,7 @@
  * Mode home — the landing screen. A grid of cards for every operator mode,
  * each linking to its route. Find a Tag is entered from a warehouse box row
  * (it needs a target EPC), so it has no home card. Requests (plan 008) is the
- * one remaining "coming soon" placeholder. The reader stays idle here.
+ * one remaining placeholder. The reader stays idle here.
  */
 
 import { Link } from "expo-router";

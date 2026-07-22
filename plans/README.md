@@ -40,7 +40,7 @@ database files).
 | 003 | Reader module: TSL ASCII 2.0 over Bluetooth + simulated reader | P1 | L | 001 | DONE |
 | 004 | Check In (scan path): arm shipment, trigger intake, amend, vendors, notes | P1 | M | 002, 003 | DONE |
 | 005 | Label printing: ZPL over TCP, EPC minting, print-path intake | P1 | M | 004 | DONE |
-| 006 | Check Out, Sweep & Count, Warehouse browse, Find a Tag, Admin | P1 | L | 004 | TODO |
+| 006 | Check Out, Sweep & Count, Warehouse browse, Find a Tag, Admin | P1 | L | 004 | DONE |
 | 007 | BOL capture with the camera + OCR field extraction | P1 | L | 004 | TODO |
 | 008 | Requests: badge, staging, fulfill, decline | P1 | M | 006 | TODO |
 | 009 | Web app: jobsite stock, cart, orders, tag pages, office browse, auth | P1 | L | 002 | TODO |
