@@ -142,6 +142,22 @@ REJECTED (one-line rationale).
   UI must use these components + tokens rather than ad-hoc `StyleSheet` objects
   (keep `StyleSheet` only for genuinely computed numeric styles, e.g. the
   finder proximity-bar width/height).
+- **shadcn/ui is the web-app UI standard (2026-07-23)**: `apps/web` is styled
+  with Tailwind CSS v4 (`@tailwindcss/postcss`) and shadcn/ui components under
+  `apps/web/src/components/ui/`, initialized via the shadcn CLI (`shadcn init`,
+  `base-nova` preset — the modern successor to the legacy "new-york" style —
+  with CSS-variable theming). Theme tokens live in `apps/web/src/app/globals.css`
+  as oklch CSS variables (light default; dark driven by a system-preference
+  `dark` class set pre-hydration). The domain status palette is mirrored from
+  the field app as HSL tokens `--status-in` (green) / `--status-partial`
+  (amber) / `--status-delivered` (gray), exposed to Tailwind as
+  `--color-status-*` so `bg-status-in` / `text-status-partial` etc. work. New
+  web-app UI must use these shadcn components + tokens rather than hand-rolled
+  CSS; pages stay Server Components where they already are, with `"use client"`
+  only on genuinely interactive islands (cart, sign-in form, user menu,
+  focus-refresh). The shadcn CLI's `base-nova` preset builds on `@base-ui/react`
+  (not Radix), so component APIs use the `render` prop / `useRender` pattern
+  rather than `asChild`.
 
 ## Considered and rejected
 
