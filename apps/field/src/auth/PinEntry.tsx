@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { View } from "react-native";
 
 import { Text } from "@/components/ui/text";
 import { KeyboardDismissible } from "@/components/KeyboardDismissible";
@@ -26,6 +27,12 @@ export interface PinEntryProps {
   title: string;
   /** Placeholder for the entry field (unused by the keypad, kept for callers). */
   placeholder?: string;
+  /** Optional node rendered above the title (e.g. the "RFID Field" wordmark on
+   * the device lock overlay, which has no shell header). */
+  header?: React.ReactNode;
+  /** Center the group as a full-screen passcode panel (default `true`). Set
+   * `false` when embedding in a compact card (e.g. the BOL delete gate). */
+  centered?: boolean;
   /** Called once with `true` on a correct PIN. */
   onUnlock: () => void;
 }
@@ -33,8 +40,13 @@ export interface PinEntryProps {
 /**
  * A PIN entry card. Calls {@link onUnlock} on a match, shakes + clears on a
  * mismatch, and honors the persisted wrong-entry backoff (lockout countdown).
+ *
+ * The whole group (optional header, title, dots, keypad) is centered both
+ * axes like Apple's passcode screen. `flex-1` lets it fill a standalone
+ * screen (the admin gate); inside a centered wrapper (the lock overlay) the
+ * `flex-1` is inert and the wrapper centers the block.
  */
-export function PinEntry({ slot, title, placeholder = "PIN", onUnlock }: PinEntryProps): React.ReactNode {
+export function PinEntry({ slot, title, placeholder = "PIN", header, centered = true, onUnlock }: PinEntryProps): React.ReactNode {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [errorSignal, setErrorSignal] = useState(0);
@@ -70,21 +82,28 @@ export function PinEntry({ slot, title, placeholder = "PIN", onUnlock }: PinEntr
   };
 
   return (
-    <KeyboardDismissible className="flex-1 p-5 gap-6">
-      <Text className="text-2xl font-bold text-brand-navy">{title}</Text>
-
-      {error && !locked ? <Text className="text-destructive">{error}</Text> : null}
-      {locked ? (
-        <Text className="text-destructive">Locked — wait {Math.ceil(remainingMs / 1000)}s.</Text>
-      ) : null}
-
-      <PinPad
-        value={pin}
-        onChange={setPin}
-        onSubmit={(v) => void submit(v)}
-        errorSignal={errorSignal}
-        disabled={locked}
-      />
+    <KeyboardDismissible className={centered ? "flex-1 items-center justify-center p-5" : "items-center p-1"}>
+      <View className={centered ? "w-full max-w-md items-center gap-10" : "w-full items-center gap-6"}>
+        {header ? <View className="items-center">{header}</View> : null}
+        <View className="items-center gap-2">
+          {centered ? <Text className="text-2xl font-bold text-brand-navy">{title}</Text> : null}
+          {error && !locked ? (
+            <Text className="text-center text-destructive">{error}</Text>
+          ) : null}
+          {locked ? (
+            <Text className="text-center text-destructive">
+              Locked — wait {Math.ceil(remainingMs / 1000)}s.
+            </Text>
+          ) : null}
+        </View>
+        <PinPad
+          value={pin}
+          onChange={setPin}
+          onSubmit={(v) => void submit(v)}
+          errorSignal={errorSignal}
+          disabled={locked}
+        />
+      </View>
     </KeyboardDismissible>
   );
 }

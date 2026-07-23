@@ -180,7 +180,7 @@ function BolDocDetail({
       {confirmingDelete ? (
         <View className="rounded-xl border border-destructive bg-destructive/10 p-3">
           <Text className="text-sm font-semibold text-destructive">Enter admin PIN to delete</Text>
-          <PinPrompt onUnlock={() => void onDelete()} />
+          <PinPrompt centered={false} onUnlock={() => void onDelete()} />
         </View>
       ) : (
         <Button variant="destructive" className="mt-3" disabled={busy} onPress={() => setConfirmingDelete(true)}>

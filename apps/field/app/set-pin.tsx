@@ -78,31 +78,33 @@ export default function SetPinScreen(): React.ReactNode {
   };
 
   return (
-    <KeyboardDismissible className="flex-1 justify-between p-6 pb-8">
-      <View className="gap-2">
-        <Text className="text-sm leading-snug text-muted-foreground">
-          {step === "enter"
-            ? "This PIN unlocks the app on this device. The person who links the device may not be the person using it day-to-day, so share this PIN with the warehouse operator."
-            : "Re-enter the PIN to confirm."}
-        </Text>
-        {error ? <Text className="text-destructive">{error}</Text> : null}
-      </View>
+    <KeyboardDismissible className="flex-1 items-center justify-center p-6 pb-10">
+      <View className="w-full max-w-md items-center gap-10">
+        <View className="items-center gap-2">
+          <Text className="text-center text-sm leading-snug text-muted-foreground">
+            {step === "enter"
+              ? "This PIN unlocks the app on this device. The person who links the device may not be the person using it day-to-day, so share this PIN with the warehouse operator."
+              : "Re-enter the PIN to confirm."}
+          </Text>
+          {error ? <Text className="text-center text-destructive">{error}</Text> : null}
+        </View>
 
-      {step === "enter" ? (
-        <PinPad
-          value={first}
-          onChange={setFirst}
-          onSubmit={onEnterComplete}
-          errorSignal={errorSignal}
-        />
-      ) : (
-        <PinPad
-          value={confirm}
-          onChange={setConfirm}
-          onSubmit={(v) => void onConfirmComplete(v)}
-          errorSignal={errorSignal}
-        />
-      )}
+        {step === "enter" ? (
+          <PinPad
+            value={first}
+            onChange={setFirst}
+            onSubmit={onEnterComplete}
+            errorSignal={errorSignal}
+          />
+        ) : (
+          <PinPad
+            value={confirm}
+            onChange={setConfirm}
+            onSubmit={(v) => void onConfirmComplete(v)}
+            errorSignal={errorSignal}
+          />
+        )}
+      </View>
     </KeyboardDismissible>
   );
 }

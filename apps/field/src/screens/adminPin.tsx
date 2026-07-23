@@ -26,9 +26,15 @@ export async function setAdminPin(pin: string): Promise<void> {
  * A PIN entry card for the admin surface. Migrates the legacy plaintext admin
  * PIN on first open, then delegates to the shared {@link PinEntry}.
  */
-export function PinPrompt({ onUnlock }: { onUnlock: () => void }): React.ReactNode {
+export function PinPrompt({
+  onUnlock,
+  centered = true,
+}: {
+  onUnlock: () => void;
+  centered?: boolean;
+}): React.ReactNode {
   useEffect(() => {
     void migrateLegacyAdminPinOnce();
   }, []);
-  return <PinEntry slot="admin" title="Admin PIN" onUnlock={onUnlock} />;
+  return <PinEntry slot="admin" title="Admin PIN" centered={centered} onUnlock={onUnlock} />;
 }
