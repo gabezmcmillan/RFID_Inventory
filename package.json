@@ -1,6 +1,7 @@
 {
   "name": "rfid-inventory",
   "private": true,
+  "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=20"
   },
