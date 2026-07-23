@@ -173,22 +173,23 @@ Use [Better Auth](https://better-auth.com) `1.6.18` (the exact version pinned in
 the `effectivly` reference repo — same major + patterns), NOT Auth.js/NextAuth.
 Remove the unused `next-auth` dependency from `apps/web/package.json`.
 
-**Server instance (`apps/web/src/lib/auth.ts`):** a `makeAuth()` factory over
+**Server instance (`apps/web/src/lib/auth.ts`):** a `createAuth()` factory over
 `betterAuth()`, env-driven. Built-in Kysely adapter (NOT
 `@better-auth/drizzle-adapter`, which peers on `drizzle-orm ^0.45` while this
 repo runs `1.0.0-rc` — the same version reason `effectivly` cites). The
 `database` is a Kysely instance over a **separate** libSQL/Turso auth database:
 `AUTH_DATABASE_URL` + `AUTH_DATABASE_AUTH_TOKEN` (Turso cloud) →
 `@libsql/client` + the `@libsql/kysely` `LibSQLDialect`; absent → local file
-`process.env.LOCAL_AUTH_DB_PATH ?? ../../.dev-data/auth.db`. `AUTH_SECRET` is
-the Better Auth secret; `BETTER_AUTH_URL` is the public origin (required when
-the auth backend is live, fails loud at boot otherwise — same as `effectivly`).
-When `AUTH_DATABASE_URL` + `AUTH_SECRET` are both absent there is no auth
-backend (`auth = null`, the offline gate `effectivly` uses). Microsoft Entra ID
-social provider, env-driven and gated on both `MICROSOFT_CLIENT_ID` +
-`MICROSOFT_CLIENT_SECRET`; `MICROSOFT_TENANT_ID` is required at boot when
-Microsoft is set (throw, do not fall back to Entra's open `common` endpoint).
-Configure `disableProfilePhoto: true`, `prompt: "select_account"`, and
+`process.env.LOCAL_AUTH_DB_PATH ?? ../../.dev-data/auth.db`. Per the Better
+Auth guide, `secret`/`baseURL` are NOT set in the config — Better Auth reads
+`BETTER_AUTH_SECRET`/`BETTER_AUTH_URL` from the environment itself; `BETTER_AUTH_URL`
+is required when the auth backend is live (fails loud at boot otherwise — same
+as `effectivly`). When `AUTH_DATABASE_URL` + `BETTER_AUTH_SECRET` are both
+absent there is no auth backend (`auth = null`, the offline gate `effectivly`
+uses). Microsoft Entra ID social provider, env-driven and gated on both
+`MICROSOFT_CLIENT_ID` + `MICROSOFT_CLIENT_SECRET`; `MICROSOFT_TENANT_ID` is
+required at boot when Microsoft is set (throw, do not fall back to Entra's open
+`common` endpoint). Configure `disableProfilePhoto: true`, `prompt: "select_account"`, and
 `account.accountLinking.trustedProviders: ["microsoft"]` (the `effectivly`
 settings). `session.cookieCache: { enabled: true, maxAge: 300 }`.
 
@@ -199,9 +200,11 @@ and live in the **separate auth database** above — they must NOT be added to
 phones; the field app must never see auth tables, and the web app writing auth
 rows into the phone-synced Turso database would violate the multi-writer
 discipline in `plans/README.md`). Auth schema/migrations are kept in
-`apps/web`: `auth.config.ts` (the CLI entrypoint, like `effectivly`'s) plus
-`auth:generate` / `auth:migrate` scripts using `@better-auth/cli`. Document this
-separation in the plan and the README standing-decision bullet.
+`apps/web`: `auth.ts` at the app root (the CLI-discoverable entrypoint — the
+Better Auth CLI searches `./`, `./lib`, `./utils`, `./src`) plus
+`auth:generate` / `auth:migrate` scripts using `@better-auth/cli` (built-in
+adapter → `migrate`; for Drizzle → `generate --output <path>` then drizzle-kit).
+Document this separation in the plan and the README standing-decision bullet.
 
 **API route (`apps/web/src/app/api/auth/[...all]/route.ts`):** the catch-all
 `{ GET, POST }` from `toNextJsHandler(auth)` (`better-auth/next-js`); when
@@ -243,14 +246,15 @@ form's requester/contact (the existing `Cart` already reads `user` from
 (`Header.tsx`): a small client component calling `authClient.signOut()` then
 pushing `/sign-in`; show the signed-in name/email from `getUser()`.
 
-Env vars: `AUTH_SECRET`, `BETTER_AUTH_URL`, `AUTH_DATABASE_URL`,
+Env vars: `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `AUTH_DATABASE_URL`,
 `AUTH_DATABASE_AUTH_TOKEN`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`,
 `MICROSOFT_TENANT_ID`, `AUTH_DEV_BYPASS`, `AUTH_DEV_BYPASS_NAME`,
 `AUTH_DEV_BYPASS_EMAIL`, `LOCAL_AUTH_DB_PATH`. Tenant config may be
 unavailable — wire env-driven and verify with the dev bypass; note the missing
 tenant config in the report (plan 010's deploy step needs it).
 
-**Verify**: `pnpm --filter @rfid/web build` → exit 0; dev with bypass: `/`
+**Verify**: `pnpm --filter @rfid/web build` → exit 0; `GET /api/auth/ok` →
+`{ status: "ok" }` (Better Auth's liveness endpoint); dev with bypass: `/`
 renders 200 with the fake user prefilled; without bypass: `/` redirects to
 sign-in while `/tag/<seeded-epc>` still renders 200.
 

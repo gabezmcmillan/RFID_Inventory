@@ -1,0 +1,12 @@
+diff --git a/package.json b/package.json
+index 9981011bd625046ade5124f81e8026a6909a11cf..5eccabd050e441f4bd1e6968bc4373302cf4bb18 100644
+--- a/package.json
++++ b/package.json
+@@ -36,7 +36,6 @@
+   },
+   "peerDependencies": {
+     "@better-auth/utils": "0.4.1",
+-    "drizzle-orm": "^0.45.2",
+     "@better-auth/core": "^1.6.18"
+   },
+   "peerDependenciesMeta": {

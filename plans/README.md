@@ -92,11 +92,13 @@ REJECTED (one-line rationale).
   concretized 2026-07-23 from the `effectivly` reference repo)**: plan 009
   halted before its auth step. Auth uses [Better Auth](https://better-auth.com)
   `1.6.18` (same version as `effectivly`), following that repo's house style:
-  the server instance lives in `apps/web/src/lib/auth.ts` (a `makeAuth()`
+  the server instance lives in `apps/web/src/lib/auth.ts` (a `createAuth()`
   factory over `betterAuth()`), mounted as a catch-all at
   `app/api/auth/[...all]/route.ts` via `toNextJsHandler` from
   `better-auth/next-js`; the browser client is `createAuthClient()` from
-  `better-auth/react` in `apps/web/src/lib/auth-client.ts`. The Microsoft
+  `better-auth/react` in `apps/web/src/lib/auth-client.ts`. Per the Better Auth
+  guide, `secret`/`baseURL` are not set in config — Better Auth reads
+  `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL` from the environment itself. The Microsoft
   Entra ID social provider is wired env-driven
   (`MICROSOFT_CLIENT_ID`/`_SECRET`/`_TENANT_ID`), gated on both client id +
   secret, with `tenantId` required at boot when Microsoft is set (fails loud
@@ -118,8 +120,8 @@ REJECTED (one-line rationale).
   database the phones sync would also violate the multi-writer discipline
   below (the web app would become a second writer to the sync DB). Better
   Auth's schema/migrations are therefore kept inside `apps/web`
-  (`auth.config.ts` + the `@better-auth/cli` `generate`/`migrate` scripts),
-  run against the auth database only. Same requirements as the original
+  (the root `auth.ts` CLI-discoverable entrypoint + the `@better-auth/cli`
+  `generate`/`migrate` scripts), run against the auth database only. Same requirements as the original
   step 4: session required for everything except `/tag/*`, `/api/health`, and
   auth routes (enforced by `apps/web/src/middleware.ts`); signed-in
   name/email prefill the checkout form; a dev bypass
