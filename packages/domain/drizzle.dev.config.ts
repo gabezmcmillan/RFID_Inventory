@@ -15,9 +15,16 @@ import { defineConfig } from "drizzle-kit";
  * `applyMigrations` runner uses, so the remote and on-device paths stay in
  * lockstep. `schema`/`out` mirror `drizzle.config.ts` so this config applies
  * the exact same checked-in migrations.
+ *
+ * `dialect: "turso"` is REQUIRED for a remote libSQL/Turso database: it routes
+ * drizzle-kit to its Turso-remote connection path, which creates the libSQL
+ * client WITH `authToken`. With `dialect: "sqlite"` drizzle-kit instead uses
+ * the generic SQLite path that omits the auth token, so every request 401s
+ * against the remote DB even though the credentials are correct. (`turso` is a
+ * dialect, not a `driver`; the sqlite `driver` enum is d1-http/expo/etc.)
  */
 export default defineConfig({
-  dialect: "sqlite",
+  dialect: "turso",
   schema: "./src/schema.ts",
   out: "./drizzle",
   dbCredentials: {
