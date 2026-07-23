@@ -1,14 +1,21 @@
 /**
  * Settings route — transport toggle (Simulated / Bluetooth sled, persisted via
  * `AsyncStorage`), a check-power slider (10–29 dBm) calling
- * `readerService.setCheckPower` (mirrors app.py:262-268), and the label-printer
+ * `readerService.setCheckPower` (mirrors app.py:262-268), the label-printer
  * settings: `printer_host` (empty = printing disabled, mirroring
  * `printer.enabled()`), a "Test printer" button running `printerStatus`, and
  * `cloud_base_url` (used for label QR URLs; empty = no QR).
+ *
+ * Device linking (plan: mobile auth): the web app base URL the phone exchanges
+ * the one-time code against (dev default `http://localhost:3000` — set to the
+ * Mac's LAN IP for a physical device), a "Link device" button that opens the
+ * QR scanner, the linked identity (name/email) when a device is linked, and an
+ * "Unlink" action that clears the stored bearer credential.
  */
 
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
+import { useRouter, useFocusEffect } from "expo-router";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,11 +32,21 @@ import {
 } from "../src/printer/printerSettings";
 import { printerStatus, PRINTER_PORT } from "../src/printer/printerClient";
 import { MISTRAL_API_KEY_STORAGE, loadMistralApiKey, saveMistralApiKey } from "../src/bol/mistralKey";
+import {
+  clearLinkedCredential,
+  DEFAULT_SERVER_URL,
+  getLinkedIdentity,
+  getServerUrl,
+  type LinkedIdentity,
+  SERVER_URL_KEY,
+  setServerUrl,
+} from "../src/auth";
 
 const MIN_POWER = 10;
 const MAX_POWER = 29;
 
 export default function SettingsScreen(): React.ReactNode {
+  const router = useRouter();
   const [useNative, setUseNative] = useState(false);
   const [power, setPower] = useState(20);
   const [busy, setBusy] = useState(false);
@@ -39,6 +56,9 @@ export default function SettingsScreen(): React.ReactNode {
   const [testing, setTesting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [statusOk, setStatusOk] = useState<boolean | null>(null);
+  const [serverUrl, setServerUrlState] = useState("");
+  const [linked, setLinked] = useState<LinkedIdentity | null>(null);
+  const [unlinking, setUnlinking] = useState(false);
 
   useEffect(() => {
     void readerService.init().then(() => setUseNative(readerService.useNativeTransport));
@@ -54,6 +74,16 @@ export default function SettingsScreen(): React.ReactNode {
   useEffect(() => {
     void loadMistralApiKey().then(setMistralKey);
   }, []);
+
+  useEffect(() => {
+    void getServerUrl().then(setServerUrlState);
+  }, []);
+
+  // Re-read the linked identity whenever Settings regains focus (e.g. after
+  // the QR scanner pops back with a freshly stored credential).
+  useFocusEffect(() => {
+    void getLinkedIdentity().then(setLinked);
+  });
 
   const [transportMsg, setTransportMsg] = useState<string | null>(null);
 
@@ -92,6 +122,21 @@ export default function SettingsScreen(): React.ReactNode {
   const onMistralKeyChange = (value: string): void => {
     setMistralKey(value);
     void saveMistralApiKey(value);
+  };
+
+  const onServerUrlChange = (value: string): void => {
+    setServerUrlState(value);
+    void setServerUrl(value);
+  };
+
+  const unlink = async (): Promise<void> => {
+    setUnlinking(true);
+    try {
+      await clearLinkedCredential();
+      setLinked(null);
+    } finally {
+      setUnlinking(false);
+    }
   };
 
   const testPrinter = async (): Promise<void> => {
@@ -183,12 +228,48 @@ export default function SettingsScreen(): React.ReactNode {
         keyboardType="default"
       />
 
+      <View className="mt-2 border-t border-border pt-4 gap-2">
+        <Text className="text-sm font-semibold text-foreground">Web server URL</Text>
+        <Text className="text-xs text-muted-foreground">
+          Base the phone exchanges the link code against (default {DEFAULT_SERVER_URL}; set to the
+          Mac's LAN IP for a physical device).
+        </Text>
+        <Input
+          value={serverUrl}
+          onChangeText={onServerUrlChange}
+          placeholder={DEFAULT_SERVER_URL}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
+
+        <Text className="text-sm font-semibold mt-2 text-foreground">Device account</Text>
+        {linked ? (
+          <View className="gap-2">
+            <View className="flex-row items-center justify-between">
+              <View>
+                <Text className="text-base font-semibold">{linked.name}</Text>
+                <Text className="text-xs text-muted-foreground">{linked.email}</Text>
+              </View>
+              <Button variant="secondary" disabled={unlinking} onPress={() => void unlink()}>
+                {unlinking ? <ActivityIndicator /> : <Text>Unlink</Text>}
+              </Button>
+            </View>
+          </View>
+        ) : (
+          <Button onPress={() => router.push("/link-device")}>
+            <Text>Link device</Text>
+          </Button>
+        )}
+      </View>
+
       {Platform.OS === "ios" ? (
         <Text className="text-xs text-muted-foreground mt-2">
           Toggle key: <Text className="font-mono">{USE_NATIVE_TRANSPORT_KEY}</Text>; printer key:{" "}
           <Text className="font-mono">{PRINTER_HOST_KEY}</Text>; cloud key:{" "}
           <Text className="font-mono">{CLOUD_BASE_URL_KEY}</Text>; Mistral key:{" "}
-          <Text className="font-mono">{MISTRAL_API_KEY_STORAGE}</Text>
+          <Text className="font-mono">{MISTRAL_API_KEY_STORAGE}</Text>; server key:{" "}
+          <Text className="font-mono">{SERVER_URL_KEY}</Text>
         </Text>
       ) : null}
     </View>

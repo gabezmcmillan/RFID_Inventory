@@ -34,6 +34,8 @@
 import { resolve } from "node:path";
 
 import { betterAuth } from "better-auth";
+import { bearer } from "better-auth/plugins/bearer";
+import { oneTimeToken } from "better-auth/plugins/one-time-token";
 import { LibsqlDialect } from "kysely-libsql";
 
 import { env } from "@/lib/env";
@@ -123,6 +125,20 @@ export function createAuth() {
     // Serve the principal from a short-lived signed cookie; one DB round-trip
     // per request becomes one per `maxAge` window.
     session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
+    plugins: [
+      // QR device-linking (plan: mobile auth). A signed-in web user generates a
+      // single-use, 5-minute one-time token rendered as a QR; the phone scans
+      // it and POSTs it to `/api/auth/one-time-token/verify`, which mints a new
+      // session for the SAME user and returns it in the body (the cookie is
+      // deliberately NOT set — `disableSetSessionCookie` — so the phone, which
+      // has no cookie jar, receives the session `token` to store as a bearer
+      // credential). The `bearer` plugin then lets the phone authenticate
+      // subsequent requests with `Authorization: Bearer <session.token>` by
+      // converting the bearer token to a session in-flight. Both plugins are
+      // no-ops when no auth backend is configured (the offline `null` gate).
+      oneTimeToken({ expiresIn: 5, disableSetSessionCookie: true }),
+      bearer(),
+    ],
   });
 }
 

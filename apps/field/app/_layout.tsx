@@ -66,6 +66,7 @@ export default function RootLayout(): React.ReactNode {
           <Stack.Screen name="requests" options={{ title: "Requests" }} />
           <Stack.Screen name="admin" options={{ title: "Admin" }} />
           <Stack.Screen name="settings" options={{ title: "Settings" }} />
+          <Stack.Screen name="link-device" options={{ title: "Link Device" }} />
           <Stack.Screen name="dev-tools" options={{ title: "Dev Tools" }} />
         </Stack>
       </Gate>

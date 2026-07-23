@@ -13,7 +13,7 @@
         "UISupportedExternalAccessoryProtocols": [
           "com.uk.tsl.rfid"
         ],
-        "NSCameraUsageDescription": "The camera scans bill of lading documents during check-in."
+        "NSCameraUsageDescription": "The camera scans bill of lading documents during check-in and scans QR codes to link this device to your web account."
       },
       "bundleIdentifier": "com.jcourson.field",
       "appleTeamId": "KDEGJ8G33R"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
@@ -43,6 +44,9 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
           <span className="text-xs font-normal text-muted-foreground">{email}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem render={<Link href="/link-device" />}>
+          Link a device
+        </DropdownMenuItem>
         <DropdownMenuItem variant="destructive" disabled={busy} onClick={signOut}>
           {busy ? "Signing out…" : "Sign out"}
         </DropdownMenuItem>
