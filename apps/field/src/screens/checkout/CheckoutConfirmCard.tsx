@@ -12,7 +12,12 @@
  */
 
 import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 import { BUILDING_OPTIONS, type LookupForCheckoutResult } from "@rfid/domain";
 
@@ -52,8 +57,8 @@ export function CheckoutConfirmCard({
 
   if (!lookupResult.ok) {
     return (
-      <View style={styles.errorCard}>
-        <Text style={styles.errorText}>{lookupResult.message}</Text>
+      <View className="rounded-lg border border-destructive bg-destructive/10 p-3.5">
+        <Text className="font-semibold text-destructive">{lookupResult.message}</Text>
       </View>
     );
   }
@@ -71,46 +76,50 @@ export function CheckoutConfirmCard({
   const verb = staged ? "Stage" : "Deliver";
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.title}>
+    <View className="rounded-lg border border-border bg-card p-3.5">
+      <Text className="mb-1 text-lg font-bold text-foreground">
         {lookupResult.item_type}
         {lookupResult.item_name ? ` · ${lookupResult.item_name}` : ""}
       </Text>
-      <Text style={styles.meta}>
-        EPC: {lookupResult.epc}
-      </Text>
-      <Text style={styles.meta}>
+      <Text className="mt-0.5 text-[13px] text-muted-foreground">EPC: {lookupResult.epc}</Text>
+      <Text className="mt-0.5 text-[13px] text-muted-foreground">
         BOL {lookupResult.bol_number || "n/a"} · Received for Bldg {lookupResult.building || "n/a"}
       </Text>
-      <Text style={styles.meta}>
-        Units: <Text style={styles.bold}>{remaining}</Text> of {lookupResult.quantity} remaining
+      <Text className="mt-0.5 text-[13px] text-muted-foreground">
+        Units: <Text className="font-semibold text-foreground">{remaining}</Text> of {lookupResult.quantity} remaining
       </Text>
 
-      <Text style={styles.label}>Units to draw</Text>
-      <View style={styles.stepper}>
-        <Pressable style={styles.stepBtn} onPress={() => step(-1)}>
-          <Text style={styles.stepText}>−</Text>
-        </Pressable>
-        <Text style={styles.amountValue}>{amount}</Text>
-        <Pressable style={styles.stepBtn} onPress={() => step(1)}>
-          <Text style={styles.stepText}>+</Text>
-        </Pressable>
+      <Text className="mb-1 mt-3 text-[13px] font-semibold text-foreground">Units to draw</Text>
+      <View className="flex-row items-center gap-3">
+        <Button size="icon" variant="secondary" onPress={() => step(-1)}>
+          <Text>−</Text>
+        </Button>
+        <Text className="min-w-12 text-center text-lg font-semibold">{amount}</Text>
+        <Button size="icon" variant="secondary" onPress={() => step(1)}>
+          <Text>+</Text>
+        </Button>
       </View>
 
-      <Text style={styles.label}>Destination building</Text>
-      <View style={styles.chips}>
+      <Text className="mb-1 mt-3 text-[13px] font-semibold text-foreground">Destination building</Text>
+      <View className="mb-2 flex-row flex-wrap gap-2">
         {BUILDING_OPTIONS.map((opt) => (
           <Pressable
             key={opt}
             onPress={() => setBuilding(opt)}
-            style={[styles.chip, building === opt && styles.chipActive]}
+            className={cn("rounded-md px-3.5 py-2", building === opt ? "bg-brand-info" : "bg-muted")}
           >
-            <Text style={[styles.chipText, building === opt && styles.chipTextActive]}>{opt}</Text>
+            <Text
+              className={cn(
+                "text-sm",
+                building === opt ? "text-white font-semibold" : "text-foreground",
+              )}
+            >
+              {opt}
+            </Text>
           </Pressable>
         ))}
       </View>
-      <TextInput
-        style={styles.input}
+      <Input
         value={building}
         onChangeText={setBuilding}
         placeholder="Other building (free entry)"
@@ -118,34 +127,11 @@ export function CheckoutConfirmCard({
         autoCorrect={false}
       />
 
-      <Pressable style={[styles.commitBtn, busy && styles.commitBtnDisabled]} disabled={busy} onPress={commit}>
-        <Text style={styles.commitBtnText}>
+      <Button size="lg" className="mt-3" disabled={busy} onPress={commit}>
+        <Text className="text-[17px] font-semibold">
           {busy ? "…" : `${verb} ${amount} unit${amount === 1 ? "" : "s"}`}
         </Text>
-      </Pressable>
+      </Button>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 14, backgroundColor: "white" },
-  errorCard: { borderWidth: 1, borderColor: "#c33", borderRadius: 8, padding: 14, backgroundColor: "#fdecea" },
-  errorText: { color: "#c33", fontWeight: "600" },
-  title: { fontSize: 18, fontWeight: "bold", marginBottom: 4 },
-  meta: { fontSize: 13, color: "#555", marginTop: 2 },
-  bold: { fontWeight: "600", color: "#222" },
-  label: { fontSize: 13, fontWeight: "600", marginTop: 12, marginBottom: 4, color: "#333" },
-  stepper: { flexDirection: "row", alignItems: "center", gap: 12 },
-  stepBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#eee", alignItems: "center", justifyContent: "center" },
-  stepText: { fontSize: 22, fontWeight: "600" },
-  amountValue: { fontSize: 18, fontWeight: "600", minWidth: 48, textAlign: "center" },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6, backgroundColor: "#eee" },
-  chipActive: { backgroundColor: "#06c" },
-  chipText: { fontSize: 14, color: "#333" },
-  chipTextActive: { color: "white", fontWeight: "600" },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 16 },
-  commitBtn: { backgroundColor: "#0a7", padding: 14, borderRadius: 8, alignItems: "center", marginTop: 12 },
-  commitBtnDisabled: { backgroundColor: "#9ab" },
-  commitBtnText: { color: "white", fontSize: 17, fontWeight: "600" },
-});

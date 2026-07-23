@@ -32,7 +32,12 @@ import {
 } from "@rfid/domain";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, ScrollView, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 import { useDb } from "../../db/provider";
 import { useReaderEvents } from "../../hooks/useReaderEvents";
@@ -159,15 +164,15 @@ function NormalCheckOut({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.hint}>Pull the trigger on a box to look it up for check-out…</Text>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
+      <Text className="mb-1 text-sm italic text-muted-foreground">Pull the trigger on a box to look it up for check-out…</Text>
 
       {lookup ? (
         <CheckoutConfirmCard lookupResult={lookup} onCommit={(a, b) => void onCommit(a, b)} busy={busy} />
       ) : null}
 
       {results.length === 0 ? null : (
-        <View style={styles.results}>
+        <View className="mt-2 gap-2">
           {results.map((entry, i) => (
             <ResultRow key={`${entry.epc}-${i}`} entry={entry} />
           ))}
@@ -175,9 +180,9 @@ function NormalCheckOut({
       )}
 
       {__DEV__ ? (
-        <Pressable style={styles.simBtn} onPress={() => readerService.injectScan([randomEpc()])}>
-          <Text style={styles.simBtnText}>Simulate scan</Text>
-        </Pressable>
+        <Button variant="secondary" className="mt-4" onPress={() => readerService.injectScan([randomEpc()])}>
+          <Text>Simulate scan</Text>
+        </Button>
       ) : null}
     </ScrollView>
   );
@@ -305,37 +310,37 @@ function StagingCheckOut({
 
   if (!request) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.hint}>Request #{requestId} not found.</Text>
+      <View className="flex-1 p-5">
+        <Text className="text-sm italic text-muted-foreground">Request #{requestId} not found.</Text>
       </View>
     );
   }
 
   if (summary) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.summaryTitle}>Delivered</Text>
-        <Text style={styles.summaryText}>{summary}</Text>
-        <Pressable style={styles.primaryBtn} onPress={() => router.back()}>
-          <Text style={styles.primaryBtnText}>Back to requests</Text>
-        </Pressable>
+      <View className="flex-1 p-5">
+        <Text className="mb-2 text-[22px] font-bold text-primary">Delivered</Text>
+        <Text className="mb-4 text-base text-foreground">{summary}</Text>
+        <Button onPress={() => router.back()}>
+          <Text>Back to requests</Text>
+        </Button>
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.banner}>
-        <Text style={styles.bannerTitle}>{itemLabel(request)}</Text>
-        <Text style={styles.bannerMeta}>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
+      <View className="rounded-lg border border-brand-info bg-brand-info/10 p-3">
+        <Text className="text-lg font-bold text-brand-info">{itemLabel(request)}</Text>
+        <Text className="mt-0.5 text-[13px] text-brand-info/80">
           Request #{request.id} · {requested} unit(s) requested · Bldg {request.building || "n/a"}
         </Text>
-        <Text style={styles.bannerMeta}>
+        <Text className="mt-0.5 text-[13px] text-brand-info/80">
           Staged: {stagedTotal} of {requested} unit(s) · {staged.length} box(es)
         </Text>
       </View>
 
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {error ? <Text className="font-semibold text-destructive">{error}</Text> : null}
 
       {lookup ? (
         <CheckoutConfirmCard
@@ -345,74 +350,76 @@ function StagingCheckOut({
           defaultBuilding={defaultBuilding}
         />
       ) : (
-        <Text style={styles.hint}>Pull the trigger on a box to stage it for this request…</Text>
+        <Text className="text-sm italic text-muted-foreground">Pull the trigger on a box to stage it for this request…</Text>
       )}
 
       {staged.length === 0 ? null : (
-        <View style={styles.stagedList}>
-          <Text style={styles.sectionLabel}>Staged draws</Text>
+        <View className="mt-2 gap-1.5">
+          <Text className="text-[13px] font-bold uppercase text-muted-foreground">Staged draws</Text>
           {staged.map((d, i) => (
-            <View key={`${d.epc}-${i}`} style={styles.stagedRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.stagedEpc}>{d.epc}</Text>
-                <Text style={styles.stagedMeta}>
+            <View key={`${d.epc}-${i}`} className="flex-row items-center gap-2 rounded-md border border-border bg-card p-2.5">
+              <View className="flex-1">
+                <Text className="font-mono text-xs text-foreground">{d.epc}</Text>
+                <Text className="mt-0.5 text-xs text-muted-foreground">
                   {d.amount ?? 0} unit(s) · Bldg {d.building || "n/a"}
                 </Text>
               </View>
-              <Pressable style={styles.removeBtn} onPress={() => removeDraw(i)}>
-                <Text style={styles.removeBtnText}>Remove</Text>
-              </Pressable>
+              <Button variant="destructive" size="sm" onPress={() => removeDraw(i)}>
+                <Text>Remove</Text>
+              </Button>
             </View>
           ))}
         </View>
       )}
 
-      <View style={styles.actions}>
-        <Pressable
-          style={[styles.warnBtn, (busy || staged.length === 0) && styles.btnDisabled]}
+      <View className="mt-3 flex-row gap-2">
+        <Button
+          className="flex-1"
           disabled={busy || staged.length === 0}
+          variant="secondary"
           onPress={confirmDelivery}
         >
-          <Text style={styles.primaryBtnText}>{busy ? "…" : "Confirm delivery"}</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.cancelBtn, busy && styles.btnDisabled]}
+          <Text className="font-semibold">{busy ? "…" : "Confirm delivery"}</Text>
+        </Button>
+        <Button
+          className="flex-1"
+          variant="secondary"
           disabled={busy}
           onPress={() => void cancelStaging()}
         >
-          <Text style={styles.cancelBtnText}>{busy ? "…" : "Cancel staging"}</Text>
-        </Pressable>
+          <Text className="font-semibold">{busy ? "…" : "Cancel staging"}</Text>
+        </Button>
       </View>
 
       {__DEV__ ? (
-        <Pressable style={styles.simBtn} onPress={() => readerService.injectScan([randomEpc()])}>
-          <Text style={styles.simBtnText}>Simulate scan</Text>
-        </Pressable>
+        <Button variant="secondary" className="mt-4" onPress={() => readerService.injectScan([randomEpc()])}>
+          <Text>Simulate scan</Text>
+        </Button>
       ) : null}
 
       <Modal visible={shortfall !== null} transparent animationType="slide" onRequestClose={() => setShortfall(null)}>
-        <View style={styles.backdrop}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Shortfall</Text>
-            <Text style={styles.shortfallMsg}>{shortfall ?? ""}</Text>
-            <TextInput
-              style={styles.input}
+        <View className="flex-1 justify-end bg-black/40">
+          <View className="rounded-t-2xl bg-background p-4 pb-6">
+            <Text className="mb-2 text-xl font-bold text-foreground">Shortfall</Text>
+            <Text className="mb-3 text-sm text-foreground">{shortfall ?? ""}</Text>
+            <Input
               value={fulfillNote}
               onChangeText={setFulfillNote}
               placeholder="Note for the requester explaining the shortfall"
               multiline
+              className="min-h-15"
             />
-            <View style={styles.actions}>
-              <Pressable style={styles.cancelBtn} onPress={() => setShortfall(null)}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.primaryBtn, (busy || fulfillNote.trim().length === 0) && styles.btnDisabled]}
+            <View className="mt-3 flex-row gap-2">
+              <Button className="flex-1" variant="secondary" onPress={() => setShortfall(null)}>
+                <Text>Cancel</Text>
+              </Button>
+              <Button
+                className="flex-1"
                 disabled={busy || fulfillNote.trim().length === 0}
                 onPress={retryWithNote}
               >
-                <Text style={styles.primaryBtnText}>Confirm with note</Text>
-              </Pressable>
+                <Text>Confirm with note</Text>
+              </Button>
             </View>
           </View>
         </View>
@@ -427,48 +434,12 @@ function ResultRow({ entry }: { entry: CheckoutResultEntry }): React.ReactNode {
   const message = result.message;
   const flag = "flag" in result && result.flag ? result.flag : null;
   return (
-    <View style={styles.card}>
-      <Text style={[styles.message, !result.ok && styles.messageError]}>{message}</Text>
-      <Text style={styles.meta}>EPC: {entry.epc}</Text>
-      {flag ? <Text style={styles.flagBanner}>⚠ {flag}</Text> : null}
+    <View className="rounded-lg border border-border bg-card p-3">
+      <Text className={cn("text-[15px] font-semibold", result.ok ? "text-foreground" : "text-destructive")}>
+        {message}
+      </Text>
+      <Text className="mt-1 text-xs text-muted-foreground">EPC: {entry.epc}</Text>
+      {flag ? <Text className="mt-1.5 text-[13px] font-semibold text-destructive">⚠ {flag}</Text> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingBottom: 60, gap: 10 },
-  hint: { color: "#888", fontStyle: "italic", marginBottom: 4 },
-  banner: { borderWidth: 1, borderColor: "#06c", borderRadius: 8, padding: 12, backgroundColor: "#eef5ff" },
-  bannerTitle: { fontSize: 18, fontWeight: "bold", color: "#06c" },
-  bannerMeta: { fontSize: 13, color: "#336", marginTop: 3 },
-  results: { marginTop: 8, gap: 8 },
-  stagedList: { marginTop: 8, gap: 6 },
-  sectionLabel: { fontSize: 13, fontWeight: "700", color: "#555", textTransform: "uppercase" },
-  stagedRow: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#eee", borderRadius: 6, padding: 10, backgroundColor: "white", gap: 8 },
-  stagedEpc: { fontFamily: "monospace", fontSize: 12, color: "#222" },
-  stagedMeta: { fontSize: 12, color: "#666", marginTop: 2 },
-  removeBtn: { paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "#c33", borderRadius: 6 },
-  removeBtnText: { color: "white", fontWeight: "600", fontSize: 12 },
-  actions: { flexDirection: "row", gap: 8, marginTop: 12 },
-  primaryBtn: { flex: 1, backgroundColor: "#0a7", padding: 14, borderRadius: 8, alignItems: "center" },
-  warnBtn: { flex: 1, backgroundColor: "#06c", padding: 14, borderRadius: 8, alignItems: "center" },
-  cancelBtn: { flex: 1, backgroundColor: "#eee", padding: 14, borderRadius: 8, alignItems: "center" },
-  cancelBtnText: { color: "#333", fontWeight: "600" },
-  primaryBtnText: { color: "white", fontWeight: "600" },
-  btnDisabled: { backgroundColor: "#9ab" },
-  summaryTitle: { fontSize: 22, fontWeight: "bold", color: "#0a7", marginBottom: 8 },
-  summaryText: { fontSize: 16, color: "#222", marginBottom: 16 },
-  errorText: { color: "#c33", fontWeight: "600" },
-  card: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 12, backgroundColor: "white" },
-  message: { fontSize: 15, fontWeight: "600", color: "#222" },
-  messageError: { color: "#c33" },
-  meta: { fontSize: 12, color: "#666", marginTop: 4 },
-  flagBanner: { marginTop: 6, color: "#c33", fontWeight: "600", fontSize: 13 },
-  simBtn: { backgroundColor: "#eee", padding: 12, borderRadius: 8, alignItems: "center", marginTop: 16 },
-  simBtnText: { color: "#333", fontWeight: "600" },
-  backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.4)" },
-  sheet: { backgroundColor: "white", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, paddingBottom: 24 },
-  sheetTitle: { fontSize: 20, fontWeight: "bold", marginBottom: 8 },
-  shortfallMsg: { fontSize: 14, color: "#333", marginBottom: 12 },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 14, minHeight: 60 },
-});
