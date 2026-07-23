@@ -296,3 +296,97 @@ precaution, the operator should rotate the Preview `AUTH_DATABASE_AUTH_TOKEN`
 the Preview Vercel env + `apps/web/.env.local`. Production tokens were not
 exposed. Going forward env files are inspected by `grep` on specific non-secret
 lines only, never `head`/`cat`.
+
+## Phase 3 outcomes — local-first sync coordinator, status UI, BOL queue
+
+### Sync coordinator (one serialized state machine)
+
+`apps/field/src/sync/coordinator.ts` is a pure, injectable state machine (no
+timers, no network): one serialized push+pull cycle with startup / manual /
+debounced-mutation / foreground / reconnect / timer triggers, jittered
+exponential backoff capped at 30s, and single-refresh 401/403 handling that
+falls to a terminal `reauth` state (no infinite retry). A schema-version check
+before writes blocks with `blocked` (upgrade required) when the server is
+ahead of the build. 26 deterministic field tests (fake timers + fake engine)
+cover serialized cycles, trigger coalescing, debounce, bounded retry,
+expired/revoked auth, the schema block, and the `reset()` re-link escape hatch.
+
+### Wiring (RN, physical-device-verified)
+
+`SyncProvider` builds the coordinator from the opened Turso embedded replica:
+- `DatabaseProvider` opens `inventory.db` ONCE with function-valued `url` +
+  `authToken` callbacks + `bootstrapIfEmpty`; `applyMigrations` runs only
+  while sync is off (url null) — never on the replica in synced mode.
+- `SyncCredentialStore` bridges `fetchSyncToken` to the Turso callbacks: primes
+  a short-lived server-minted token + the warehouse URL when linked, stays
+  local-only when not, and re-mints on 401/403.
+- `AppState` wires foreground/reconnect + a 60s foreground timer; a vendored
+  `SyncStatusBanner` surfaces the status states.
+- `syncNow()` → debounced mutation trigger; unlink clears the cached token;
+  re-link calls `reset()`.
+- Web `getDb` idempotently stamps `local_meta.schema_version`; the credential
+  endpoint also returns the per-environment warehouse libSQL URL.
+
+### BOL upload queue
+
+`apps/field/src/sync/bolQueue.ts` is a pure, injectable, idempotent upload
+queue (Vercel Blob client-upload grant, jittered retry, dead-letter after
+maxAttempts, REDACTED errors — the upload URL/token/bytes never appear in
+recorded messages). 6 tests cover upload, idempotent re-enqueue, content
+supersession, retry-then-succeed, dead-letter redaction, and restart resume.
+
+### Two-replica convergence (DISPOSABLE, run once — PASS)
+
+`scripts/turso/convergence-test.mjs` (operator-run, like the Phase 1 spike)
+proves the data-level convergence semantics the coordinator depends on against
+a disposable shared primary, using the HTTP libSQL client (kysely-libsql, the
+same seam as the spike). Run 2026-07-23 against a disposable
+`rfid-conv-primary` Turso DB (created + destroyed in the same session; no
+production/preview resource touched):
+
+```
+CONVERGENCE RESULT: 8/8 checks passed
+  order A->other: unique inserts converge (3 rows)        PASS
+  order A->other: a1 present                              PASS
+  order A->other: b1 present                              PASS
+  order A->other: shared row = last-pushed (B)            PASS
+  order B->other: unique inserts converge (3 rows)        PASS
+  order B->other: a1 present                              PASS
+  order B->other: b1 present                              PASS
+  order B->other: shared row = last-pushed (A)            PASS
+```
+
+Unique inserts from two replicas converge to the union; concurrent same-row
+edits resolve to last-push-wins in BOTH push orders.
+
+### What remains physical-device-only
+
+The installed Node `@tursodatabase/database@0.7.1` is local-only (no
+embedded-replica sync opts), and `@tursodatabase/sync-react-native@0.7.1` is
+RN-only (native binary). So the true local-file ↔ remote-primary push/pull
+convergence — and the exact native 401/403 error shape the engine classifies —
+must be verified on a physical iPhone. Operator checklist (max 5):
+
+1. Link a field device (scan the web `/link-device` QR), confirm the
+   `SyncStatusBanner` reaches `Synced` and `local_meta.schema_version`
+   replicates down.
+2. On a second linked device, create a tag each (unique EPCs) offline, then
+   bring both online and confirm both replicas converge to the union of tags.
+3. Edit the SAME row on both devices offline; bring both online in sequence
+   and confirm the second-pushed value wins (last-push-wins).
+4. Revoke one device via the operator CLI (`scripts/ops/revoke-device.mjs`);
+   confirm that device's banner reaches `Re-link or upgrade required` and it
+   stops retrying.
+5. Bump the warehouse schema (add a migration), deploy, and confirm an
+   un-upgraded device's banner reaches `Update required to sync` (blocked)
+   and its writes are held.
+
+### Open follow-ups (not Phase 3 blockers)
+
+- BOL upload queue **wiring**: the pure queue is tested; the server
+  `/api/bol/upload-grant` endpoint (Vercel Blob client-upload) and the field
+  enqueue call-sites remain to be wired (needs `BLOB_READ_WRITE_TOKEN` env).
+  Mistral OCR fallback is to be disabled in production (env-driven) in that
+  same step.
+- A dedicated NetInfo listener for true network-reconnect detection (today
+  reconnect is inferred from AppState `active` + the retry loop).
