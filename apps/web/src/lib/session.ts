@@ -51,3 +51,26 @@ export const getUser = cache(async (): Promise<SessionUser | null> => {
   }
   return { name: session.user.name, email: session.user.email };
 });
+
+/**
+ * Resolve the signed-in user from a REAL Better Auth session only — ignoring the
+ * dev bypass. Used by surfaces that need an actual session (not a fake dev
+ * principal) to perform a privileged Better Auth operation, e.g. minting a
+ * one-time device-link token at `/link-device` (the `oneTimeToken` plugin
+ * validates the caller's session cookie, so a dev-bypass fake user is not enough
+ * and would surface as `APIError: Unauthorized`). Returns `null` when no auth
+ * backend is configured OR no real session is present (including the dev-bypass
+ * case). Memoized per request with `React.cache`.
+ */
+export const getRealSessionUser = cache(async (): Promise<SessionUser | null> => {
+  const auth = getAuth();
+  if (auth === null) {
+    return null;
+  }
+  const requestHeaders = await headers();
+  const session = await auth.api.getSession({ headers: requestHeaders });
+  if (!session) {
+    return null;
+  }
+  return { name: session.user.name, email: session.user.email };
+});
