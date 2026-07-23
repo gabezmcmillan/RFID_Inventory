@@ -17,7 +17,7 @@ import { SyncProvider } from "../src/sync/SyncProvider";
 import { LockProvider } from "../src/auth/LockProvider";
 import { VersionCheckProvider } from "../src/version/VersionCheckProvider";
 import { readerService } from "../src/reader/readerService";
-import { ReaderStatusDot } from "../src/reader/ReaderStatusDot";
+import { ReaderStatusChip } from "../src/reader/ReaderStatusChip";
 import { useEffect } from "react";
 
 /**
@@ -67,7 +67,7 @@ export default function RootLayout(): React.ReactNode {
                 headerBackTitleStyle: { fontSize: 16 },
                 headerTintColor: "hsl(var(--brand-navy))",
                 headerTitleStyle: { fontWeight: "700" },
-                headerRight: () => <ReaderStatusDot />,
+                headerRight: () => <ReaderStatusChip />,
                 contentStyle: { backgroundColor: "hsl(var(--background))" },
               }}
             >
