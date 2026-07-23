@@ -77,7 +77,7 @@ export default function HomeScreen(): React.ReactNode {
 
   return (
     <ScrollView
-      contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40, gap: 12 }}
+      contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 40, gap: 12 }}
     >
       <View className="flex-row flex-wrap gap-3">
         {MODES.map((m) => (
