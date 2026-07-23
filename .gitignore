@@ -45,3 +45,6 @@ test_intake.py
 *.db-shm
 .vercel
 .env*.local
+
+
+.agents/
