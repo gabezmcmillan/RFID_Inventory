@@ -58,7 +58,7 @@ export default async function WarehousePage({
             groupBy === "building",
           )}
           <Separator orientation="vertical" className="mx-1 h-6" />
-          {toggle("all", "/warehouse", "All buildings", !building)}
+          {toggle("all", "All buildings", "/warehouse", !building)}
           {BUILDING_OPTIONS.map((b) =>
             toggle(
               b,
