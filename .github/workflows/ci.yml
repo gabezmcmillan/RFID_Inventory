@@ -1,0 +1,46 @@
+# Plan 010, Phase 4.6 — minimal CI: install, typecheck, tests, web lint/build,
+# field export. Runs on every push and PR. Production deploys remain `main`-only
+# (enforced by the Vercel project config, not here); Preview builds use the
+# Preview Turso DBs via branch-scoped env.
+name: ci
+
+on:
+  push:
+    branches: [main, "rewrite/expo"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (all workspaces)
+        run: pnpm typecheck
+
+      - name: Tests (domain + web + field + tailscale scripts)
+        run: pnpm test
+
+      - name: Web lint
+        run: pnpm --filter @rfid/web lint
+
+      - name: Web build
+        run: pnpm --filter @rfid/web build
+
+      - name: Field export (OTA bundle)
+        run: pnpm --filter @rfid/field export
