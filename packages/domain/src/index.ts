@@ -17,6 +17,15 @@ export { applyMigrations } from "./applyMigrations";
 export { MIGRATIONS } from "./migrations";
 export type { MigrationEntry } from "./migrations";
 
+/**
+ * The schema version this build understands = the number of migrations in the
+ * checked-in bundle. Plan 010 Phase 3: the sync coordinator compares this
+ * against the server's synced `schema_version` meta row and blocks writes
+ * (upgrade required) when the server is ahead of what this build supports.
+ */
+import { MIGRATIONS } from "./migrations";
+export const SCHEMA_VERSION: number = MIGRATIONS.length;
+
 // RN-safe global text-ID helper (UUIDv4) for collision-free field-created rows
 export { newId } from "./id";
 
