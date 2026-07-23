@@ -601,3 +601,107 @@ active/deactivated/revoked badges.
 `pnpm --filter @rfid/web test`, `pnpm --filter @rfid/field test`, and
 `pnpm --filter @rfid/web build` all exit 0 (see the final report for counts).
 Physical on-device PIN + deactivation behavior is Phase 6 warehouse acceptance.
+
+### Architecture cleanups (2026-07-23, operator-approved)
+
+Three independent cleanup batches on `rewrite/expo`. Each is its own commit with
+the full gate (typecheck + domain/web/field tests) green; no push.
+
+#### 1. BOL upload — replace reconstructed `@vercel/blob` internals
+
+**Decision: server proxy (`PUT /api/bol/upload`) using the official
+`@vercel/blob` server SDK `put()`.** The documented client-upload flow needs
+`@vercel/blob/client`'s JS SDK, which imports node-only `crypto`/`undici` and
+cannot run on React Native; the client-side PUT wire format (control-API URL,
+`x-vercel-blob-store-id`, `x-api-version`, …) is an SDK internal, not a
+documented public contract, so the former `buildBlobGrant` reconstruction coupled
+us to SDK internals. The proxy uses only the supported server SDK.
+
+**Tradeoff — Vercel serverless body cap (~4.5 MB):** bytes now flow through the
+server, so the proxy enforces a 4 MB cap (`Content-Length` + actual body) and the
+field app pre-flights the same limit (`MAX_BOL_UPLOAD_BYTES` in `bolUpload.ts`;
+oversized artifacts are skipped, not retried to a dead-letter). BOL scan pages
+are already compressed JPEGs from `react-native-document-scanner-plugin` well
+under the cap; per-page uploads keep each request small. A picked high-res photo
+or large PDF that exceeds 4 MB is skipped (the `storage_url` stays null and the
+tag page shows no link) — acceptable today since the scan flow is the primary
+path. `expo-image-manipulator` client-side recompression for the picked-image
+path is a documented follow-up (not added now to avoid a native-dep rebuild
+mid-flight).
+
+**Blob pathname** is bound server-side to `bol/{docId}/{contentHash}.{ext}` from
+validated headers (the client never supplies a pathname),
+`addRandomSuffix: false`, `allowOverwrite: true` (content-addressed ⇒ idempotent
+re-uploads produce the same URL), and `access: 'public'` so the public
+`/tag/{epc}` "View bill of lading" link works without a signed URL (the prior
+grant returned `access: 'private'`, which would have broken the public link —
+fixed here).
+
+**What changed:** deleted `apps/field/src/sync/buildBlobGrant.ts` + its test and
+`apps/web/src/app/api/bol/upload-grant/route.ts` + its test; rewrote
+`ServerBolGrantProvider` to return the proxy URL + content-addressed headers (no
+token minting, no SDK internals); added the proxy route + 13-test suite; added
+the 4 MB pre-flight guard in `enqueueBolArtifact`. The tested queue
+idempotency/redaction core (`bolQueue.ts`) is unchanged — the `BlobGrant`
+abstraction still carries `uploadUrl`/`method`/`headers`. Commit `f4bb9f9`.
+
+#### 2. Web env parsing — `@t3-oss/env-nextjs`
+
+**Decision: migrate.** Replaced the hand-rolled zod parser in
+`apps/web/src/lib/env.ts` with `@t3-oss/env-nextjs`'s `createEnv` (the standard
+Next.js env helper). Preserved exactly: all variables (server + empty client
+seam), the two cross-field conditional refinements (`BETTER_AUTH_URL` required
+with `BETTER_AUTH_SECRET`; `MICROSOFT_TENANT_ID` required with both Microsoft
+creds) via `createFinalSchema` + `superRefine`, the per-issue error ergonomics
+via a custom `onValidationError` that throws one grep-able message listing every
+`(path, message)`, `emptyStringAsUndefined: false` (so
+`BLOB_READ_WRITE_TOKEN=""` stays `""` ⇒ the BOL proxy returns 503, same as
+absent), and the export shape (`env` + `clientEnv`) so callers don't churn.
+Single `pnpm install` (`@t3-oss/env-nextjs@0.13.11`, zod v4 compatible). 6 new
+env tests prove the refinements + error ergonomics survive the swap. Commit
+`62ee050`.
+
+#### 3. Device linking — Better Auth device-authorization plugin
+
+**Decision: DO NOT migrate. Keep the custom QR/OTT flow.** The plugin implements
+OAuth 2.0 Device Authorization Grant (RFC 8628): the phone displays a user code,
+a human approves it on the web at `/device`, and the phone polls `/device/token`
+for an access token. Assessed against the current custom flow (web QR → phone
+scans → Better Auth `oneTimeToken` exchange → bearer session →
+`/api/device/register`).
+
+**UX:** the device flow removes the camera dependency for linking (phone shows a
+code, human types it on the web) — a real but modest win on a one-time-per-device
+action; the phone already has a camera for BOL scanning, and the current QR flow
+works.
+
+**Two architecture conflicts (the operator's explicit don't-migrate triggers),
+either decisive on its own:**
+
+1. **No approval hook ⇒ can't bind register + EPC assignment atomically.** The
+   plugin's `/device/approve` exposes no `onApprove` hook (only `validateClient`,
+   `onDeviceAuthRequest`, and code generators). Our custom pieces —
+   `field_devices` registry insert, `allocateNextEpcByte` (256 permanent 2-hex
+   bytes), `linked_by`, allowlist enforcement — must run as a SEPARATE step after
+   the token is issued (the phone would still call `/api/device/register`). So
+   the plugin would replace only the OTT/QR exchange — a small surface — while
+   adding the integration risk below.
+
+2. **Session semantics regress revocation.** The plugin issues an OAuth access
+   token (the docs: "the device receives an access token… ensure you have added
+   the Bearer plugin"), not a Better Auth session. Our deactivate/reactivate/
+   revoke lifecycle is session-based: `field_devices.session_id` is revoked by
+   `revokeDevice` (lost device), and `resolveDeviceSession` resolves the bearer
+   to a session. An OAuth access token is not a session row revocable by id;
+   revoking a lost device's access token would need a mechanism the plugin does
+   not clearly expose, regressing the "lost device → revoke" path just hardened
+   in the registry-lifecycle scope. (The deactivate→403→reauth path is
+   token-type-independent — it checks `field_devices.active` in
+   `/api/device/credential` — so it would survive; revoke would not.)
+
+**Custom pieces that must survive any future migration (recorded for the next
+attempt):** the `field_devices` registry (EPC byte, `linked_by`,
+active/deactivate/revoke, last-seen), `FIELD_OPERATOR_ALLOWLIST` enforcement, and
+the Turso credential mint endpoint keyed off an authenticated device session.
+All stay on the QR flow. No code changed; this is the assessment. Commit
+(pending) — doc-only batch.
