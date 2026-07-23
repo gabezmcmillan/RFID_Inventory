@@ -33,6 +33,7 @@ import {
 } from "../src/printer/printerSettings";
 import { printerStatus, PRINTER_PORT } from "../src/printer/printerClient";
 import { MISTRAL_API_KEY_STORAGE, loadMistralApiKey, saveMistralApiKey } from "../src/bol/mistralKey";
+import { useLock } from "../src/auth/LockProvider";
 import {
   clearLinkedCredential,
   DEFAULT_SERVER_URL,
@@ -53,6 +54,7 @@ const MAX_POWER = 29;
 
 export default function SettingsScreen(): React.ReactNode {
   const router = useRouter();
+  const lock = useLock();
   const [useNative, setUseNative] = useState(false);
   const [power, setPower] = useState(20);
   const [busy, setBusy] = useState(false);
@@ -190,6 +192,9 @@ export default function SettingsScreen(): React.ReactNode {
       // retrying a now-revoked credential.
       const { clearSyncCredential } = await import("../src/sync/access");
       clearSyncCredential();
+      // Disarm the device-unlock gate so an unlinked device is not stuck locked
+      // behind a PIN with no way to re-link.
+      await lock?.clearDevicePin();
       setLinked(null);
     } finally {
       setUnlinking(false);
@@ -355,6 +360,8 @@ export default function SettingsScreen(): React.ReactNode {
         )}
       </View>
 
+      {linked ? <ChangeDevicePinSection /> : null}
+
       {Platform.OS === "ios" ? (
         <Text className="text-xs text-muted-foreground mt-2">
           Toggle key: <Text className="font-mono">{USE_NATIVE_TRANSPORT_KEY}</Text>; printer key:{" "}
@@ -365,5 +372,64 @@ export default function SettingsScreen(): React.ReactNode {
         </Text>
       ) : null}
     </ScrollView>
+  );
+}
+
+/** Change the device-unlock PIN (the app is already unlocked, so the operator can rotate it). */
+function ChangeDevicePinSection(): React.ReactNode {
+  const lock = useLock();
+  const [pin, setPin] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const run = async (): Promise<void> => {
+    setMsg(null);
+    if (pin.length < 4) {
+      setMsg("PIN must be at least 4 digits.");
+      return;
+    }
+    if (pin !== confirm) {
+      setMsg("PINs do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await lock?.setDevicePin(pin);
+      setPin("");
+      setConfirm("");
+      setMsg("Device PIN updated.");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Could not update PIN.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View className="mt-3 gap-2">
+      <Text className="text-sm font-semibold text-foreground">Device unlock PIN</Text>
+      <Text className="text-xs text-muted-foreground">
+        The PIN the warehouse operator enters to unlock this device.
+      </Text>
+      <Input
+        value={pin}
+        onChangeText={setPin}
+        placeholder="New PIN (4–8 digits)"
+        secureTextEntry
+        keyboardType="number-pad"
+      />
+      <Input
+        value={confirm}
+        onChangeText={setConfirm}
+        placeholder="Confirm new PIN"
+        secureTextEntry
+        keyboardType="number-pad"
+      />
+      <Button disabled={busy} onPress={() => void run()}>
+        {busy ? <ActivityIndicator /> : <Text>Update device PIN</Text>}
+      </Button>
+      {msg ? <Text className="text-sm text-primary mt-1">{msg}</Text> : null}
+    </View>
   );
 }

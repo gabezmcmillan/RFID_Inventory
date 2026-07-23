@@ -49,7 +49,9 @@ export default function LinkDeviceScreen(): React.ReactNode {
       // and prime the sync credential store so the next cycle syncs.
       const { resetSync } = await import("../src/sync/access");
       resetSync();
-      router.back();
+      // Arm the device-unlock gate: the linker sets the PIN the daily operator
+      // will enter. The PIN is required before the app can be used.
+      router.replace("/set-pin");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Surface the actionable "cannot reach" guidance for any network-style
