@@ -297,6 +297,15 @@ the Preview Vercel env + `apps/web/.env.local`. Production tokens were not
 exposed. Going forward env files are inspected by `grep` on specific non-secret
 lines only, never `head`/`cat`.
 
+**ROTATED 2026-07-23.** Minted a fresh `rfid-auth-preview` token via
+`turso db tokens create rfid-auth-preview` (written only to a 0600 temp file,
+never printed), removed the old branch-scoped Preview
+`AUTH_DATABASE_AUTH_TOKEN` from Vercel and added the new one as a sensitive
+Preview (rewrite/expo) var — confirmed present in `vercel env ls`. The temp file
+was deleted. `apps/web/.env.local` was NOT changed: its `AUTH_DATABASE_URL`
+points at `rfid-auth-dev` (the dev auth DB), so its `AUTH_DATABASE_AUTH_TOKEN`
+is the unrelated dev token, which was never exposed.
+
 ## Phase 3 outcomes — local-first sync coordinator, status UI, BOL queue
 
 ### Sync coordinator (one serialized state machine)
