@@ -35,7 +35,7 @@ vi.mock("@/lib/auth", () => ({
 mintSyncToken.mockResolvedValue({ jwt: "sync-jwt" });
 vi.mock("@/lib/tursoMint", () => ({ mintSyncToken }));
 
-import { __setAuthKyselyForTesting, unlinkDevice as unlinkDeviceRepo } from "@/lib/devices";
+import { __setAuthKyselyForTesting, deactivateDevice, reactivateDevice, unlinkDevice as unlinkDeviceRepo } from "@/lib/devices";
 import { POST as register } from "@/app/api/device/register/route";
 import { POST as credential } from "@/app/api/device/credential/route";
 import { POST as unlinkRoute } from "@/app/api/device/unlink/route";
@@ -139,6 +139,20 @@ describe("device endpoints — credential control", () => {
     await unlinkDeviceRepo(dev.deviceId);
     const res = await credential(bearerReq("ops@acme.com"));
     expect(res.status).toBe(403);
+  });
+
+  test("deactivate blocks credential refresh (403) within the token TTL; reactivate restores it", async () => {
+    const dev = await registerOk();
+    // Soft-deactivate (operator pause): active=0, session kept.
+    expect(await deactivateDevice(dev.deviceId)).toBe(true);
+    const denied = await credential(bearerReq("ops@acme.com"));
+    expect(denied.status).toBe(403); // pushes stop — no active device
+    // Reactivate flips the device back on; the kept session means no re-link.
+    expect(await reactivateDevice(dev.deviceId)).toBe(true);
+    const ok = await credential(bearerReq("ops@acme.com"));
+    expect(ok.status).toBe(200);
+    const body = (await ok.json()) as { token: string };
+    expect(body.token).toBe("sync-jwt");
   });
 
   test("credential: mint not configured (no TURSO_MINT_TOKEN) => 503", async () => {
