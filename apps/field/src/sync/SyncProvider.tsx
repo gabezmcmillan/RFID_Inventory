@@ -42,14 +42,27 @@ export function useSync(): SyncContextValue | null {
 }
 
 export function SyncProvider({ children }: { children: ReactNode }): ReactNode {
-  const { db, client, credStore } = useDbStatus();
+  const { db, client, credStore, mode } = useDbStatus();
   const [status, setStatus] = useState<SyncStatus>("idle");
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const coordRef = useRef<SyncCoordinator | null>(null);
 
   useEffect(() => {
-    if (!db || !client || !credStore) return;
-    if (coordRef.current) return; // build once
+    // Only build the coordinator in synced mode. In local mode (unlinked, or
+    // linked but offline at launch) there is no sync engine on the client —
+    // running cycles would either no-op or throw "push() is only available for
+    // sync databases", so we skip it entirely and show no banner.
+    if (mode !== "synced" || !db || !client || !credStore) {
+      // Tear down any coordinator built before a reopen back to local mode.
+      if (coordRef.current) {
+        coordRef.current.dispose();
+        coordRef.current = null;
+        setCoordinator(null);
+        setCredentialStore(null);
+      }
+      return;
+    }
+    if (coordRef.current) return; // build once per synced client
 
     const coordinator = new SyncCoordinator({
       engine: new TursoSyncEngine(client, credStore),
@@ -102,7 +115,7 @@ export function SyncProvider({ children }: { children: ReactNode }): ReactNode {
       setCoordinator(null);
       setCredentialStore(null);
     };
-  }, [db, client, credStore]);
+  }, [db, client, credStore, mode]);
 
   const value: SyncContextValue = {
     status,

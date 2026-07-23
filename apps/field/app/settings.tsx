@@ -34,6 +34,7 @@ import {
 import { printerStatus, PRINTER_PORT } from "../src/printer/printerClient";
 import { MISTRAL_API_KEY_STORAGE, loadMistralApiKey, saveMistralApiKey } from "../src/bol/mistralKey";
 import { useLock } from "../src/auth/LockProvider";
+import { useDbStatus } from "../src/db/provider";
 import {
   clearLinkedCredential,
   DEFAULT_SERVER_URL,
@@ -55,6 +56,7 @@ const MAX_POWER = 29;
 export default function SettingsScreen(): React.ReactNode {
   const router = useRouter();
   const lock = useLock();
+  const { reopen } = useDbStatus();
   const [useNative, setUseNative] = useState(false);
   const [power, setPower] = useState(20);
   const [busy, setBusy] = useState(false);
@@ -192,6 +194,9 @@ export default function SettingsScreen(): React.ReactNode {
       // retrying a now-revoked credential.
       const { clearSyncCredential } = await import("../src/sync/access");
       clearSyncCredential();
+      // Reopen the warehouse DB in local-only mode (synced → local): no sync
+      // engine, no HTTP attempts, fully usable offline.
+      await reopen();
       // Disarm the device-unlock gate so an unlinked device is not stuck locked
       // behind a PIN with no way to re-link.
       await lock?.clearDevicePin();

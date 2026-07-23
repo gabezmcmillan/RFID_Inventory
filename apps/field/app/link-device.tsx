@@ -19,9 +19,11 @@ import {
   registerDevice,
   unreachableServerMessage,
 } from "../src/auth";
+import { useDbStatus } from "../src/db/provider";
 
 export default function LinkDeviceScreen(): React.ReactNode {
   const router = useRouter();
+  const { reopen } = useDbStatus();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -45,8 +47,12 @@ export default function LinkDeviceScreen(): React.ReactNode {
       const cred = await exchangeOneTimeToken(serverUrl, token);
       // Register the device with the server (allowlist + permanent EPC byte).
       await registerDevice(serverUrl, cred.token);
-      // A fresh bearer is now stored — escape any prior reauth/blocked state
-      // and prime the sync credential store so the next cycle syncs.
+      // A fresh bearer is now stored — reopen the warehouse DB in synced mode
+      // (local-only → embedded replica). The credential store is primed during
+      // the reopen so the sync engine has a non-null URL at connect time.
+      await reopen();
+      // Escape any prior reauth/blocked state and prime the sync credential
+      // store so the next cycle syncs.
       const { resetSync } = await import("../src/sync/access");
       resetSync();
       // Arm the device-unlock gate: the linker sets the PIN the daily operator
