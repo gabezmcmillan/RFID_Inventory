@@ -4,53 +4,74 @@
 
 @custom-variant dark (&:is(.dark *));
 
-:root {
-  /* shadcn neutral surface tokens (light = warehouse daylight default, matching
-   * the field app). */
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+/*
+ * Brasfield & Gorrie brand palette (2026 brand update), elevated for the web
+ * app. Drawn from the legacy Python apps' `bg-theme.css`:
+ *   navy        #002070  primary brand navy  — headings, hero, deep surfaces
+ *   navy-dark   #00143C  deep navy           — dark-mode backgrounds, footers
+ *   vivid blue  #0028F0  signature accent    — primary CTA, links, focus rings
+ *   bright blue #3888FF  accent on dark       — primary CTA in dark mode
+ *   cyan tint   #B0FFFF  pale highlight       — accents on dark (sparingly)
+ *   ink         #11131A  near-black body text
+ *   gray        #E8E8EC  quiet surfaces, table stripes
+ * Lead with navy + white; blues are accents, not fields. One strong accent
+ * (vivid blue) for primary actions; everything else is restrained neutrals.
+ * Status palette (In = green, Partial = amber, Delivered = gray) mirrors the
+ * field app so the two apps share one status vocabulary.
+ */
 
-  /* Domain status palette — mirrors the field app's HSL tokens exactly so the
-   * two apps share one status vocabulary: In = green, Partial = amber,
+:root {
+  /* ---- shadcn surface tokens (light = warehouse daylight default) ---- */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.19 0.015 272);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.19 0.015 272);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.19 0.015 272);
+  /* Primary = vivid blue: the one strong accent, used for primary CTAs + rings. */
+  --primary: oklch(0.455 0.283 264);
+  --primary-foreground: oklch(1 0 0);
+  /* Secondary = a soft navy-tinted surface for secondary buttons/chips. */
+  --secondary: oklch(0.96 0.018 264);
+  --secondary-foreground: oklch(0.29 0.142 263);
+  --muted: oklch(0.932 0.005 286);
+  --muted-foreground: oklch(0.5 0.02 264);
+  --accent: oklch(0.95 0.03 264);
+  --accent-foreground: oklch(0.29 0.142 263);
+  --destructive: oklch(0.53 0.207 22);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.9 0.008 264);
+  --input: oklch(0.9 0.008 264);
+  --ring: oklch(0.455 0.283 264);
+  --chart-1: oklch(0.455 0.283 264);
+  --chart-2: oklch(0.29 0.142 263);
+  --chart-3: oklch(0.64 0.194 259);
+  --chart-4: oklch(0.528 0.118 156);
+  --chart-5: oklch(0.57 0.138 57);
+  --radius: 0.75rem;
+  --sidebar: oklch(0.985 0.01 264);
+  --sidebar-foreground: oklch(0.19 0.015 272);
+  --sidebar-primary: oklch(0.455 0.283 264);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.95 0.03 264);
+  --sidebar-accent-foreground: oklch(0.29 0.142 263);
+  --sidebar-border: oklch(0.9 0.008 264);
+  --sidebar-ring: oklch(0.455 0.283 264);
+
+  /* ---- Brand navy (headings, hero, deep surfaces) ---- */
+  --brand-navy: oklch(0.29 0.142 263);
+  --brand-navy-dark: oklch(0.206 0.083 260);
+
+  /* ---- Domain status palette — mirrors the field app's HSL tokens exactly so
+   * the two apps share one status vocabulary: In = green, Partial = amber,
    * Delivered = gray. Raw HSL channels, wrapped with hsl() at the theme seam
    * below and in component utilities. */
-  --status-in: 162 100% 33%;
+  --status-in: 156 100% 33%;
   --status-partial: 44 100% 45%;
   --status-delivered: 0 0% 53%;
 
-  /* Brand info = the blue used for the Requests accent / open-order chips. */
-  --brand: 210 100% 40%;
+  /* Brand info = vivid blue, used for the Requests accent / open-order chips. */
+  --brand: 226 100% 47%;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
@@ -58,44 +79,50 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* Dark mode: deep-navy app chrome, bright-blue accent (the legacy reserves
+   * bright blue for accents on dark). Surfaces raised one step above the bg. */
+  --background: oklch(0.165 0.028 264);
+  --foreground: oklch(0.96 0.008 250);
+  --card: oklch(0.215 0.032 264);
+  --card-foreground: oklch(0.96 0.008 250);
+  --popover: oklch(0.215 0.032 264);
+  --popover-foreground: oklch(0.96 0.008 250);
+  --primary: oklch(0.641 0.194 259);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.27 0.03 264);
+  --secondary-foreground: oklch(0.96 0.008 250);
+  --muted: oklch(0.27 0.03 264);
+  --muted-foreground: oklch(0.72 0.02 250);
+  --accent: oklch(0.3 0.04 264);
+  --accent-foreground: oklch(0.96 0.008 250);
+  --destructive: oklch(0.65 0.19 22);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.641 0.194 259);
+  --chart-1: oklch(0.641 0.194 259);
+  --chart-2: oklch(0.455 0.283 264);
+  --chart-3: oklch(0.29 0.142 263);
+  --chart-4: oklch(0.528 0.118 156);
+  --chart-5: oklch(0.57 0.138 57);
+  --sidebar: oklch(0.215 0.032 264);
+  --sidebar-foreground: oklch(0.96 0.008 250);
+  --sidebar-primary: oklch(0.641 0.194 259);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.3 0.04 264);
+  --sidebar-accent-foreground: oklch(0.96 0.008 250);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.641 0.194 259);
+
+  /* Brand navy stays the same hue; on dark it reads as a deep surface. */
+  --brand-navy: oklch(0.455 0.283 264);
+  --brand-navy-dark: oklch(0.165 0.028 264);
 
   /* Status palette is identical in dark mode (matches the field app). */
-  --status-in: 162 100% 33%;
+  --status-in: 156 100% 33%;
   --status-partial: 44 100% 45%;
   --status-delivered: 0 0% 53%;
-  --brand: 210 100% 40%;
+  --brand: 226 100% 47%;
 }
 
 @theme inline {
@@ -138,6 +165,8 @@
   --color-status-partial: hsl(var(--status-partial));
   --color-status-delivered: hsl(var(--status-delivered));
   --color-brand: hsl(var(--brand));
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-navy-dark: var(--brand-navy-dark);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -152,9 +181,17 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
   }
   html {
     @apply font-sans;
+  }
+  /* Refined heading hierarchy — navy on light, foreground on dark, tight
+   * tracking for a modern editorial feel. */
+  h1, h2, h3 {
+    @apply font-semibold tracking-tight;
+  }
+  h1 {
+    @apply text-brand-navy dark:text-foreground;
   }
 }

@@ -34,7 +34,11 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="outline" size="sm" className="ml-auto">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto border border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+          >
             {name}
           </Button>
         }
