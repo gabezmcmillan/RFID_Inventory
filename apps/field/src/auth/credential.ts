@@ -15,8 +15,9 @@
  * The field app has no server sync yet (plan 010 pending), so the deliverable
  * is the link/store/display/unlink loop plus this module exposing the stored
  * credential for future sync use. The server URL is configurable in Settings
- * (dev default `http://localhost:3000` — set it to the Mac's LAN IP for a
- * physical device, since a phone cannot reach the Mac's `localhost`).
+ * (dev default `http://localhost:3000` — only works in the iOS simulator,
+ * where the phone shares the Mac's `localhost`; on a physical device set it to
+ * the Mac's LAN IP, e.g. `http://10.1.81.56:3001`, on the same Wi-Fi).
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -24,7 +25,7 @@ import * as SecureStore from "expo-secure-store";
 
 /** AsyncStorage key for the web app base URL (config, not secret). */
 export const SERVER_URL_KEY = "rfid.field.serverUrl";
-/** Default web app URL — works in the iOS simulator (host's localhost). */
+/** Default web app URL — works only in the iOS simulator (host's localhost). */
 export const DEFAULT_SERVER_URL = "http://localhost:3000";
 
 /** Secure-store key for the linked session bearer token (the secret). */
@@ -44,16 +45,130 @@ export interface LinkedCredential {
   identity: LinkedIdentity;
 }
 
+/** Outcome of {@link validateServerUrl}: a normalized URL or a user-facing error. */
+export interface ServerUrlValidation {
+  ok: boolean;
+  /** Whitespace- and trailing-slash-trimmed URL when `ok`. */
+  normalized?: string;
+  /** Whether the host is loopback / private / link-local (HTTP allowed only then). */
+  isPrivate?: boolean;
+  /** User-facing reason when `!ok`. */
+  error?: string;
+}
+
+/** Result of {@link testServerConnection}: a clear success/failure message. */
+export interface ConnectionTestResult {
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * Trim whitespace and trailing slashes from a URL-ish string. Does NOT
+ * validate — use {@link validateServerUrl} for that. Pure (no I/O).
+ */
+export function normalizeServerUrl(input: string): string {
+  return input.trim().replace(/\/+$/, "");
+}
+
+/**
+ * Whether `hostname` is a loopback, private (RFC1918), or link-local address,
+ * or a `.local`/`.localhost` mDNS name — i.e. a host for which plain HTTP is
+ * acceptable in development. Pure (no I/O).
+ */
+export function isLocalPrivateHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().trim();
+  if (h === "") return false;
+  if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
+  if (h.endsWith(".localhost") || h.endsWith(".local")) return true;
+  // IPv4 dotted-quad private / link-local ranges.
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local
+  }
+  return false;
+}
+
+/**
+ * Validate a user-entered web server URL: require http/https, reject malformed
+ * URLs, and allow plain HTTP only for local/private dev hosts (production must
+ * use HTTPS). Returns a normalized URL on success. Pure (no I/O).
+ */
+export function validateServerUrl(input: string): ServerUrlValidation {
+  const normalized = normalizeServerUrl(input);
+  if (normalized.length === 0) {
+    return { ok: false, error: "Enter a URL, e.g. http://10.1.81.56:3001" };
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    return { ok: false, error: "Invalid URL. It must start with http:// or https://" };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { ok: false, error: "URL must start with http:// or https://" };
+  }
+  if (!parsed.hostname) {
+    return { ok: false, error: "URL is missing a host." };
+  }
+  const isPrivate = isLocalPrivateHost(parsed.hostname);
+  if (parsed.protocol === "http:" && !isPrivate) {
+    return {
+      ok: false,
+      normalized,
+      isPrivate,
+      error: "Plain HTTP is only allowed for local/private dev hosts. Use HTTPS for production.",
+    };
+  }
+  return { ok: true, normalized, isPrivate };
+}
+
+/**
+ * Concise, actionable message for a "can't reach the server" failure (network
+ * error, DNS, refused connection, ATS blocking plain HTTP, etc.). Never exposes
+ * the raw `ExpoModulesCore`/`Network request failed` exception to the user.
+ */
+export function unreachableServerMessage(url: string): string {
+  return (
+    `Cannot reach ${url} from this iPhone. Set Web server URL in Settings to your Mac's ` +
+    `LAN address (same Wi-Fi), e.g. http://10.1.81.56:3001, or use the production HTTPS URL.`
+  );
+}
+
 /** Load the configured web app base URL (default when unset/empty). */
 export async function getServerUrl(): Promise<string> {
   const v = await AsyncStorage.getItem(SERVER_URL_KEY);
-  const url = (v ?? "").trim();
+  const url = normalizeServerUrl(v ?? "");
   return url.length > 0 ? url : DEFAULT_SERVER_URL;
 }
 
-/** Persist the web app base URL (empty restores the default). */
+/**
+ * Persist the web app base URL. The value is normalized (trim + trailing
+ * slash). Malformed URLs are rejected with the validation error — callers
+ * should validate first (or use {@link trySetServerUrl}) so the user sees the
+ * reason. Empty restores the default.
+ */
 export async function setServerUrl(url: string): Promise<void> {
-  await AsyncStorage.setItem(SERVER_URL_KEY, url.trim());
+  await AsyncStorage.setItem(SERVER_URL_KEY, normalizeServerUrl(url));
+}
+
+/**
+ * Validate then persist a server URL. Returns the validation outcome so the
+ * Settings UI can surface the error without a second parse. Does NOT persist
+ * malformed values.
+ */
+export async function trySetServerUrl(
+  url: string,
+): Promise<ServerUrlValidation> {
+  const v = validateServerUrl(url);
+  if (v.ok && v.normalized) {
+    await AsyncStorage.setItem(SERVER_URL_KEY, v.normalized);
+  }
+  return v;
 }
 
 /** The stored bearer token, or null when no device is linked. */
@@ -96,18 +211,26 @@ export async function isDeviceLinked(): Promise<boolean> {
  * Exchange a scanned one-time token for a long-lived session credential and
  * store it. POSTs `{ token }` to the web app's verify endpoint; on success the
  * response body carries the new session (with its `token`) and `user`. Throws
- * on any non-2xx so the caller can surface the message.
+ * a user-facing message on any failure — network errors become an actionable
+ * "cannot reach" message, never the raw `ExpoModulesCore` exception.
  */
 export async function exchangeOneTimeToken(
   serverUrl: string,
   oneTimeToken: string,
 ): Promise<LinkedCredential> {
-  const base = serverUrl.trim().replace(/\/+$/, "");
-  const res = await fetch(`${base}/api/auth/one-time-token/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: oneTimeToken }),
-  });
+  const base = normalizeServerUrl(serverUrl);
+  let res: Response;
+  try {
+    res = await fetch(`${base}/api/auth/one-time-token/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: oneTimeToken }),
+    });
+  } catch {
+    // RN fetch throws on network failure / refused connection / ATS blocking
+    // plain HTTP — translate to an actionable message naming the configured URL.
+    throw new Error(unreachableServerMessage(base));
+  }
   if (!res.ok) {
     let message = `verify failed (${res.status})`;
     try {
@@ -132,6 +255,28 @@ export async function exchangeOneTimeToken(
   await SecureStore.setItemAsync(LINK_TOKEN_KEY, token);
   await SecureStore.setItemAsync(LINK_IDENTITY_KEY, JSON.stringify(identity));
   return { token, identity };
+}
+
+/**
+ * Probe the configured server's health endpoint (`GET /api/health`) to confirm
+ * the phone can reach it. Returns a clear success/failure message suitable
+ * for direct UI display. Never throws — network errors become the actionable
+ * "cannot reach" message.
+ */
+export async function testServerConnection(serverUrl: string): Promise<ConnectionTestResult> {
+  const v = validateServerUrl(serverUrl);
+  if (!v.ok || !v.normalized) {
+    return { ok: false, message: v.error ?? "Invalid URL" };
+  }
+  try {
+    const res = await fetch(`${v.normalized}/api/health`, { method: "GET" });
+    if (!res.ok) {
+      return { ok: false, message: `Server responded HTTP ${res.status}.` };
+    }
+    return { ok: true, message: `Connected to ${v.normalized}` };
+  } catch {
+    return { ok: false, message: unreachableServerMessage(v.normalized) };
+  }
 }
 
 /** Unlink the device: clear the stored bearer token and identity. */

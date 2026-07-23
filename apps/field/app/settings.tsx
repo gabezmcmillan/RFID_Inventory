@@ -40,6 +40,9 @@ import {
   type LinkedIdentity,
   SERVER_URL_KEY,
   setServerUrl,
+  testServerConnection,
+  trySetServerUrl,
+  validateServerUrl,
 } from "../src/auth";
 
 const MIN_POWER = 10;
@@ -57,6 +60,11 @@ export default function SettingsScreen(): React.ReactNode {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [statusOk, setStatusOk] = useState<boolean | null>(null);
   const [serverUrl, setServerUrlState] = useState("");
+  const [serverUrlError, setServerUrlError] = useState<string | null>(null);
+  const [serverUrlIsPrivate, setServerUrlIsPrivate] = useState<boolean | null>(null);
+  const [testingServer, setTestingServer] = useState(false);
+  const [serverTestMsg, setServerTestMsg] = useState<string | null>(null);
+  const [serverTestOk, setServerTestOk] = useState<boolean | null>(null);
   const [linked, setLinked] = useState<LinkedIdentity | null>(null);
   const [unlinking, setUnlinking] = useState(false);
 
@@ -76,7 +84,12 @@ export default function SettingsScreen(): React.ReactNode {
   }, []);
 
   useEffect(() => {
-    void getServerUrl().then(setServerUrlState);
+    void getServerUrl().then((stored) => {
+      setServerUrlState(stored);
+      const v = validateServerUrl(stored);
+      setServerUrlError(v.error ?? null);
+      setServerUrlIsPrivate(v.isPrivate ?? null);
+    });
   }, []);
 
   // Re-read the linked identity whenever Settings regains focus (e.g. after
@@ -126,7 +139,37 @@ export default function SettingsScreen(): React.ReactNode {
 
   const onServerUrlChange = (value: string): void => {
     setServerUrlState(value);
-    void setServerUrl(value);
+    setServerTestMsg(null);
+    setServerTestOk(null);
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      // Empty clears the override; the default is used on next load. Don't
+      // flag an error here — the placeholder shows the default in use.
+      setServerUrlError(null);
+      setServerUrlIsPrivate(null);
+      void setServerUrl("");
+      return;
+    }
+    const v = validateServerUrl(value);
+    setServerUrlError(v.error ?? null);
+    setServerUrlIsPrivate(v.isPrivate ?? null);
+    // Persist only valid, normalized URLs.
+    if (v.ok && v.normalized) {
+      void trySetServerUrl(value);
+    }
+  };
+
+  const testServer = async (): Promise<void> => {
+    setTestingServer(true);
+    setServerTestMsg(null);
+    setServerTestOk(null);
+    try {
+      const result = await testServerConnection(serverUrl);
+      setServerTestOk(result.ok);
+      setServerTestMsg(result.message);
+    } finally {
+      setTestingServer(false);
+    }
   };
 
   const unlink = async (): Promise<void> => {
@@ -235,8 +278,10 @@ export default function SettingsScreen(): React.ReactNode {
       <View className="mt-2 border-t border-border pt-4 gap-2">
         <Text className="text-sm font-semibold text-foreground">Web server URL</Text>
         <Text className="text-xs text-muted-foreground">
-          Base the phone exchanges the link code against (default {DEFAULT_SERVER_URL}; set to the
-          Mac's LAN IP for a physical device).
+          Base the phone exchanges the link code against. On a physical iPhone this cannot be{" "}
+          <Text className="font-mono">localhost</Text> (that is the phone itself) — set it to your
+          Mac's LAN IP on the same Wi-Fi, e.g.{" "}
+          <Text className="font-mono">http://10.1.81.56:3001</Text>. Production must use HTTPS.
         </Text>
         <Input
           value={serverUrl}
@@ -246,6 +291,24 @@ export default function SettingsScreen(): React.ReactNode {
           autoCorrect={false}
           keyboardType="url"
         />
+        {serverUrlError !== null ? (
+          <Text className="text-destructive text-xs">{serverUrlError}</Text>
+        ) : serverUrlIsPrivate === true ? (
+          <Text className="text-xs text-muted-foreground">
+            Local/private host — plain HTTP is fine for development.
+          </Text>
+        ) : null}
+        <Button
+          disabled={serverUrlError !== null || serverUrl.trim().length === 0 || testingServer}
+          onPress={() => void testServer()}
+        >
+          {testingServer ? <ActivityIndicator /> : <Text>Test connection</Text>}
+        </Button>
+        {serverTestMsg !== null ? (
+          <Text className={serverTestOk ? "text-primary text-sm mt-1.5" : "text-destructive text-sm mt-1.5"}>
+            {serverTestMsg}
+          </Text>
+        ) : null}
 
         <Text className="text-sm font-semibold mt-2 text-foreground">Device account</Text>
         {linked ? (

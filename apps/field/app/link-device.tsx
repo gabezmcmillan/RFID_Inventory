@@ -13,7 +13,11 @@ import { useRouter } from "expo-router";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 
-import { exchangeOneTimeToken, getServerUrl } from "../src/auth";
+import {
+  exchangeOneTimeToken,
+  getServerUrl,
+  unreachableServerMessage,
+} from "../src/auth";
 
 export default function LinkDeviceScreen(): React.ReactNode {
   const router = useRouter();
@@ -40,7 +44,14 @@ export default function LinkDeviceScreen(): React.ReactNode {
       await exchangeOneTimeToken(serverUrl, token);
       router.back();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      // Surface the actionable "cannot reach" guidance for any network-style
+      // failure rather than a raw fetch/ExpoModulesCore exception string.
+      setError(
+        /network request failed|could not connect|expo|swift|fetch failed/i.test(msg)
+          ? unreachableServerMessage(await getServerUrl())
+          : msg,
+      );
       // Allow re-scan of the same or a fresh QR after a failure.
       setScanned(false);
     } finally {
