@@ -31,7 +31,12 @@ import {
   type ItemFields,
 } from "@rfid/domain";
 import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 import {
   addPageToBolDocument,
@@ -278,57 +283,68 @@ export function CheckInScreen(): React.ReactNode {
 
   if (phase === "setup") {
     return (
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.sectionLabel}>BOL document</Text>
-        <View style={styles.docBtnRow}>
-          <Pressable style={[styles.docBtn, capturing && styles.btnDisabled]} disabled={capturing} onPress={() => void onScanBol()}>
-            <Text style={styles.docBtnText}>{capturing ? "Scanning…" : "Scan BOL"}</Text>
-          </Pressable>
-          <Pressable style={styles.docBtn} onPress={() => void onUploadBol()}>
-            <Text style={styles.docBtnText}>Upload</Text>
-          </Pressable>
-          <Pressable style={styles.docBtn} onPress={() => void openRecent()}>
-            <Text style={styles.docBtnText}>Recent</Text>
-          </Pressable>
-          <Pressable style={styles.docBtnSkip} onPress={onSkip}>
-            <Text style={styles.docBtnSkipText}>Skip</Text>
-          </Pressable>
+      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 4 }}>
+        <Text className="mt-2 text-sm font-semibold text-foreground">BOL document</Text>
+        <View className="my-2 flex-row flex-wrap gap-2">
+          <Button disabled={capturing} onPress={() => void onScanBol()}>
+            <Text>{capturing ? "Scanning…" : "Scan BOL"}</Text>
+          </Button>
+          <Button variant="secondary" onPress={() => void onUploadBol()}>
+            <Text>Upload</Text>
+          </Button>
+          <Button variant="secondary" onPress={() => void openRecent()}>
+            <Text>Recent</Text>
+          </Button>
+          <Button variant="secondary" onPress={onSkip}>
+            <Text>Skip</Text>
+          </Button>
         </View>
         {bolDocId !== null ? (
-          <Text style={styles.docStatus}>
+          <Text className="mt-1 text-[13px] font-semibold text-primary">
             Linked: {(shipment.bol_number ?? "") || "(unnamed)"}
             {canAddPage ? (
-              <Text style={styles.addPageLink} onPress={() => void onAddPage()}>  · Add page</Text>
+              <Text className="font-bold text-brand-info" onPress={() => void onAddPage()}>  · Add page</Text>
             ) : null}
           </Text>
         ) : (
-          <Text style={styles.hint}>Skip if the BOL isn't ready; you can type the numbers below.</Text>
+          <Text className="my-3 text-sm italic text-muted-foreground">Skip if the BOL isn't ready; you can type the numbers below.</Text>
         )}
 
         {showRecent ? (
-          <View style={styles.recentList}>
+          <View className="my-2 rounded-lg border border-border bg-muted/40 p-2">
             {recentDocs.length === 0 ? (
-              <Text style={styles.hint}>No recent documents.</Text>
+              <Text className="text-sm italic text-muted-foreground">No recent documents.</Text>
             ) : (
               recentDocs.map((d) => (
-                <Pressable key={d.id} style={styles.recentRow} onPress={() => onPickRecent(d)}>
-                  <Text style={styles.recentRef}>{d.bol_number || "(unnamed)"}</Text>
-                  <Text style={styles.recentMeta}>{d.pages}p · {d.source}{d.vendor ? ` · ${d.vendor}` : ""}</Text>
+                <Pressable
+                  key={d.id}
+                  className="border-b border-border py-2"
+                  onPress={() => onPickRecent(d)}
+                >
+                  <Text className="text-[15px] font-semibold text-foreground">{d.bol_number || "(unnamed)"}</Text>
+                  <Text className="mt-0.5 text-xs text-muted-foreground">{d.pages}p · {d.source}{d.vendor ? ` · ${d.vendor}` : ""}</Text>
                 </Pressable>
               ))
             )}
           </View>
         ) : null}
 
-        <Text style={styles.sectionLabel}>Item type</Text>
-        <View style={styles.chips}>
+        <Text className="mt-2 text-sm font-semibold text-foreground">Item type</Text>
+        <View className="my-2 flex-row flex-wrap gap-2">
           {ITEM_TYPES.map((t) => (
             <Pressable
               key={t}
               onPress={() => setItemType(t)}
-              style={[styles.chip, itemType === t && styles.chipActive]}
+              className={cn("rounded-md px-3 py-2", itemType === t ? "bg-primary" : "bg-muted")}
             >
-              <Text style={[styles.chipText, itemType === t && styles.chipTextActive]}>{t}</Text>
+              <Text
+                className={cn(
+                  "text-sm",
+                  itemType === t ? "text-primary-foreground font-semibold" : "text-foreground",
+                )}
+              >
+                {t}
+              </Text>
             </Pressable>
           ))}
         </View>
@@ -344,35 +360,35 @@ export function CheckInScreen(): React.ReactNode {
           />
         ))}
 
-        <Pressable style={styles.primary} onPress={startCheckIn}>
-          <Text style={styles.primaryText}>Start check-in</Text>
-        </Pressable>
+        <Button size="lg" className="mt-4" onPress={startCheckIn}>
+          <Text className="text-lg font-semibold">Start check-in</Text>
+        </Button>
       </ScrollView>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.armedBar}>
-        <Text style={styles.armedText}>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 4 }}>
+      <View className="mb-3 flex-row items-center justify-between">
+        <Text className="text-base font-semibold text-foreground">
           {itemType} · BOL {shipment.bol_number ?? ""} · Bldg {shipment.building_number ?? ""}
         </Text>
-        <Pressable onPress={endCheckIn} style={styles.endBtn}>
-          <Text style={styles.endBtnText}>End</Text>
-        </Pressable>
+        <Button variant="destructive" onPress={endCheckIn}>
+          <Text>End</Text>
+        </Button>
       </View>
 
       {lineItems.length > 0 ? (
-        <View style={styles.lineItemsBlock}>
-          <Text style={styles.sectionLabel}>Line items (tap to prefill)</Text>
-          <View style={styles.suggestRow}>
+        <View className="my-2">
+          <Text className="text-sm font-semibold text-foreground">Line items (tap to prefill)</Text>
+          <View className="mb-3 mt-1.5 flex-row flex-wrap gap-1.5">
             {lineItems.map((li, i) => (
               <Pressable
                 key={`${li.item_no}-${i}`}
-                style={styles.lineItemChip}
+                className="rounded-md bg-brand-info/15 px-2.5 py-1.5"
                 onPress={() => onPickLineItem(li)}
               >
-                <Text style={styles.lineItemText}>
+                <Text className="text-xs text-brand-info">
                   {li.item_no || "—"}{li.item_name ? ` · ${li.item_name}` : ""}{li.quantity ? ` (${li.quantity})` : ""}
                 </Text>
               </Pressable>
@@ -385,10 +401,14 @@ export function CheckInScreen(): React.ReactNode {
         <View key={f.key}>
           <FieldRow field={f} value={item[f.key] ?? ""} onChange={(v) => onItemFieldChange(f.key, v)} />
           {f.suggest && suggestions.length > 0 ? (
-            <View style={styles.suggestRow}>
+            <View className="mb-3 flex-row flex-wrap gap-1.5">
               {suggestions.map((s) => (
-                <Pressable key={s} onPress={() => onItemFieldChange("item_name", s)} style={styles.suggestChip}>
-                  <Text style={styles.suggestText}>{s}</Text>
+                <Pressable
+                  key={s}
+                  className="rounded-md bg-brand-info/15 px-2 py-1"
+                  onPress={() => onItemFieldChange("item_name", s)}
+                >
+                  <Text className="text-xs text-brand-info">{s}</Text>
                 </Pressable>
               ))}
             </View>
@@ -397,7 +417,7 @@ export function CheckInScreen(): React.ReactNode {
       ))}
 
       {results.length === 0 ? (
-        <Text style={styles.hint}>Pull the trigger to scan a box…</Text>
+        <Text className="my-3 text-sm italic text-muted-foreground">Pull the trigger to scan a box…</Text>
       ) : (
         results.map((entry, i) => (
           <ResultCard key={`${entry.epc}-${i}`} entry={entry} newest={i === results.length - 1} onAmend={setAmendEpc} />
@@ -405,34 +425,43 @@ export function CheckInScreen(): React.ReactNode {
       )}
 
       {printingEnabled(printer) ? (
-        <View style={styles.printRow}>
-          <Text style={styles.printLabel}>Print &amp; encode labels</Text>
-          <View style={styles.stepper}>
-            <Pressable style={styles.stepBtn} onPress={() => adjustPrintCount(-1)}>
-              <Text style={styles.stepText}>−</Text>
-            </Pressable>
-            <Text style={styles.printCount}>{printCount}</Text>
-            <Pressable style={styles.stepBtn} onPress={() => adjustPrintCount(1)}>
-              <Text style={styles.stepText}>+</Text>
-            </Pressable>
+        <View className="mt-4 flex-row flex-wrap items-center gap-2.5">
+          <Text className="text-sm font-semibold text-foreground">Print &amp; encode labels</Text>
+          <View className="flex-row items-center gap-2">
+            <Button size="icon" variant="secondary" onPress={() => adjustPrintCount(-1)}>
+              <Text>−</Text>
+            </Button>
+            <Text className="min-w-7 text-center text-base font-semibold">{printCount}</Text>
+            <Button size="icon" variant="secondary" onPress={() => adjustPrintCount(1)}>
+              <Text>+</Text>
+            </Button>
           </View>
-          <Pressable style={[styles.printBtn, printing && styles.printBtnDisabled]} disabled={printing} onPress={() => void onPrintLabels()}>
-            <Text style={styles.printBtnText}>{printing ? "Printing…" : `Print ${printCount} label${printCount === 1 ? "" : "s"}`}</Text>
-          </Pressable>
+          <Button disabled={printing} onPress={() => void onPrintLabels()}>
+            <Text>{printing ? "Printing…" : `Print ${printCount} label${printCount === 1 ? "" : "s"}`}</Text>
+          </Button>
         </View>
       ) : null}
 
-      <View style={styles.noteRow}>
-        <TextInput style={styles.noteInput} value={noteText} onChangeText={setNoteText} placeholder="Add a note…" />
-        <Pressable style={styles.noteBtn} onPress={onAddNote}>
-          <Text style={styles.noteBtnText}>Add</Text>
-        </Pressable>
+      <View className="mt-4 flex-row gap-2">
+        <Input
+          className="flex-1"
+          value={noteText}
+          onChangeText={setNoteText}
+          placeholder="Add a note…"
+        />
+        <Button variant="secondary" onPress={onAddNote}>
+          <Text>Add</Text>
+        </Button>
       </View>
 
       {__DEV__ ? (
-        <Pressable style={styles.simBtn} onPress={() => readerService.injectScan([randomEpc()])}>
-          <Text style={styles.simBtnText}>Simulate scan</Text>
-        </Pressable>
+        <Button
+          variant="secondary"
+          className="mt-4"
+          onPress={() => readerService.injectScan([randomEpc()])}
+        >
+          <Text>Simulate scan</Text>
+        </Button>
       ) : null}
 
       <AmendSheet
@@ -444,55 +473,5 @@ export function CheckInScreen(): React.ReactNode {
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingBottom: 60, gap: 4 },
-  sectionLabel: { fontSize: 14, fontWeight: "600", marginTop: 8, color: "#333" },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, backgroundColor: "#eee" },
-  chipActive: { backgroundColor: "#0a7" },
-  chipText: { fontSize: 14, color: "#333" },
-  chipTextActive: { color: "white", fontWeight: "600" },
-  primary: { backgroundColor: "#0a7", padding: 16, borderRadius: 8, alignItems: "center", marginTop: 16 },
-  primaryText: { color: "white", fontSize: 18, fontWeight: "600" },
-  armedBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  armedText: { fontSize: 16, fontWeight: "600" },
-  endBtn: { backgroundColor: "#c33", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6 },
-  endBtnText: { color: "white", fontWeight: "600" },
-  suggestRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 },
-  suggestChip: { backgroundColor: "#eef", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  suggestText: { fontSize: 12, color: "#336" },
-  hint: { color: "#888", fontStyle: "italic", marginVertical: 12 },
-  noteRow: { flexDirection: "row", gap: 8, marginTop: 16 },
-  noteInput: { flex: 1, borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 16 },
-  noteBtn: { backgroundColor: "#555", paddingHorizontal: 16, justifyContent: "center", borderRadius: 6 },
-  noteBtnText: { color: "white", fontWeight: "600" },
-  simBtn: { backgroundColor: "#eee", padding: 12, borderRadius: 8, alignItems: "center", marginTop: 16 },
-  simBtnText: { color: "#333", fontWeight: "600" },
-  printRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 16, flexWrap: "wrap" },
-  printLabel: { fontSize: 14, fontWeight: "600", color: "#333" },
-  stepper: { flexDirection: "row", alignItems: "center", gap: 8 },
-  stepBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#eee", alignItems: "center", justifyContent: "center" },
-  stepText: { fontSize: 20, fontWeight: "600" },
-  printCount: { fontSize: 16, fontWeight: "600", minWidth: 28, textAlign: "center" },
-  printBtn: { backgroundColor: "#06c", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8 },
-  printBtnDisabled: { backgroundColor: "#9ab" },
-  printBtnText: { color: "white", fontWeight: "600" },
-  docBtnRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 8 },
-  docBtn: { backgroundColor: "#06c", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8 },
-  docBtnSkip: { backgroundColor: "#eee", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8 },
-  docBtnText: { color: "white", fontWeight: "600" },
-  docBtnSkipText: { color: "#333", fontWeight: "600" },
-  btnDisabled: { backgroundColor: "#9ab" },
-  docStatus: { fontSize: 13, color: "#0a7", fontWeight: "600", marginTop: 4 },
-  addPageLink: { color: "#06c", fontWeight: "700" },
-  recentList: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 8, backgroundColor: "#fafafa", marginVertical: 8 },
-  recentRow: { paddingVertical: 8, borderBottomWidth: 1, borderColor: "#eee" },
-  recentRef: { fontSize: 15, fontWeight: "600" },
-  recentMeta: { fontSize: 12, color: "#666", marginTop: 2 },
-  lineItemsBlock: { marginVertical: 8 },
-  lineItemChip: { backgroundColor: "#eef", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-  lineItemText: { fontSize: 12, color: "#336" },
-});
 
 

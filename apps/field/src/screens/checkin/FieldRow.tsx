@@ -6,7 +6,11 @@
  */
 
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, View } from "react-native";
+
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 import type { FieldDef } from "@rfid/domain";
 
@@ -30,16 +34,26 @@ export function FieldRow({
   if (field.type === "buttons" || field.type === "select") {
     const options = field.type === "buttons" ? field.options ?? [] : vendors;
     return (
-      <View style={styles.row}>
-        <Text style={styles.label}>{field.label}</Text>
-        <View style={styles.chips}>
+      <View className="mb-3">
+        <Text className="mb-1.5 text-sm font-semibold text-foreground">{field.label}</Text>
+        <View className="flex-row flex-wrap gap-2">
           {options.map((opt) => (
             <Pressable
               key={opt}
               onPress={() => onChange(opt)}
-              style={[styles.chip, value === opt && styles.chipActive]}
+              className={cn(
+                "rounded-md px-3 py-2",
+                value === opt ? "bg-primary" : "bg-muted",
+              )}
             >
-              <Text style={[styles.chipText, value === opt && styles.chipTextActive]}>{opt}</Text>
+              <Text
+                className={cn(
+                  "text-sm",
+                  value === opt ? "text-primary-foreground font-semibold" : "text-foreground",
+                )}
+              >
+                {opt}
+              </Text>
             </Pressable>
           ))}
           {field.type === "select" && onAddVendor ? (
@@ -50,10 +64,9 @@ export function FieldRow({
     );
   }
   return (
-    <View style={styles.row}>
-      <Text style={styles.label}>{field.label}</Text>
-      <TextInput
-        style={styles.input}
+    <View className="mb-3">
+      <Text className="mb-1.5 text-sm font-semibold text-foreground">{field.label}</Text>
+      <Input
         value={value}
         onChangeText={onChange}
         keyboardType={field.type === "number" ? "numeric" : "default"}
@@ -69,22 +82,22 @@ function AddVendorChip({ onAdd }: { onAdd: (name: string) => Promise<void> | voi
   const [name, setName] = useState("");
   if (!adding) {
     return (
-      <Pressable style={styles.chip} onPress={() => setAdding(true)}>
-        <Text style={styles.chipText}>+ add</Text>
+      <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => setAdding(true)}>
+        <Text className="text-sm text-foreground">+ add</Text>
       </Pressable>
     );
   }
   return (
-    <View style={styles.addRow}>
-      <TextInput
-        style={styles.addInput}
+    <View className="flex-row items-center gap-1.5">
+      <Input
         autoFocus
         value={name}
         onChangeText={setName}
         placeholder="vendor name"
+        className="w-30 py-1"
       />
       <Pressable
-        style={styles.chip}
+        className="rounded-md bg-muted px-3 py-2"
         onPress={async () => {
           const trimmed = name.trim();
           if (trimmed) await onAdd(trimmed);
@@ -92,21 +105,8 @@ function AddVendorChip({ onAdd }: { onAdd: (name: string) => Promise<void> | voi
           setAdding(false);
         }}
       >
-        <Text style={styles.chipText}>save</Text>
+        <Text className="text-sm text-foreground">save</Text>
       </Pressable>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  row: { marginBottom: 12 },
-  label: { fontSize: 14, fontWeight: "600", marginBottom: 6, color: "#333" },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 16 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, backgroundColor: "#eee" },
-  chipActive: { backgroundColor: "#0a7" },
-  chipText: { fontSize: 14, color: "#333" },
-  chipTextActive: { color: "white", fontWeight: "600" },
-  addRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  addInput: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 6, fontSize: 14, width: 120 },
-});
