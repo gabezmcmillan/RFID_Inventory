@@ -5,9 +5,12 @@
  * is open (they gate on `useDbStatus().loading`).
  */
 
+import "../global.css";
+
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
+import { PortalHost } from "@rn-primitives/portal";
 
 import { DatabaseProvider, useDbStatus } from "../src/db/provider";
 import { readerService } from "../src/reader/readerService";
@@ -29,15 +32,17 @@ function Gate({ children }: { children: React.ReactNode }): React.ReactNode {
   useReaderInit();
   if (loading) {
     return (
-      <View style={styles.center}>
+      <View className="flex-1 items-center justify-center">
         <ActivityIndicator size="large" />
       </View>
     );
   }
   if (error) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.error}>Database error: {error.message}</Text>
+      <View className="flex-1 items-center justify-center">
+        <Text className="px-4 text-center text-destructive">
+          Database error: {error.message}
+        </Text>
       </View>
     );
   }
@@ -65,11 +70,9 @@ export default function RootLayout(): React.ReactNode {
         </Stack>
       </Gate>
       <StatusBar style="auto" />
+      {/* PortalHost must be the last child of the root providers; overlays
+          (Dialog, DropdownMenu, etc.) render into it. */}
+      <PortalHost />
     </DatabaseProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  error: { color: "red", padding: 16, textAlign: "center" },
-});

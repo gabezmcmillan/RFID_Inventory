@@ -1,0 +1,14 @@
+{
+  "$schema": "https://ui.reactnativereusables.com/schema.json",
+  "aliases": {
+    "components": "@/components",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  },
+  "tailwind": {
+    "config": "tailwind.config.js",
+    "cssPath": "./global.css"
+  },
+  "registry": "https://ui.reactnativereusables.com/r/index.json"
+}

@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* shadcn-style neutral surface tokens (light = warehouse daylight default). */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+
+  /* Primary = the warehouse "In" green (#0a7), used for primary actions + status. */
+  --primary: 162 100% 33%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+
+  /* Destructive = admin delete/clear red (#c33). */
+  --destructive: 0 60% 50%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 162 100% 33%;
+
+  --radius: 0.5rem;
+
+  /* Domain status palette (matches the prior StyleSheet colors). */
+  --status-in: 162 100% 33%;
+  --status-partial: 44 100% 45%;
+  --status-delivered: 0 0% 53%;
+
+  /* Brand info = the blue (#06c) used for info banners + the Requests accent. */
+  --brand: 210 100% 40%;
+  --brand-info: 210 100% 40%;
+}
+
+.dark:root {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 162 100% 33%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 45%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 162 100% 33%;
+  --status-in: 162 100% 33%;
+  --status-partial: 44 100% 45%;
+  --status-delivered: 0 0% 53%;
+  --brand: 210 100% 40%;
+  --brand-info: 210 100% 40%;
+}
