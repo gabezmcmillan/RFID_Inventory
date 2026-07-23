@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "echo \"no tests yet\" && exit 0",
     "auth:generate": "pnpm dlx @better-auth/cli@latest generate --config auth.ts -y",
-    "auth:migrate": "pnpm dlx @better-auth/cli@latest migrate --config auth.ts -y"
+    "auth:migrate": "pnpm dlx @better-auth/cli@latest migrate --config auth.ts -y",
+    "pull:dev": "bash ../../scripts/pull-dev-env.sh"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
