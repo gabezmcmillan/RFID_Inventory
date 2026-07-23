@@ -132,7 +132,7 @@ Run from the repository root. Never print or commit secret values.
 | App checks | `pnpm -r typecheck && pnpm test && pnpm --filter @rfid/web lint && pnpm --filter @rfid/web build` | exit 0; no placeholder tests |
 | Field config | `pnpm --filter @rfid/field exec expo config --type introspect` | expected iOS plugins/protocols/permissions |
 | Field export | `pnpm --filter @rfid/field exec expo export --platform ios --output-dir /tmp/rfid-field-export` | exit 0 |
-| TestFlight | `pnpm --filter @rfid/field exec eas build --platform ios --profile production --auto-submit` | signed build reaches TestFlight |
+| iOS CI build | `workflow_dispatch` → `.github/workflows/build-field-ios.yml` (needs `IOS_DIST_CERT_BASE64`, `IOS_DIST_CERT_PASSWORD`, `IOS_PROVISIONING_PROFILE_BASE64`, `BLOB_READ_WRITE_TOKEN`) | signed enterprise IPA → Vercel Blob; `/field/install` + `manifest.plist` serve OTA install |
 | Final diff | `git diff --check && git status --short` | exit 0; only intended files |
 
 ## Suggested executor toolkit
@@ -153,7 +153,8 @@ Run from the repository root. Never print or commit secret values.
 
 - `packages/domain/**`: globally unique field-created IDs and migrations/tests
 - `apps/field/**`: local device metadata, credential refresh, sync coordinator,
-  status UI, BOL upload queue, Sentry, EAS, focused tests
+  status UI, BOL upload queue, Sentry, enterprise in-house iOS distribution +
+  version check, focused tests
 - `apps/field/**` (operator scope addition): offline-capable device PIN
   (salted PBKDF2 hash in `expo-secure-store`), lock gate (launch + foreground
   relock after timeout, retry backoff), reconciliation of the legacy admin PIN
@@ -177,8 +178,9 @@ Run from the repository root. Never print or commit secret values.
 - Broad RBAC/admin UI, generalized operation ledgers/conflict platforms,
   custom JWT crypto, or implementing server-mediated sync in this plan
 - Extensive telemetry/evidence/drills or Mistral fallback
-- Required Preview/Staging EAS profiles, multiple OTA channels, or Android;
-  archiving Python before successful launch observation
+- Required Preview/Staging EAS profiles, multiple OTA channels, Expo OTA
+  (`expo-updates`) JS updates, or Android; archiving Python before successful
+  launch observation
 
 ## Git workflow
 
@@ -186,7 +188,7 @@ Run from the repository root. Never print or commit secret values.
 - Use one reviewable commit per phase: `test(sync): prove short-lived Turso
   credentials`; `feat(sync): make field replicas collision-safe`;
   `feat(field): wire authenticated local-first sync`; `feat(ops): add production
-  essentials`; `feat(field): configure TestFlight release`; `docs(ops): record
+  essentials`; `feat(field): enterprise in-house iOS distribution`; `docs(ops): record
   warehouse launch acceptance`; then the post-launch-only
   `chore(legacy): archive Python reference apps`.
 - Do not commit secrets. Do not push/open/merge a PR without operator direction.
@@ -310,25 +312,82 @@ Entra works; health hides injected errors; one symbolicated redacted Expo error
 and one Next error arrive in Sentry; rollback checklist names the previous
 deploy/build and PITR contact/availability.
 
-### Phase 5: Build and test the TestFlight release
+### Phase 5: Build and deploy the enterprise in-house IPA
 
-1. Add only `development` and `production` EAS profiles. Configure Apple
-   signing, EAS project/update URL, production env, and
-   `runtimeVersion: { policy: "appVersion" }`.
-2. OTA guardrails: native module/permission, credential model, or incompatible
-   schema changes require a new binary/app version; test compatible JS updates
-   before production and keep the last known-good update/build.
-3. Introspect generated iOS config: TSL protocol, camera, document scanner,
-   ML Kit, Turso RN, TCP socket, Secure Store, Sentry, and updates are present.
-4. TSL MFi/PPID and App Store approval are external dependencies. Submit the
-   final bundle/app details early; do not replace the raw EA implementation
-   unless hardware testing proves it necessary.
-5. Replace field/web placeholder tests and run the full command set.
+> **Operator decision (2026-07-23):** the org can't use TestFlight, so Phase 5
+> ships iOS via **enterprise in-house distribution** modeled on the `magnus`
+> project — a signed `.ipa` uploaded to Vercel Blob and served to iPhones
+> through a web install page + `manifest.plist` (`itms-services://`). No EAS,
+> no TestFlight, no App Store submission. See
+> `docs/operations/sync-security-decision.md` § "Phase 5 — enterprise in-house
+> distribution" and `docs/operations/ios-ci-secrets.md`.
+
+1. **CI build job** (`.github/workflows/build-field-ios.yml`, ported from
+   `magnus/.github/workflows/build-mobile-ios.yml`): Expo CNG (`expo prebuild`)
+   + raw `xcodebuild archive` / `-exportArchive` on `macos-15-xlarge`, Xcode 26
+   pinned, manual signing with B&G's Apple Developer Enterprise cert (team
+   `KDEGJ8G33R`, `iPhone Distribution: Brasfield & Gorrie, LLC`), a temporary
+   keychain per run, `jq`-patched `app.json`, and provisioning-profile
+   validation. **Single environment.** Bundle ID
+   `com.brasfieldgorrie.rfid-field` (the checked-in `app.json` already uses it;
+   CI re-states it authoritatively). Marketing version from `app.json`
+   `expo.version`; **build number = the GitHub run number** (baked into
+   `CFBundleVersion` = `Application.nativeBuildVersion`, which the field
+   version-check compares against). `ExportOptions` `method: enterprise`.
+   Required repo secrets: `IOS_DIST_CERT_BASE64`, `IOS_DIST_CERT_PASSWORD`,
+   `IOS_PROVISIONING_PROFILE_BASE64`, `BLOB_READ_WRITE_TOKEN` (see
+   `docs/operations/ios-ci-secrets.md`). The workflow is `workflow_dispatch`-
+   triggerable and fails with a clear message when a secret is absent, so it is
+   dry-runnable before the operator's `.p12` arrives.
+2. **Deploy job**: downloads the IPA artifact and runs
+   `apps/web/scripts/deploy-field-ipa.mjs`, which uploads the IPA to the
+   private `rfid-bol` Blob store at `field-ios/{marketingVersion}/{buildNumber}.ipa`
+   (`multipart: true`, `addRandomSuffix: false`, `allowOverwrite: true`,
+   `access: 'private'`) and writes a small `field-ios/latest.json`
+   (`{ buildNumber, marketingVersion, bundleId, displayName, ipaPath,
+   uploadedAt }`). The store is **private** (verified), so the IPA is served to
+   iOS via a short-lived presigned GET URL minted by the manifest route at
+   install time — the read-write token never leaves the server/CI. This
+   deviates from the original "public access for the IPA object" instruction
+   because reusing the existing private store avoids a new cloud resource and a
+   token-exposure risk; the deviation is documented in the decision doc.
+3. **Web install surface** (no IPA ever proxied through a Next.js route):
+   - `/field/install` page — public (a fresh phone has no session), **not
+     listed in nav**; renders the `itms-services://` install button (pointing
+     at the manifest route) plus human steps including the iOS 18+ first-install
+     **Settings → General → VPN & Device Management → Brasfield & Gorrie, LLC →
+     Allow & Restart** step and the `ppq.apple.com` reachability note.
+   - `GET /api/field/manifest.plist` route — serves the OTA `manifest.plist`
+     with `Content-Type: text/xml`; the `software-package` URL is a fresh
+     presigned GET URL for the IPA in the private Blob store; includes
+     `bundle-identifier` / `bundle-version` / `title`.
+   - `GET /api/field/version` route — returns the latest `buildNumber` +
+     install-page URL (read from `field-ios/latest.json` via a presigned GET).
+4. **Field app version check**: on launch + app-foreground (with connectivity),
+   fetch `GET /api/field/version`, compare `Application.nativeBuildVersion`
+   to the fetched `buildNumber` (pure, deterministic logic in
+   `apps/field/src/version/versionCheck.ts` with unit tests), and show a
+   **non-blocking, dismissible banner** linking to `/field/install` when the
+   installed build is older. `expo-application` is added as a field dependency
+   for `nativeBuildVersion` (lazy-imported so the JS-only `expo export` and
+   unit tests don't require the native binary).
+5. **Defer Expo OTA (JS `expo-updates`)** to a follow-up — noted here as a
+   recommended post-launch addition; not implemented in this phase. Native
+   module/permission, credential-model, or incompatible schema changes still
+   require a new binary (a new CI build + redeploy + re-install), since there
+   is no OTA JS channel yet.
+6. Replace field/web placeholder tests and run the full command set.
 
 **Verify**:
-config introspection, field export, all tests/typechecks, web lint/build, and CI
-pass; a signed Production profile build installs from TestFlight; source maps
-resolve; no Turso/Better Auth/Entra/Blob/Sentry-auth secret is in the bundle.
+config introspection, field export, all tests/typechecks, web lint/build, and
+CI pass; the `build-field-ios.yml` workflow is `actionlint`-clean and
+dry-runnable; the version-check compare/banner logic is covered by
+deterministic unit tests; the `/api/field/version` and
+`/api/field/manifest.plist` routes are covered by route tests; no
+Turso/Better Auth/Entra/Blob secret is in the bundle. **Cannot be fully
+validated until the operator's `.p12` + provisioning profile are added as repo
+secrets** — the workflow fails clearly when they are absent, and a real signed
+IPA + OTA install is the remaining unverified step.
 
 ### Phase 6: Accept in the warehouse, merge `main`, and launch
 
@@ -337,7 +396,9 @@ non-sensitive BOL during one scheduled warehouse day. Use a second phone for one
 physical conflict test if available; otherwise the automated two-replica gate
 remains required.
 
-1. Test clean TestFlight install/upgrade, Entra sign-in, QR link/replay denial,
+1. Test clean in-house install/upgrade (via `/field/install` + `itms-services`,
+   including the iOS 18+ Allow & Restart trust step on a fresh device), the
+   field app's stale-build banner, Entra sign-in, QR link/replay denial,
    unlink/relink, and lost-device revoke.
 2. Test sled connect/reconnect, check-in/out, sweep, find, printer status,
    print/encode/read-back, BOL scan/on-device OCR/upload/web link.
@@ -348,16 +409,17 @@ remains required.
    NO-GO.
 5. Main merge checklist: approved Phase 1 decision, migrations current,
    Production env/domain/Entra/backup green (Sentry SKIPPED for launch), CI
-   green, accepted commit and TestFlight build recorded, previous
-   deployment/build rollback identified.
+   green, accepted commit and the deployed enterprise IPA build recorded,
+   previous deployment/build rollback identified.
 6. Merge the reviewed `rewrite/expo` PR to `main`; verify Vercel Production
-   deploys that commit. Install the accepted TestFlight build.
+   deploys that commit. Install the accepted enterprise build from `/field/install`.
 7. Create only a few labeled smoke inventory records through the new field app;
    sync, view on web, fulfill one request, print/read one tag, and open one BOL.
    There is no import or legacy reconciliation.
 8. If launch fails, stop the new app, revoke field devices, and return to the
-   previous Vercel/TestFlight build. Preserve local unsynced data for diagnosis;
-   use Turso PITR only through the runbook.
+   previous Vercel deploy + the previous enterprise IPA build (operators
+   re-install the older build from `/field/install`). Preserve local unsynced
+   data for diagnosis; use Turso PITR only through the runbook.
 
 **Verify**:
 warehouse checklist is fully PASS, `main` commit equals the Production deploy,
@@ -397,7 +459,8 @@ shows mechanical moves in the separate archive commit.
 - **BOL/web**: authenticated idempotent upload/retry, `storage_url` link,
   generic health errors, Sentry redaction.
 - **Manual**: one warehouse day covering iPhone, sled, printer, camera/OCR,
-  offline/reconnect, QR auth, TestFlight; second phone only if available.
+  offline/reconnect, QR auth, in-house install + stale-build banner; second
+  phone only if available.
 
 ## Done criteria
 
@@ -427,8 +490,11 @@ ALL must hold:
 - [ ] field/web have real focused tests; full tests/typecheck/lint/build/export
       and minimal CI pass
 - [ ] Production domain/Entra/health/Sentry/PITR/rollback checks pass
-- [ ] development + production EAS profiles and TestFlight hardware acceptance
-      pass; required TSL/Apple approvals are available
+- [ ] `build-field-ios.yml` is actionlint-clean + dry-runnable; once the
+      operator's `.p12` + provisioning profile are added as repo secrets, a
+      signed enterprise IPA builds, deploys to Blob, and installs via
+      `/field/install` + `itms-services` (incl. the iOS 18+ Allow & Restart
+      trust step); the field app's stale-build banner fires on an older install
 - [ ] reviewed `rewrite/expo` merges to `main`; that commit deploys Production;
       empty-launch smoke workflow and observation window pass
 - [ ] Python archive happens only afterward in its own mechanical commit
@@ -447,8 +513,8 @@ ALL must hold:
   produces corruption beyond the constrained workflow.
 - Schema mismatch would require discarding unsynced local data.
 - A secret appears in Git, logs, Sentry, or the mobile bundle; revoke it first.
-- Real sled/printer/BOL/offline/TestFlight acceptance or required Apple/TSL
-  approval is unavailable.
+- Real sled/printer/BOL/offline/in-house-install acceptance or required
+  Apple/TSL approval is unavailable.
 - A verification fails twice after one evidence-based fix, or source drift
   invalidates a load-bearing current-state claim.
 - Anyone requests import, legacy reconciliation, dual-write, or pre-launch

@@ -15,7 +15,7 @@
         ],
         "NSCameraUsageDescription": "The camera scans bill of lading documents during check-in and scans QR codes to link this device to your web account."
       },
-      "bundleIdentifier": "com.jcourson.field",
+      "bundleIdentifier": "com.brasfieldgorrie.rfid-field",
       "appleTeamId": "KDEGJ8G33R"
     },
     "android": {

@@ -155,6 +155,19 @@ async function getGetToken(pathname: string): Promise<IssuedSignedToken> {
 export async function issueBolGetUrl(storageUrl: string): Promise<string | null> {
   if (!env.BLOB_READ_WRITE_TOKEN) return null;
   const pathname = pathnameFromStorageUrl(storageUrl);
+  return presignedGetUrl(pathname);
+}
+
+/**
+ * Mint a short-lived presigned GET URL for an arbitrary pathname in the private
+ * `rfid-bol` store. Used by the BOL tag page (via {@link issueBolGetUrl}) and by
+ * the field-version route to read `field-ios/latest.json` without exposing the
+ * read-write token. Returns `null` when Blob is not configured. The get-token
+ * is cached per pathname (see {@link getGetToken}) so repeat calls are a local
+ * HMAC, not a control-API round-trip.
+ */
+export async function presignedGetUrl(pathname: string): Promise<string | null> {
+  if (!env.BLOB_READ_WRITE_TOKEN) return null;
   const token = await getGetToken(pathname);
   const { presignedUrl } = await presignUrl(token, {
     operation: "get",

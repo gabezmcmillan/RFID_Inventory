@@ -15,6 +15,7 @@ import { PortalHost } from "@rn-primitives/portal";
 import { DatabaseProvider, useDbStatus } from "../src/db/provider";
 import { SyncProvider } from "../src/sync/SyncProvider";
 import { LockProvider } from "../src/auth/LockProvider";
+import { VersionCheckProvider } from "../src/version/VersionCheckProvider";
 import { readerService } from "../src/reader/readerService";
 import { useEffect } from "react";
 
@@ -56,7 +57,8 @@ export default function RootLayout(): React.ReactNode {
     <DatabaseProvider>
       <LockProvider>
         <Gate>
-          <SyncProvider>
+          <VersionCheckProvider>
+            <SyncProvider>
             <Stack screenOptions={{ headerShown: true }}>
               <Stack.Screen name="index" options={{ title: "RFID Field" }} />
               <Stack.Screen name="check-in" options={{ title: "Check In" }} />
@@ -74,7 +76,8 @@ export default function RootLayout(): React.ReactNode {
               <Stack.Screen name="set-pin" options={{ title: "Set Device PIN" }} />
               <Stack.Screen name="dev-tools" options={{ title: "Dev Tools" }} />
             </Stack>
-          </SyncProvider>
+            </SyncProvider>
+          </VersionCheckProvider>
         </Gate>
       </LockProvider>
       <StatusBar style="auto" />

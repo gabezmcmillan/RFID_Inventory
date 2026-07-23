@@ -1,0 +1,363 @@
+name: Build Field iOS
+
+# Builds a signed iOS .ipa for the RFID field app using Brasfield & Gorrie's
+# Apple Developer Enterprise distribution cert + provisioning profile, then
+# deploys it to Vercel Blob for in-house (itms-services) install. No EAS /
+# TestFlight in the loop — pure xcodebuild on a GitHub-hosted macOS runner,
+# modeled on the magnus project's build-mobile-ios.yml.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   IOS_DIST_CERT_BASE64              base64 of the iPhone Distribution .p12 (enterprise)
+#   IOS_DIST_CERT_PASSWORD            password to decrypt the .p12
+#   IOS_PROVISIONING_PROFILE_BASE64  base64 of the .mobileprovision for
+#                                     com.brasfieldgorrie.rfid-field
+#   BLOB_READ_WRITE_TOKEN            the web app's rfid-bol Blob store RW token
+#
+# See docs/operations/ios-ci-secrets.md for how to obtain and encode each.
+#
+# CI cannot be fully validated without the operator's cert/profile secrets —
+# the workflow is lint-clean and dry-runnable via workflow_dispatch, and fails
+# with a clear message when a secret is absent.
+
+on:
+  push:
+    branches: [main, "rewrite/expo"]
+    paths:
+      - "apps/field/**"
+      - "packages/domain/**"
+      - "packages/reader-protocol/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/build-field-ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-ios:
+    name: Build Field IPA
+    runs-on: macos-15-xlarge
+    timeout-minutes: 60
+    outputs:
+      marketing_version: ${{ steps.version.outputs.marketing_version }}
+      build_number: ${{ steps.version.outputs.build_number }}
+      full_version: ${{ steps.version.outputs.full_version }}
+    env:
+      WORKSPACE: apps/field/ios/field.xcworkspace
+      SCHEME: field
+      TEAM_ID: KDEGJ8G33R
+      SIGNING_IDENTITY: "iPhone Distribution: Brasfield & Gorrie, LLC"
+      BUNDLE_ID: com.brasfieldgorrie.rfid-field
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Expo SDK 57 / expo-modules-core uses Swift 6 / @MainActor isolation
+      # syntax that the default Xcode 16.x on macos-15 runners can't compile.
+      # Pin Xcode 26.0.1 (symlinked at Xcode_26.0.app) so the runner SDK matches
+      # what expo-modules-core was authored against (same pin as magnus).
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
+          xcodebuild -version
+          swift --version
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/field/ios/Pods
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: pods-${{ runner.os }}-${{ hashFiles('apps/field/ios/Podfile.lock') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+
+      - name: Validate signing secrets
+        env:
+          IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          missing=()
+          [ -z "$IOS_DIST_CERT_BASE64" ] && missing+=("IOS_DIST_CERT_BASE64")
+          [ -z "$IOS_DIST_CERT_PASSWORD" ] && missing+=("IOS_DIST_CERT_PASSWORD")
+          [ -z "$IOS_PROVISIONING_PROFILE_BASE64" ] && missing+=("IOS_PROVISIONING_PROFILE_BASE64")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing iOS signing secrets: ${missing[*]}"
+            echo "See docs/operations/ios-ci-secrets.md for how to obtain and encode each."
+            echo "Trigger this workflow again once Scott Coleman's .p12 + the provisioning profile are added as repo secrets."
+            exit 1
+          fi
+
+      - name: Resolve build version
+        id: version
+        run: |
+          MARKETING_VERSION=$(jq -r '.expo.version' apps/field/app.json)
+          BUILD_NUMBER="${{ github.run_number }}"
+          FULL_VERSION="${MARKETING_VERSION}+${BUILD_NUMBER}"
+          {
+            echo "marketing_version=$MARKETING_VERSION"
+            echo "build_number=$BUILD_NUMBER"
+            echo "full_version=$FULL_VERSION"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building RFID Field $FULL_VERSION"
+
+      - name: Patch app.json (bundle ID + build number)
+        env:
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: |
+          # `expo prebuild` bakes app.json.expo.ios.* into the native project.
+          # Rewrite the build number before prebuild so the installed app's
+          # CFBundleVersion (Application.nativeBuildVersion) equals the run
+          # number the field version-check compares against. The bundle ID is
+          # already com.brasfieldgorrie.rfid-field in the checked-in app.json
+          # (updated pre-launch); re-stating it here keeps CI authoritative.
+          tmp=$(mktemp)
+          jq \
+            --arg id "$BUNDLE_ID" \
+            --arg build "$BUILD_NUMBER" \
+            '.expo.ios.bundleIdentifier = $id | .expo.ios.buildNumber = $build' \
+            apps/field/app.json > "$tmp"
+          mv "$tmp" apps/field/app.json
+          echo "Patched app.json:"
+          echo "  ios.bundleIdentifier → $BUNDLE_ID"
+          echo "  ios.buildNumber      → $BUILD_NUMBER"
+
+      - name: Generate native iOS project
+        working-directory: apps/field
+        run: pnpm prebuild
+
+      - name: Install CocoaPods dependencies
+        working-directory: apps/field/ios
+        run: pod install --repo-update
+
+      - name: Import code-signing certificate
+        env:
+          DISTRIBUTION_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          CERT_PATH="$RUNNER_TEMP/distribution-cert.p12"
+          echo "$DISTRIBUTION_CERT_BASE64" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+          rm -f "$CERT_PATH"
+
+      - name: Import provisioning profile
+        env:
+          PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$PROFILE_B64" ]; then
+            echo "Missing IOS_PROVISIONING_PROFILE_BASE64 repo secret."
+            exit 1
+          fi
+
+          PROFILE_PATH="$RUNNER_TEMP/rfid-field.mobileprovision"
+          printf '%s' "$PROFILE_B64" | base64 --decode > "$PROFILE_PATH"
+
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILE_PATH")")
+          PROFILE_REAL_NAME=$(/usr/libexec/PlistBuddy -c "Print Name" /dev/stdin <<< "$(security cms -D -i "$PROFILE_PATH")")
+          PROFILE_APP_ID=$(/usr/libexec/PlistBuddy -c "Print Entitlements:application-identifier" /dev/stdin <<< "$(security cms -D -i "$PROFILE_PATH")")
+          echo "Loaded provisioning profile:"
+          echo "  UUID:        $PROFILE_UUID"
+          echo "  Name:        $PROFILE_REAL_NAME"
+          echo "  Application: $PROFILE_APP_ID"
+
+          # Sanity check — bail loudly if the profile's app ID doesn't end with
+          # the bundle ID we're building (catches "uploaded the wrong file").
+          case "$PROFILE_APP_ID" in
+            *".${BUNDLE_ID}"|*"${BUNDLE_ID}")
+              echo "Profile app-id matches expected bundle id ($BUNDLE_ID)";;
+            *)
+              echo "Profile app-id ($PROFILE_APP_ID) does NOT match expected bundle id ($BUNDLE_ID)"
+              exit 1;;
+          esac
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "PROFILE_NAME=$PROFILE_REAL_NAME" >> "$GITHUB_ENV"
+
+      - name: Build & archive
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: |
+          mkdir -p build
+          xcodebuild archive \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -archivePath "$GITHUB_WORKSPACE/build/field.xcarchive" \
+            MARKETING_VERSION="$MARKETING_VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            "CODE_SIGN_IDENTITY=$SIGNING_IDENTITY" \
+            "PROVISIONING_PROFILE_SPECIFIER=$PROFILE_NAME" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH"
+
+      - name: Create ExportOptions.plist
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>enterprise</string>
+              <key>teamID</key>
+              <string>${TEAM_ID}</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>${BUNDLE_ID}</key>
+                  <string>${PROFILE_NAME}</string>
+              </dict>
+              <key>compileBitcode</key>
+              <false/>
+              <key>stripSwiftSymbols</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Export IPA
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$GITHUB_WORKSPACE/build/field.xcarchive" \
+            -exportPath "$GITHUB_WORKSPACE/build/ipa" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+          ls -la "$GITHUB_WORKSPACE/build/ipa"
+
+      - name: Upload IPA artifact
+        id: upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfid-field-${{ github.run_number }}-ios
+          path: build/ipa/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build summary
+        if: always()
+        run: |
+          {
+            echo "## RFID Field iOS Build"
+            echo ""
+            echo "- **Version**: \`${{ steps.version.outputs.full_version }}\` (marketing \`${{ steps.version.outputs.marketing_version }}\`, build \`${{ steps.version.outputs.build_number }}\`)"
+            echo "- **Bundle ID**: \`${BUNDLE_ID}\`"
+            echo "- **Provisioning profile**: \`${PROFILE_NAME:-unknown}\`"
+            echo "- **Signing identity**: \`${SIGNING_IDENTITY}\`"
+            echo "- **Branch**: ${{ github.ref_name }}"
+            echo "- **Commit**: \`${{ github.sha }}\`"
+            echo ""
+            echo "Artifact: \`rfid-field-${{ github.run_number }}-ios\` (download from this run's Artifacts section)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+
+  # ── Deploy IPA to Vercel Blob for in-house install ────────────────────────
+  # Runs on a cheap ubuntu-latest runner after build-ios. Downloads the IPA
+  # artifact and hands it to apps/web/scripts/deploy-field-ipa.mjs, which
+  # uploads the IPA + a latest.json to the private rfid-bol Blob store. The
+  # /field/install page + /api/field/manifest.plist route serve the OTA
+  # install; the IPA never proxies through Next.js.
+  deploy-blob:
+    name: Deploy IPA to Blob
+    needs: build-ios
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BUNDLE_ID: com.brasfieldgorrie.rfid-field
+      BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate deploy secrets
+        run: |
+          if [ -z "$BLOB_READ_WRITE_TOKEN" ]; then
+            echo "Missing BLOB_READ_WRITE_TOKEN repo secret (the web app's rfid-bol Blob store RW token)."
+            echo "The IPA was built (see the build-ios artifact) but was NOT deployed."
+            exit 1
+          fi
+
+      - name: Download IPA artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rfid-field-${{ github.run_number }}-ios
+          path: ./ipa
+
+      - name: Deploy IPA + latest.json to Blob
+        env:
+          MARKETING_VERSION: ${{ needs.build-ios.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ needs.build-ios.outputs.build_number }}
+        run: |
+          IPA_PATH=""
+          for f in ./ipa/*.ipa; do
+            [ -e "$f" ] || continue
+            IPA_PATH="$f"
+            break
+          done
+          if [ -z "$IPA_PATH" ]; then
+            echo "No .ipa file found in downloaded artifact."
+            ls -la ./ipa || true
+            exit 1
+          fi
+          node apps/web/scripts/deploy-field-ipa.mjs \
+            --ipa "$IPA_PATH" \
+            --build-number "$BUILD_NUMBER" \
+            --marketing-version "$MARKETING_VERSION" \
+            --bundle-id "$BUNDLE_ID" \
+            --display-name "RFID Field"

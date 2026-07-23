@@ -37,6 +37,7 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "1.0.0-rc.4",
     "expo": "~57.0.8",
+    "expo-application": "^57.0.2",
     "expo-camera": "~57.0.1",
     "expo-document-picker": "~57.0.1",
     "expo-file-system": "~57.0.1",
@@ -76,6 +77,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "prebuild": "expo prebuild --platform ios --clean",
     "export": "expo export --platform ios"
   }
 }

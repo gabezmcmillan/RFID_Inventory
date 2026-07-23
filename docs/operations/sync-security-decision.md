@@ -476,7 +476,7 @@ must be verified on a physical iPhone. Operator checklist (max 5):
   4.5MB Hermes bundle + `metadata.json` under `dist/` (gitignored).
 - `docs/operations/production-launch.md` (resource/env names, migration
   verification, Turso PITR/backup, device+token revoke, deploy checklist,
-  rollback to previous Vercel/TestFlight build) and
+  rollback to previous Vercel deploy + enterprise IPA build) and
   `docs/operations/warehouse-acceptance.md` (Phase 6 warehouse-day checklist).
 
 ### Production DB verification (run 2026-07-23, disposable-free)
@@ -811,3 +811,89 @@ active/deactivate/revoke, last-seen), `FIELD_OPERATOR_ALLOWLIST` enforcement, an
 the Turso credential mint endpoint keyed off an authenticated device session.
 All stay on the QR flow. No code changed; this is the assessment. Commit
 (pending) — doc-only batch.
+
+## Phase 5 — enterprise in-house iOS distribution (operator decision, 2026-07-23)
+
+**Decision: ship iOS via enterprise in-house distribution, not TestFlight/EAS.**
+The org can't use TestFlight for the field app, so Phase 5 ports the `magnus`
+project's build job (Expo CNG + raw `xcodebuild archive`/`-exportArchive` on a
+GitHub-hosted macOS runner, manual signing with B&G's Apple Developer
+Enterprise cert, temp keychain per run, `jq`-patched `app.json`, provisioning-
+profile validation) and adds a US distribution path that `magnus` doesn't have:
+IPA → Vercel Blob, served to iPhones via a web install page +
+`manifest.plist` (`itms-services://`). No EAS, no App Store submission.
+
+**Single environment.** Bundle ID `com.brasfieldgorrie.rfid-field` (the
+checked-in `app.json` is updated to it pre-launch; CI re-states it
+authoritatively via `jq`). Marketing version from `app.json` `expo.version`;
+**build number = the GitHub run number**, baked into `CFBundleVersion` so
+`Application.nativeBuildVersion` is what the field version-check compares
+against. `ExportOptions` `method: enterprise`. Required repo secrets:
+`IOS_DIST_CERT_BASE64`, `IOS_DIST_CERT_PASSWORD`,
+`IOS_PROVISIONING_PROFILE_BASE64`, `BLOB_READ_WRITE_TOKEN` (documented in
+`docs/operations/ios-ci-secrets.md`).
+
+**IPA storage — deviation from "public access", documented.** The instruction
+said "public access for the IPA object" while reusing "the web app's existing
+blob store." Those conflict: the existing `rfid-bol` store is **private**
+(verified during the Phase-1 BOL presigned-URL cleanup), and a private store
+cannot host public objects. Resolution: reuse the existing private store and
+serve the IPA via a **short-lived presigned GET URL** minted by the
+`/api/field/manifest.plist` route at install time (the same private-store
+pattern the BOL tag page uses for BOL documents, and the same pattern `magnus`
+uses with Azure SAS URLs for its private IPA store). This avoids provisioning a
+new cloud resource and avoids exposing the read-write token; the IPA is still
+reachable by iOS (a plain HTTPS GET, no cookies/auth) for the OTA install. The
+deploy job (`apps/web/scripts/deploy-field-ipa.mjs`) uploads the IPA with
+`access: 'private'`, `multipart: true`, `addRandomSuffix: false`,
+`allowOverwrite: true` to `field-ios/{marketingVersion}/{buildNumber}.ipa` and
+writes `field-ios/latest.json`. The IPA is **never proxied through a Next.js
+route** (the serverless body cap + double bandwidth would defeat the point).
+
+**Web install surface:**
+- `/field/install` — public (a fresh phone has no session), **not in nav**;
+  `itms-services://` install button + human steps incl. the iOS 18+ first-
+  install **Settings → General → VPN & Device Management → Brasfield & Gorrie,
+  LLC → Allow & Restart** step and the `ppq.apple.com` reachability note.
+- `GET /api/field/manifest.plist` — `text/xml` `manifest.plist`; the
+  `software-package` URL is a fresh presigned GET for the IPA; includes
+  `bundle-identifier`/`bundle-version`/`title`.
+- `GET /api/field/version` — latest `buildNumber` + install-page URL (reads
+  `field-ios/latest.json` via a presigned GET; 404 when no build deployed, 503
+  when Blob unconfigured).
+
+**Field version check:** on launch + foreground (with connectivity), fetch
+`GET /api/field/version`, compare `Application.nativeBuildVersion` to the
+fetched `buildNumber` (pure, deterministic logic in
+`apps/field/src/version/versionCheck.ts` with unit tests; the provider injects
+the fetch + the native build number so the reducer stays pure), and show a
+**non-blocking, dismissible banner** linking to `/field/install` when the
+installed build is older. `expo-application` is added as a field dependency for
+`nativeBuildVersion` (lazy-imported so the JS-only `expo export` and unit tests
+don't require the native binary).
+
+**Enterprise caveats recorded (operator-facing):**
+- **iOS 18+ first install** requires the manual Settings → VPN & Device
+  Management → Allow & Restart trust step; the device must reach
+  `ppq.apple.com`. The install page walks the operator through it; once per
+  device.
+- **Cert expiry 2027-07-26 kills installed apps.** When the iPhone Distribution
+  cert expires, every installed field app stops launching until it is re-signed
+  and reinstalled. Cert + profile renewal is in the maintenance section of
+  `docs/operations/ios-ci-secrets.md` (treat 2027-04 as the action date:
+  renew, rebuild, redeploy, re-install before the old cert lapses).
+
+**Expo OTA (JS `expo-updates`) — deferred.** Not implemented in this phase;
+noted in the plan as a recommended post-launch addition. Until then, native
+module/permission, credential-model, or incompatible schema changes require a
+new binary (a new CI build + redeploy + re-install).
+
+**What remains unverified until the operator's `.p12` arrives:** the workflow
+is `actionlint`-clean and `workflow_dispatch`-dry-runnable and fails with a
+clear message when a secret is absent, but a real signed IPA build + OTA install
+cannot be exercised until `IOS_DIST_CERT_BASE64` /
+`IOS_DIST_CERT_PASSWORD` / `IOS_PROVISIONING_PROFILE_BASE64` are added as repo
+secrets (Scott Coleman's `.p12` + the provisioning profile). The version-check
+compare/banner logic, the `/api/field/version` and `/api/field/manifest.plist`
+routes, and the install page are covered by deterministic tests and are
+gate-green now.

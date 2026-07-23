@@ -33,7 +33,12 @@ Add only what is missing; never copy Development values or expose a secret as
   callback `https://<prod>/api/auth/callback/microsoft`
 - `BLOB_READ_WRITE_TOKEN` (Vercel Blob, for BOL presigned upload grants; the
   `rfid-bol` store is **private** — uploads use presigned PUT, the tag page mints
-  a presigned GET)
+  a presigned GET). The same token is the `BLOB_READ_WRITE_TOKEN` repo secret
+  used by the `build-field-ios.yml` deploy job to upload the enterprise IPA +
+  `field-ios/latest.json` (also private; served via presigned GET). The iOS CI
+  signing secrets (`IOS_DIST_CERT_BASE64`, `IOS_DIST_CERT_PASSWORD`,
+  `IOS_PROVISIONING_PROFILE_BASE64`) live in GitHub repo secrets, not Vercel —
+  see `docs/operations/ios-ci-secrets.md`.
 - `SENTRY_DSN` (web) and the field `SENTRY_DSN` baked as `EXPO_PUBLIC_*`? **No** —
   Sentry DSN is public-safe but keep it server-injected, not in the bundle.
   **(OPERATOR DECISION 2026-07-23: Sentry SKIPPED for launch — `SENTRY_DSN` is
@@ -76,26 +81,34 @@ Record the restore contact / retention window here before launch:
 3. CI green on the commit to merge.
 4. Merge the reviewed `rewrite/expo` PR to `main`; Vercel Production deploys
    that commit (confirm the deployed SHA == `main` HEAD).
-5. Install the accepted TestFlight build; record its build number below.
+5. Install the accepted enterprise IPA build from `/field/install` (the
+   `build-field-ios.yml` deploy job uploaded it to Blob; record its build number
+   below). On a fresh iOS 18+ device, complete the Settings → VPN & Device
+   Management → Brasfield & Gorrie, LLC → Allow & Restart trust step.
 6. Create a few labeled smoke inventory records; sync; view on web; fulfill one
    request; print/read one tag; open one BOL. No import, no legacy reconciliation.
 
 - Accepted `main` SHA: ____________________
-- Accepted TestFlight build #: ____________________
+- Accepted enterprise IPA build # (run number): ____________________
 
 ## Rollback
 
 If launch fails: stop the new app, revoke field devices, and return to the
-**previous** Vercel deployment + TestFlight build. Preserve local unsynced data
+**previous** Vercel deployment + the previous enterprise IPA build (operators
+re-install the older build from `/field/install`). Preserve local unsynced data
 for diagnosis; use Turso PITR only through this runbook.
 
 - Previous Vercel deployment (Production) URL/SHA: ____________________
-- Previous TestFlight build #: ____________________
+- Previous enterprise IPA build # (run number): ____________________
 - Rollback steps:
   1. In Vercel → Project → Deployments, promote the previous Production
      deployment (the one recorded above) to Production.
-  2. In App Store Connect / TestFlight, roll back the field app to the previous
-     accepted build (or release it as the current TestFlight build).
+  2. Re-run `build-field-ios.yml` at the previous accepted commit (or point
+     operators to the previously deployed IPA build) and have them re-install
+     from `/field/install`. (There is no TestFlight/App Store rollback — the
+     IPA is content-addressed in Blob at
+     `field-ios/{marketingVersion}/{buildNumber}.ipa`, so an older build stays
+     installable until its cert/profile lapse.)
   3. `node scripts/ops/revoke-device.mjs <deviceId>` for each active field
      device, or rotate `rfid-warehouse` keys to invalidate all minted tokens.
   4. If warehouse data was corrupted, restore `rfid-warehouse` from the
