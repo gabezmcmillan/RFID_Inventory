@@ -5,18 +5,64 @@
 //   node scripts/tailscale/tailscale.mjs setup   -> configure `tailscale serve` for localhost:3000
 //   node scripts/tailscale/tailscale.mjs doctor  -> read-only verification (PASS/WARN/FAIL)
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import { discoverFieldOrigin, classifyServe, classifyFunnel } from "./parse.mjs";
+import { resolveTailscaleCommand, fellBackFromPathToApp } from "./resolve.mjs";
 
 const LOCAL_WEB = "http://127.0.0.1:3000";
 const HEALTH_PATH = "/api/health";
 const FETCH_TIMEOUT_MS = 3000;
+const MAC_DOWNLOAD_URL = "https://tailscale.com/download/mac";
 
-function runTailscale(args) {
-  const res = spawnSync("tailscale", args, { encoding: "utf8", maxBuffer: 1 << 24 });
-  if (res.error) {
-    return { ok: false, missing: res.error.code === "ENOENT", error: res.error };
+// ---------------------------------------------------------------------------
+// Command resolution: pick ONE `tailscale` binary and use it for every call.
+// On macOS the Homebrew/PATH CLI and the GUI-app-bundled CLI talk to different
+// daemons; the PATH CLI can fail to connect even when the Mac app is running.
+// We prefer a candidate whose `status --json` actually connects, so GUI users
+// don't need manual path commands. Never mix binaries.
+// ---------------------------------------------------------------------------
+function buildCandidates() {
+  const candidates = [];
+  if (process.platform === "darwin") {
+    candidates.push({ path: "/Applications/Tailscale.app/Contents/MacOS/Tailscale", source: "app" });
+    candidates.push({
+      path: path.join(homedir(), "Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+      source: "app",
+    });
   }
-  return { ok: res.status === 0, status: res.status, stdout: res.stdout, stderr: res.stderr };
+  candidates.push({ path: "tailscale", source: "path" });
+  return candidates;
+}
+
+// Probe one candidate: { exists, connects }. `connects` means the daemon is
+// reachable (`status --json` exits 0); a signed-out-but-running daemon still
+// exits 0, so connects != signed-in. Receives the candidate descriptor.
+function probeCandidate(c) {
+  const cmd = c.path;
+  if (cmd !== "tailscale" && !existsSync(cmd)) {
+    return { exists: false, connects: false };
+  }
+  const res = spawnSync(cmd, ["status", "--json"], { encoding: "utf8", maxBuffer: 1 << 24 });
+  if (res.error) {
+    return { exists: res.error.code !== "ENOENT", connects: false };
+  }
+  return { exists: true, connects: res.status === 0 };
+}
+
+function resolveCommand() {
+  return resolveTailscaleCommand(buildCandidates(), probeCandidate);
+}
+
+function makeRunner(command) {
+  return function runTailscale(args) {
+    const res = spawnSync(command, args, { encoding: "utf8", maxBuffer: 1 << 24 });
+    if (res.error) {
+      return { ok: false, missing: res.error.code === "ENOENT", error: res.error };
+    }
+    return { ok: res.status === 0, status: res.status, stdout: res.stdout, stderr: res.stderr };
+  };
 }
 
 function parseJsonOr(text, fallback) {
@@ -46,10 +92,52 @@ function line(level, msg) {
   process.stdout.write(`${tag}  ${msg}\n`);
 }
 
+function sourceLabel(source) {
+  return source === "app" ? "macOS app" : source === "path" ? "PATH" : "unknown";
+}
+
+// Resolve the binary, print install/open-vs-sign-in remediation on failure.
+// Returns { run, command } or exits the process.
+function resolveOrFail() {
+  const r = resolveCommand();
+
+  if (!r.anyExists) {
+    line("FAIL", "tailscale CLI not found.");
+    if (process.platform === "darwin") {
+      line("INFO", `Install/open the Tailscale Mac app: ${MAC_DOWNLOAD_URL}`);
+    } else {
+      line("INFO", "Install Tailscale: https://tailscale.com/download");
+    }
+    process.exit(1);
+  }
+
+  // PATH CLI exists but can't connect while the Mac app works -> one INFO line,
+  // not a false sign-in error.
+  if (fellBackFromPathToApp(r)) {
+    line("INFO", `PATH 'tailscale' could not connect; using the macOS app CLI instead.`);
+  }
+
+  if (!r.connects) {
+    // A binary exists but no daemon is reachable -> open/start Tailscale, NOT sign in.
+    line("FAIL", `Could not connect to the Tailscale daemon via ${sourceLabel(r.source)} CLI.`);
+    if (process.platform === "darwin") {
+      const appExists = r.probed.some((c) => c.source === "app" && c.exists);
+      line("INFO", appExists
+        ? "Open the Tailscale Mac app (so the daemon runs), then re-run."
+        : `Install/open the Tailscale Mac app: ${MAC_DOWNLOAD_URL}`);
+    } else {
+      line("INFO", "Start tailscaled (e.g. `sudo tailscaled`), then re-run.");
+    }
+    process.exit(1);
+  }
+
+  return { run: makeRunner(r.command), command: r.command, source: r.source };
+}
+
 // Check Funnel state. Returns { state, reason } and prints FAIL for on/unknown.
 // Returns true if safe to continue (Funnel off), false if setup must abort.
-function checkFunnelOrFail() {
-  const fr = runTailscale(["funnel", "status", "--json"]);
+function checkFunnelOrFail(run) {
+  const fr = run(["funnel", "status", "--json"]);
   const fun = classifyFunnel(parseJsonOr(fr.stdout, null), fr.ok);
   if (fun.state === "on") {
     line("FAIL", "Funnel is ON. Plan 011 uses the private tailnet only — Funnel exposes the node to the public internet.");
@@ -69,13 +157,9 @@ function checkFunnelOrFail() {
 // SETUP
 // ---------------------------------------------------------------------------
 async function setup() {
-  const cli = runTailscale(["--version"]);
-  if (!cli.ok && cli.missing) {
-    line("FAIL", "tailscale CLI not found. Install: https://tailscale.com/download/mac");
-    process.exit(1);
-  }
+  const { run } = resolveOrFail();
 
-  const statusRes = runTailscale(["status", "--json"]);
+  const statusRes = run(["status", "--json"]);
   const status = parseJsonOr(statusRes.stdout, null);
   const origin = discoverFieldOrigin(status);
   if (!origin.ok) {
@@ -85,9 +169,9 @@ async function setup() {
   }
 
   // Funnel must be OFF before we touch Serve — never auto-disable it.
-  if (!checkFunnelOrFail()) process.exit(1);
+  if (!checkFunnelOrFail(run)) process.exit(1);
 
-  const serveRes = runTailscale(["serve", "status", "--json"]);
+  const serveRes = run(["serve", "status", "--json"]);
   const serve = parseJsonOr(serveRes.stdout, null);
   const cls = classifyServe(serve);
 
@@ -99,7 +183,7 @@ async function setup() {
     line("INFO", "  tailscale serve reset && tailscale serve --bg http://127.0.0.1:3000");
     process.exit(1);
   } else {
-    const add = runTailscale(["serve", "--bg", LOCAL_WEB]);
+    const add = run(["serve", "--bg", LOCAL_WEB]);
     if (!add.ok) {
       line("FAIL", `Failed to enable Tailscale Serve: ${(add.stderr || "").trim() || "unknown error"}`);
       process.exit(1);
@@ -128,14 +212,10 @@ async function setup() {
 async function doctor() {
   let hardFail = 0;
 
-  const cli = runTailscale(["--version"]);
-  if (!cli.ok && cli.missing) {
-    line("FAIL", "tailscale CLI not found. Install: https://tailscale.com/download/mac");
-    process.exit(1);
-  }
-  line("PASS", "tailscale CLI found.");
+  const { run, source } = resolveOrFail();
+  line("PASS", `tailscale CLI found (${sourceLabel(source)}).`);
 
-  const statusRes = runTailscale(["status", "--json"]);
+  const statusRes = run(["status", "--json"]);
   const status = parseJsonOr(statusRes.stdout, null);
   const origin = discoverFieldOrigin(status);
   if (!origin.ok) {
@@ -146,7 +226,7 @@ async function doctor() {
     line("PASS", `Signed in; Field API URL: ${origin.origin}`);
   }
 
-  const serveRes = runTailscale(["serve", "status", "--json"]);
+  const serveRes = run(["serve", "status", "--json"]);
   const serve = parseJsonOr(serveRes.stdout, null);
   const cls = classifyServe(serve);
   if (cls.mapsToLocal3000) {
@@ -161,7 +241,7 @@ async function doctor() {
   }
 
   // Funnel ON or unknown is a security/setup failure -> FAIL (never auto-disable).
-  const funnelRes = runTailscale(["funnel", "status", "--json"]);
+  const funnelRes = run(["funnel", "status", "--json"]);
   const fun = classifyFunnel(parseJsonOr(funnelRes.stdout, null), funnelRes.ok);
   if (fun.state === "on") {
     line("FAIL", "Funnel is ON. Plan 011 uses the private tailnet only.");
