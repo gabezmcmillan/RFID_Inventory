@@ -6,7 +6,11 @@
 
 import { EVENT_FILTERS, listEvents, type EventRow } from "@rfid/domain";
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
+
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 import { useDb } from "../db/provider";
 
@@ -28,20 +32,20 @@ export function EventsScreen(): React.ReactNode {
   }, [load]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.chips}>
+    <View className="flex-1 gap-2 p-4">
+      <View className="flex-row flex-wrap gap-2">
         {FILTERS.map((f) => (
           <Pressable
             key={f}
             onPress={() => setFilter(f)}
-            style={[styles.chip, filter === f && styles.chipActive]}
+            className={cn("rounded-full px-3 py-1.5", filter === f ? "bg-brand-info" : "bg-muted")}
           >
-            <Text style={[styles.chipText, filter === f && styles.chipTextActive]}>{f}</Text>
+            <Text className={cn("text-[13px]", filter === f ? "text-white font-semibold" : "text-foreground")}>{f}</Text>
           </Pressable>
         ))}
       </View>
-      <TextInput
-        style={styles.input}
+      <Input
+        className="font-mono"
         value={epc}
         onChangeText={setEpc}
         placeholder="Filter by EPC (substring)"
@@ -49,23 +53,23 @@ export function EventsScreen(): React.ReactNode {
         autoCorrect={false}
       />
 
-      <ScrollView contentContainerStyle={styles.list}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40, gap: 6 }}>
         {events.length === 0 ? (
-          <Text style={styles.hint}>No events match.</Text>
+          <Text className="mt-3 text-sm italic text-muted-foreground">No events match.</Text>
         ) : (
           events.map((e) => (
-            <View key={e.id} style={styles.row}>
-              <View style={styles.rowHead}>
-                <Text style={styles.action}>{e.action}</Text>
-                <Text style={styles.ts}>{e.ts}</Text>
+            <View key={e.id} className="rounded-md border border-border bg-card p-2.5">
+              <View className="flex-row items-center justify-between">
+                <Text className="text-[13px] font-bold text-brand-info">{e.action}</Text>
+                <Text className="text-[11px] text-muted-foreground/70">{e.ts}</Text>
               </View>
-              {e.epc ? <Text style={styles.mono}>{e.epc}</Text> : null}
-              <Text style={styles.meta}>
+              {e.epc ? <Text className="mt-0.5 font-mono text-[11px] text-muted-foreground">{e.epc}</Text> : null}
+              <Text className="mt-0.5 text-xs text-muted-foreground">
                 {[e.item_type, e.bol_number && `BOL ${e.bol_number}`, e.building && `Bldg ${e.building}`, e.vendor]
                   .filter(Boolean)
                   .join(" · ")}
               </Text>
-              {e.detail ? <Text style={styles.detail}>{e.detail}</Text> : null}
+              {e.detail ? <Text className="mt-0.5 text-xs italic text-muted-foreground">{e.detail}</Text> : null}
             </View>
           ))
         )}
@@ -73,22 +77,3 @@ export function EventsScreen(): React.ReactNode {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, gap: 8 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: "#eee" },
-  chipActive: { backgroundColor: "#06c" },
-  chipText: { fontSize: 13, color: "#333" },
-  chipTextActive: { color: "white", fontWeight: "600" },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 14, fontFamily: "monospace" },
-  list: { paddingBottom: 40, gap: 6 },
-  row: { borderWidth: 1, borderColor: "#eee", borderRadius: 6, padding: 10, backgroundColor: "white" },
-  rowHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  action: { fontSize: 13, fontWeight: "700", color: "#06c" },
-  ts: { fontSize: 11, color: "#999" },
-  mono: { fontFamily: "monospace", fontSize: 11, color: "#444", marginTop: 2 },
-  meta: { fontSize: 12, color: "#666", marginTop: 2 },
-  detail: { fontSize: 12, color: "#555", marginTop: 2, fontStyle: "italic" },
-  hint: { color: "#888", fontStyle: "italic", marginTop: 12 },
-});

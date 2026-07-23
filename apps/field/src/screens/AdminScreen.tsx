@@ -24,7 +24,12 @@ import {
   type Tag,
 } from "@rfid/domain";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 import { useDb } from "../db/provider";
 import { PinPrompt, saveAdminPin } from "./adminPin";
@@ -98,14 +103,14 @@ function AdminTools(): React.ReactNode {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
       <TagEditor onMsg={setMsg} />
       <ClearFlagSection onMsg={setMsg} />
       <DeleteGroupSection onConfirm={onDeleteGroup} />
       <VendorSection vendors={vendors} onRemove={onRemoveVendor} />
       <ClearDbSection onConfirm={onClearAll} />
       <ChangePinSection onMsg={setMsg} />
-      {msg ? <Text style={styles.msg}>{msg}</Text> : null}
+      {msg ? <Text className="mt-2 font-semibold text-primary">{msg}</Text> : null}
     </ScrollView>
   );
 }
@@ -146,11 +151,11 @@ function TagEditor({ onMsg }: { onMsg: (m: string) => void }): React.ReactNode {
   };
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Edit tag</Text>
-      <View style={styles.row}>
-        <TextInput style={styles.input} value={epc} onChangeText={setEpc} placeholder="EPC" autoCapitalize="characters" />
-        <Pressable style={styles.miniBtn} onPress={() => void lookup()}><Text style={styles.miniBtnText}>Find</Text></Pressable>
+    <View className="rounded-lg border border-border bg-card p-3">
+      <Text className="mb-2 text-base font-bold text-foreground">Edit tag</Text>
+      <View className="flex-row items-center gap-2">
+        <Input className="flex-1" value={epc} onChangeText={setEpc} placeholder="EPC" autoCapitalize="characters" />
+        <Button variant="secondary" onPress={() => void lookup()}><Text>Find</Text></Button>
       </View>
       {tag
         ? (
@@ -158,24 +163,23 @@ function TagEditor({ onMsg }: { onMsg: (m: string) => void }): React.ReactNode {
             {EDITABLE_FIELDS.map((k) =>
               k === "status" ? (
                 <View key={k}>
-                  <Text style={styles.label}>status</Text>
-                  <View style={styles.chips}>
+                  <Text className="mb-1 mt-2 text-xs font-semibold text-foreground">status</Text>
+                  <View className="flex-row flex-wrap gap-1.5">
                     {STATUS_OPTIONS.map((opt) => (
                       <Pressable
                         key={opt}
-                        style={[styles.chip, form["status"] === opt && styles.chipActive]}
+                        className={cn("rounded-md px-3 py-1.5", form["status"] === opt ? "bg-brand-info" : "bg-muted")}
                         onPress={() => setForm({ ...form, status: opt })}
                       >
-                        <Text style={[styles.chipText, form["status"] === opt && styles.chipTextActive]}>{opt}</Text>
+                        <Text className={cn("text-[13px]", form["status"] === opt ? "text-white font-semibold" : "text-foreground")}>{opt}</Text>
                       </Pressable>
                     ))}
                   </View>
                 </View>
               ) : (
                 <View key={k}>
-                  <Text style={styles.label}>{k}</Text>
-                  <TextInput
-                    style={styles.input}
+                  <Text className="mb-1 mt-2 text-xs font-semibold text-foreground">{k}</Text>
+                  <Input
                     value={form[k] ?? ""}
                     onChangeText={(v) => setForm({ ...form, [k]: v })}
                     keyboardType={k === "quantity" || k === "remaining" ? "numeric" : "default"}
@@ -183,9 +187,9 @@ function TagEditor({ onMsg }: { onMsg: (m: string) => void }): React.ReactNode {
                 </View>
               ),
             )}
-            <Pressable style={[styles.primary, busy && styles.btnDisabled]} disabled={busy} onPress={() => void commit()}>
-              <Text style={styles.primaryText}>{busy ? "…" : "Save"}</Text>
-            </Pressable>
+            <Button className="mt-2.5" disabled={busy} onPress={() => void commit()}>
+              <Text>{busy ? "…" : "Save"}</Text>
+            </Button>
           </>
         )
         : null}
@@ -203,11 +207,11 @@ function ClearFlagSection({ onMsg }: { onMsg: (m: string) => void }): React.Reac
     onMsg(result.message);
   };
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Clear flag</Text>
-      <View style={styles.row}>
-        <TextInput style={styles.input} value={epc} onChangeText={setEpc} placeholder="EPC" autoCapitalize="characters" />
-        <Pressable style={styles.miniBtn} onPress={() => void run()}><Text style={styles.miniBtnText}>Clear</Text></Pressable>
+    <View className="rounded-lg border border-border bg-card p-3">
+      <Text className="mb-2 text-base font-bold text-foreground">Clear flag</Text>
+      <View className="flex-row items-center gap-2">
+        <Input className="flex-1" value={epc} onChangeText={setEpc} placeholder="EPC" autoCapitalize="characters" />
+        <Button variant="secondary" onPress={() => void run()}><Text>Clear</Text></Button>
       </View>
     </View>
   );
@@ -232,30 +236,30 @@ function DeleteGroupSection({
   };
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Delete group</Text>
-      <Text style={styles.label}>Item type</Text>
-      <View style={styles.chips}>
+    <View className="rounded-lg border border-border bg-card p-3">
+      <Text className="mb-2 text-base font-bold text-foreground">Delete group</Text>
+      <Text className="mb-1 mt-1 text-xs font-semibold text-foreground">Item type</Text>
+      <View className="flex-row flex-wrap gap-1.5">
         {ITEM_TYPES.map((t) => (
-          <Pressable key={t} style={[styles.chip, itemType === t && styles.chipActive]} onPress={() => setItemType(t)}>
-            <Text style={[styles.chipText, itemType === t && styles.chipTextActive]}>{t}</Text>
+          <Pressable key={t} className={cn("rounded-md px-3 py-1.5", itemType === t ? "bg-brand-info" : "bg-muted")} onPress={() => setItemType(t)}>
+            <Text className={cn("text-[13px]", itemType === t ? "text-white font-semibold" : "text-foreground")}>{t}</Text>
           </Pressable>
         ))}
       </View>
-      <Text style={styles.label}>Group by</Text>
-      <View style={styles.chips}>
-        <Pressable style={[styles.chip, groupBy === "bol" && styles.chipActive]} onPress={() => setGroupBy("bol")}>
-          <Text style={[styles.chipText, groupBy === "bol" && styles.chipTextActive]}>BOL</Text>
+      <Text className="mb-1 mt-2 text-xs font-semibold text-foreground">Group by</Text>
+      <View className="flex-row flex-wrap gap-1.5">
+        <Pressable className={cn("rounded-md px-3 py-1.5", groupBy === "bol" ? "bg-brand-info" : "bg-muted")} onPress={() => setGroupBy("bol")}>
+          <Text className={cn("text-[13px]", groupBy === "bol" ? "text-white font-semibold" : "text-foreground")}>BOL</Text>
         </Pressable>
-        <Pressable style={[styles.chip, groupBy === "building" && styles.chipActive]} onPress={() => setGroupBy("building")}>
-          <Text style={[styles.chipText, groupBy === "building" && styles.chipTextActive]}>Building</Text>
+        <Pressable className={cn("rounded-md px-3 py-1.5", groupBy === "building" ? "bg-brand-info" : "bg-muted")} onPress={() => setGroupBy("building")}>
+          <Text className={cn("text-[13px]", groupBy === "building" ? "text-white font-semibold" : "text-foreground")}>Building</Text>
         </Pressable>
       </View>
-      <Text style={styles.label}>Value</Text>
-      <TextInput style={styles.input} value={value} onChangeText={setValue} placeholder="BOL # / Building # / Item Name" />
-      <Pressable style={[styles.primary, styles.danger]} onPress={confirm}>
-        <Text style={styles.primaryText}>Delete group</Text>
-      </Pressable>
+      <Text className="mb-1 mt-2 text-xs font-semibold text-foreground">Value</Text>
+      <Input value={value} onChangeText={setValue} placeholder="BOL # / Building # / Item Name" />
+      <Button variant="destructive" className="mt-2.5" onPress={confirm}>
+        <Text>Delete group</Text>
+      </Button>
     </View>
   );
 }
@@ -269,15 +273,15 @@ function VendorSection({
   onRemove: (name: string) => void;
 }): React.ReactNode {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Vendors</Text>
+    <View className="rounded-lg border border-border bg-card p-3">
+      <Text className="mb-2 text-base font-bold text-foreground">Vendors</Text>
       {vendors.length === 0 ? (
-        <Text style={styles.hint}>No vendors.</Text>
+        <Text className="text-sm italic text-muted-foreground">No vendors.</Text>
       ) : (
         vendors.map((v) => (
-          <View key={v} style={styles.vendorRow}>
-            <Text style={styles.vendorName}>{v}</Text>
-            <Pressable style={styles.miniBtn} onPress={() => onRemove(v)}><Text style={styles.miniBtnText}>Remove</Text></Pressable>
+          <View key={v} className="flex-row items-center justify-between py-1.5">
+            <Text className="text-[15px] text-foreground">{v}</Text>
+            <Button variant="destructive" size="sm" onPress={() => onRemove(v)}><Text>Remove</Text></Button>
           </View>
         ))
       )}
@@ -288,11 +292,11 @@ function VendorSection({
 /** Clear database with a double confirm. */
 function ClearDbSection({ onConfirm }: { onConfirm: () => void }): React.ReactNode {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Danger zone</Text>
-      <Pressable style={[styles.primary, styles.danger]} onPress={onConfirm}>
-        <Text style={styles.primaryText}>Clear database</Text>
-      </Pressable>
+    <View className="rounded-lg border border-border bg-card p-3">
+      <Text className="mb-2 text-base font-bold text-foreground">Danger zone</Text>
+      <Button variant="destructive" onPress={onConfirm}>
+        <Text>Clear database</Text>
+      </Button>
     </View>
   );
 }
@@ -311,41 +315,16 @@ function ChangePinSection({ onMsg }: { onMsg: (m: string) => void }): React.Reac
     onMsg("PIN updated.");
   };
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Change PIN</Text>
-      <TextInput
-        style={styles.input}
+    <View className="rounded-lg border border-border bg-card p-3">
+      <Text className="mb-2 text-base font-bold text-foreground">Change PIN</Text>
+      <Input
         value={pin}
         onChangeText={setPin}
         placeholder="New PIN"
         secureTextEntry
         keyboardType="number-pad"
       />
-      <Pressable style={styles.primary} onPress={() => void run()}><Text style={styles.primaryText}>Save PIN</Text></Pressable>
+      <Button className="mt-2.5" onPress={() => void run()}><Text>Save PIN</Text></Button>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingBottom: 60, gap: 10 },
-  section: { borderWidth: 1, borderColor: "#eee", borderRadius: 8, padding: 12, backgroundColor: "white" },
-  sectionTitle: { fontSize: 16, fontWeight: "bold", marginBottom: 8 },
-  row: { flexDirection: "row", gap: 8, alignItems: "center" },
-  input: { flex: 1, borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 14 },
-  label: { fontSize: 12, fontWeight: "600", marginTop: 8, marginBottom: 4, color: "#333" },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: "#eee" },
-  chipActive: { backgroundColor: "#06c" },
-  chipText: { fontSize: 13, color: "#333" },
-  chipTextActive: { color: "white", fontWeight: "600" },
-  miniBtn: { paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "#555", borderRadius: 6 },
-  miniBtnText: { color: "white", fontWeight: "600" },
-  primary: { backgroundColor: "#0a7", padding: 14, borderRadius: 8, alignItems: "center", marginTop: 10 },
-  primaryText: { color: "white", fontWeight: "600" },
-  danger: { backgroundColor: "#c33" },
-  btnDisabled: { backgroundColor: "#9ab" },
-  hint: { color: "#888", fontStyle: "italic" },
-  vendorRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6 },
-  vendorName: { fontSize: 15 },
-  msg: { color: "#0a7", fontWeight: "600", marginTop: 8 },
-});

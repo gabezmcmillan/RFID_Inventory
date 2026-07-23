@@ -17,7 +17,11 @@ import {
 } from "@rfid/domain";
 import { useEffect, useState } from "react";
 import { router, useLocalSearchParams } from "expo-router";
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Pressable, ScrollView, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
 
 import { useDb } from "../db/provider";
 import { pageImageUrisForDoc } from "../bol/documentStore";
@@ -65,25 +69,25 @@ export function BolDocsScreen(): React.ReactNode {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
       {docs.length === 0 ? (
-        <Text style={styles.hint}>No BOL documents yet. Capture one from Check In.</Text>
+        <Text className="my-3 text-sm italic text-muted-foreground">No BOL documents yet. Capture one from Check In.</Text>
       ) : (
         docs.map((d) => (
           <Pressable
             key={d.id}
-            style={styles.docRow}
+            className="mb-1.5 rounded-lg border border-border bg-card p-3"
             onPress={() => router.setParams({ docId: String(d.id) })}
           >
-            <View style={styles.docHead}>
-              <Text style={styles.docRef}>
+            <View className="flex-row items-center justify-between">
+              <Text className="text-base font-semibold text-foreground">
                 {d.storage_url ? "☁ " : ""}
                 {d.bol_number || "(unnamed)"}
                 {d.auto_named ? " · auto" : ""}
               </Text>
-              <Text style={styles.docBoxes}>{d.boxes} box{d.boxes === 1 ? "" : "es"}</Text>
+              <Text className="text-xs font-semibold text-muted-foreground">{d.boxes} box{d.boxes === 1 ? "" : "es"}</Text>
             </View>
-            <Text style={styles.docMeta}>
+            <Text className="mt-1 text-xs text-muted-foreground">
               {d.source} · {d.pages} page{d.pages === 1 ? "" : "s"}
               {d.vendor ? ` · ${d.vendor}` : ""}
               {d.po_number ? ` · PO ${d.po_number}` : ""}
@@ -139,9 +143,9 @@ function BolDocDetail({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>{doc.bol_number || "(unnamed)"}</Text>
-      <Text style={styles.meta}>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
+      <Text className="text-xl font-bold text-foreground">{doc.bol_number || "(unnamed)"}</Text>
+      <Text className="text-[13px] text-muted-foreground">
         {doc.source} · {doc.pages} page{doc.pages === 1 ? "" : "s"}
         {doc.vendor ? ` · ${doc.vendor}` : ""}
         {doc.po_number ? ` · PO ${doc.po_number}` : ""}
@@ -149,60 +153,35 @@ function BolDocDetail({
       </Text>
 
       {pageUris.length > 0 ? (
-        <View style={styles.pages}>
-          {pageUris.map((uri, i) => (
-            <Image key={uri} source={{ uri }} style={styles.pageImage} resizeMode="contain" />
+        <View className="my-2 gap-2.5">
+          {pageUris.map((uri) => (
+            <Image key={uri} source={{ uri }} className="h-65 w-full rounded-md border border-border" resizeMode="contain" />
           ))}
         </View>
       ) : (
-        <Text style={styles.hint}>No page images to preview (uploaded PDF).</Text>
+        <Text className="my-3 text-sm italic text-muted-foreground">No page images to preview (uploaded PDF).</Text>
       )}
 
-      <Text style={styles.sectionLabel}>Rename BOL number</Text>
-      <View style={styles.row}>
-        <TextInput style={styles.input} value={rename} onChangeText={setRename} placeholder="BOL number" />
-        <Pressable style={[styles.miniBtn, busy && styles.btnDisabled]} disabled={busy} onPress={() => void onRename()}>
-          <Text style={styles.miniBtnText}>Save</Text>
-        </Pressable>
+      <Text className="mt-2 text-sm font-semibold text-foreground">Rename BOL number</Text>
+      <View className="flex-row items-center gap-2">
+        <Input className="flex-1" value={rename} onChangeText={setRename} placeholder="BOL number" />
+        <Button variant="secondary" disabled={busy} onPress={() => void onRename()}>
+          <Text>Save</Text>
+        </Button>
       </View>
 
       {confirmingDelete ? (
-        <View style={styles.pinBox}>
-          <Text style={styles.sectionLabel}>Enter admin PIN to delete</Text>
+        <View className="rounded-lg border border-border bg-muted/40 p-2">
+          <Text className="mt-2 text-sm font-semibold text-foreground">Enter admin PIN to delete</Text>
           <PinPrompt onUnlock={() => void onDelete()} />
         </View>
       ) : (
-        <Pressable style={[styles.primary, styles.danger]} disabled={busy} onPress={() => setConfirmingDelete(true)}>
-          <Text style={styles.primaryText}>Delete document</Text>
-        </Pressable>
+        <Button variant="destructive" className="mt-2.5" disabled={busy} onPress={() => setConfirmingDelete(true)}>
+          <Text>Delete document</Text>
+        </Button>
       )}
 
-      {msg ? <Text style={styles.msg}>{msg}</Text> : null}
+      {msg ? <Text className="mt-2 font-semibold text-primary">{msg}</Text> : null}
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingBottom: 60, gap: 10 },
-  title: { fontSize: 20, fontWeight: "bold" },
-  meta: { fontSize: 13, color: "#666" },
-  hint: { color: "#888", fontStyle: "italic", marginVertical: 12 },
-  docRow: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 12, backgroundColor: "white", marginBottom: 6 },
-  docHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  docRef: { fontSize: 16, fontWeight: "600" },
-  docBoxes: { fontSize: 12, color: "#555", fontWeight: "600" },
-  docMeta: { fontSize: 12, color: "#666", marginTop: 4 },
-  pages: { gap: 10, marginVertical: 8 },
-  pageImage: { width: "100%", height: 260, borderRadius: 6, borderWidth: 1, borderColor: "#eee" },
-  sectionLabel: { fontSize: 14, fontWeight: "600", marginTop: 8, color: "#333" },
-  row: { flexDirection: "row", gap: 8, alignItems: "center" },
-  input: { flex: 1, borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 16 },
-  miniBtn: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#555", borderRadius: 6 },
-  miniBtnText: { color: "white", fontWeight: "600" },
-  primary: { backgroundColor: "#0a7", padding: 14, borderRadius: 8, alignItems: "center", marginTop: 10 },
-  primaryText: { color: "white", fontWeight: "600" },
-  danger: { backgroundColor: "#c33" },
-  btnDisabled: { backgroundColor: "#9ab" },
-  pinBox: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 8, backgroundColor: "#fafafa" },
-  msg: { color: "#0a7", fontWeight: "600", marginTop: 8 },
-});

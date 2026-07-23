@@ -23,19 +23,26 @@ import {
 } from "@rfid/domain";
 import { router } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, ScrollView, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 import { useDb } from "../../db/provider";
 import { syncNow } from "../../sync/syncNow";
 import { notifyRequestsChanged, subscribeRequestsChanged } from "./refresh";
 import { requestActions } from "./requestActions";
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: "#e6a700",
-  staging: "#06c",
-  fulfilled: "#0a7",
-  declined: "#c33",
-};
+/** Map a request status to a status-token background class. */
+function statusClass(status: string): string {
+  if (status === "pending") return "bg-status-partial";
+  if (status === "staging") return "bg-brand-info";
+  if (status === "fulfilled") return "bg-status-in";
+  if (status === "declined") return "bg-destructive";
+  return "bg-status-delivered";
+}
 
 /** The label for a card's item line: `TYPE` or `TYPE | name` for named types. */
 function itemLabel(req: MaterialRequest): string {
@@ -59,17 +66,17 @@ export function RequestsScreen(): React.ReactNode {
   const selected = rows.find((r) => r.id === selectedId) ?? null;
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.list}>
+    <View className="flex-1 p-4">
+      <ScrollView contentContainerStyle={{ paddingBottom: 40, gap: 8 }}>
         {rows.length === 0 ? (
-          <Text style={styles.hint}>No requests.</Text>
+          <Text className="mt-3 text-sm italic text-muted-foreground">No requests.</Text>
         ) : (
           rows.map((r, i) => {
             const prev = rows[i - 1];
             const grouped = prev != null && prev.order_ref !== "" && prev.order_ref === r.order_ref;
             return (
               <View key={r.id}>
-                {grouped ? <View style={styles.groupTie} /> : null}
+                {grouped ? <View className="ml-4 h-2 border-l-2 border-brand-info" /> : null}
                 <RequestCard req={r} onOpen={() => setSelectedId(r.id)} />
               </View>
             );
@@ -97,25 +104,24 @@ function RequestCard({
   req: MaterialRequest;
   onOpen: () => void;
 }): React.ReactNode {
-  const color = STATUS_COLORS[req.status] ?? "#888";
   return (
-    <Pressable style={styles.card} onPress={onOpen}>
-      <View style={styles.cardHead}>
-        <Text style={styles.cardTitle}>{itemLabel(req)}</Text>
-        <View style={[styles.chip, { backgroundColor: color }]}>
-          <Text style={styles.chipText}>{req.status}</Text>
+    <Pressable className="rounded-lg border border-border bg-card p-3" onPress={onOpen}>
+      <View className="flex-row items-center justify-between">
+        <Text className="flex-1 text-base font-semibold text-foreground">{itemLabel(req)}</Text>
+        <View className={cn("ml-2 rounded-full px-2 py-0.5", statusClass(req.status))}>
+          <Text className="text-[11px] font-bold text-white">{req.status}</Text>
         </View>
       </View>
-      <Text style={styles.meta}>
+      <Text className="mt-0.5 text-xs text-muted-foreground">
         {req.quantity} unit(s) · Bldg {req.building || "n/a"} · {req.jobsite || req.requester || "jobsite"}
       </Text>
-      <Text style={styles.meta}>
+      <Text className="mt-0.5 text-xs text-muted-foreground">
         {req.requester || "—"} · {req.contact || "—"}
       </Text>
-      {req.note ? <Text style={styles.note}>“{req.note}”</Text> : null}
-      {req.order_ref ? <Text style={styles.orderRef}>order {req.order_ref}</Text> : null}
+      {req.note ? <Text className="mt-1 text-xs italic text-muted-foreground">“{req.note}”</Text> : null}
+      {req.order_ref ? <Text className="mt-1 text-[11px] font-semibold text-brand-info">order {req.order_ref}</Text> : null}
       {req.handler_note ? (
-        <Text style={styles.handlerNote}>
+        <Text className="mt-1.5 text-xs font-semibold text-primary">
           {req.handled_at ? `${req.handled_at} — ` : ""}{req.handler_note}
         </Text>
       ) : null}
@@ -193,13 +199,13 @@ function RequestDetail({
 
   return (
     <Modal visible={req !== null} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View style={styles.sheet}>
-          <ScrollView contentContainerStyle={styles.sheetBody}>
-            <View style={styles.sheetHead}>
-              <Text style={styles.sheetTitle}>{itemLabel(req)}</Text>
-              <View style={[styles.chip, { backgroundColor: STATUS_COLORS[req.status] ?? "#888" }]}>
-                <Text style={styles.chipText}>{req.status}</Text>
+      <View className="flex-1 justify-end bg-black/40">
+        <View className="max-h-[85%] rounded-t-2xl bg-background pb-4">
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
+            <View className="mb-2 flex-row items-center justify-between">
+              <Text className="flex-1 text-xl font-bold text-foreground">{itemLabel(req)}</Text>
+              <View className={cn("ml-2 rounded-full px-2 py-0.5", statusClass(req.status))}>
+                <Text className="text-[11px] font-bold text-white">{req.status}</Text>
               </View>
             </View>
 
@@ -217,63 +223,61 @@ function RequestDetail({
             {req.handler_note ? <Field label="Handler note" value={req.handler_note} /> : null}
 
             {declining ? (
-              <View style={styles.declineBox}>
-                <Text style={styles.label}>Decline note (optional)</Text>
-                <TextInput
-                  style={styles.input}
+              <View className="mt-2">
+                <Text className="mb-1 text-[13px] font-semibold text-foreground">Decline note (optional)</Text>
+                <Input
                   value={note}
                   onChangeText={setNote}
                   placeholder="Why is it declined?"
                   multiline
+                  className="min-h-15"
                 />
-                <View style={styles.actions}>
-                  <Pressable style={styles.cancelBtn} onPress={() => setDeclining(false)}>
-                    <Text style={styles.cancelBtnText}>Back</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.declineBtn, busy && styles.btnDisabled]}
+                <View className="mt-3 flex-row flex-wrap gap-2">
+                  <Button className="min-w-30 flex-1" variant="secondary" onPress={() => setDeclining(false)}>
+                    <Text>Back</Text>
+                  </Button>
+                  <Button
+                    className="min-w-30 flex-1"
+                    variant="destructive"
                     disabled={busy}
                     onPress={() => void confirmDecline()}
                   >
-                    <Text style={styles.primaryBtnText}>{busy ? "…" : "Confirm decline"}</Text>
-                  </Pressable>
+                    <Text>{busy ? "…" : "Confirm decline"}</Text>
+                  </Button>
                 </View>
               </View>
             ) : (
-              <View style={styles.actions}>
+              <View className="mt-3 flex-row flex-wrap gap-2">
                 {actions.fulfill ? (
-                  <Pressable
-                    style={[styles.primaryBtn, busy && styles.btnDisabled]}
-                    disabled={busy}
-                    onPress={() => void startStaging()}
-                  >
-                    <Text style={styles.primaryBtnText}>{busy ? "…" : "Fulfill"}</Text>
-                  </Pressable>
+                  <Button className="min-w-30 flex-1" disabled={busy} onPress={() => void startStaging()}>
+                    <Text>{busy ? "…" : "Fulfill"}</Text>
+                  </Button>
                 ) : null}
                 {actions.resumeStaging ? (
-                  <Pressable style={styles.primaryBtn} onPress={resumeStaging}>
-                    <Text style={styles.primaryBtnText}>Resume staging</Text>
-                  </Pressable>
+                  <Button className="min-w-30 flex-1" onPress={resumeStaging}>
+                    <Text>Resume staging</Text>
+                  </Button>
                 ) : null}
                 {actions.cancelStaging ? (
-                  <Pressable
-                    style={[styles.warnBtn, busy && styles.btnDisabled]}
+                  <Button
+                    className="min-w-30 flex-1"
+                    variant="secondary"
                     disabled={busy}
                     onPress={() => void cancelStaging()}
                   >
-                    <Text style={styles.primaryBtnText}>{busy ? "…" : "Cancel staging"}</Text>
-                  </Pressable>
+                    <Text>{busy ? "…" : "Cancel staging"}</Text>
+                  </Button>
                 ) : null}
                 {actions.decline ? (
-                  <Pressable style={styles.declineBtn} onPress={() => setDeclining(true)}>
-                    <Text style={styles.primaryBtnText}>Decline</Text>
-                  </Pressable>
+                  <Button className="min-w-30 flex-1" variant="destructive" onPress={() => setDeclining(true)}>
+                    <Text>Decline</Text>
+                  </Button>
                 ) : null}
               </View>
             )}
           </ScrollView>
-          <Pressable style={styles.closeBtn} onPress={onClose}>
-            <Text style={styles.closeBtnText}>Close</Text>
+          <Pressable className="border-t border-border py-3.5 items-center" onPress={onClose}>
+            <Text className="text-base font-semibold text-brand-info">Close</Text>
           </Pressable>
         </View>
       </View>
@@ -284,46 +288,9 @@ function RequestDetail({
 /** A labeled read-only field in the detail sheet. */
 function Field({ label, value }: { label: string; value: string }): React.ReactNode {
   return (
-    <View style={styles.field}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <Text style={styles.fieldValue}>{value}</Text>
+    <View className="py-0.5">
+      <Text className="text-[11px] font-semibold uppercase text-muted-foreground/70">{label}</Text>
+      <Text className="text-[15px] text-foreground">{value}</Text>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  list: { paddingBottom: 40, gap: 8 },
-  hint: { color: "#888", fontStyle: "italic", marginTop: 12 },
-  groupTie: { marginLeft: 16, borderLeftWidth: 2, borderLeftColor: "#06c", height: 8 },
-  card: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 12, backgroundColor: "white" },
-  cardHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  cardTitle: { fontSize: 16, fontWeight: "600", flex: 1 },
-  meta: { fontSize: 12, color: "#666", marginTop: 3 },
-  note: { fontSize: 12, color: "#555", marginTop: 4, fontStyle: "italic" },
-  orderRef: { fontSize: 11, color: "#06c", marginTop: 4, fontWeight: "600" },
-  handlerNote: { fontSize: 12, color: "#0a7", marginTop: 6, fontWeight: "600" },
-  chip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, marginLeft: 8 },
-  chipText: { color: "white", fontSize: 11, fontWeight: "700" },
-  backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.4)" },
-  sheet: { backgroundColor: "white", borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: "85%", paddingBottom: 16 },
-  sheetBody: { padding: 16, gap: 8 },
-  sheetHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  sheetTitle: { fontSize: 20, fontWeight: "bold", flex: 1 },
-  field: { paddingVertical: 2 },
-  fieldLabel: { fontSize: 11, fontWeight: "600", color: "#999", textTransform: "uppercase" },
-  fieldValue: { fontSize: 15, color: "#222" },
-  declineBox: { marginTop: 8 },
-  label: { fontSize: 13, fontWeight: "600", marginBottom: 4, color: "#333" },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 14, minHeight: 60 },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
-  primaryBtn: { flex: 1, minWidth: 120, backgroundColor: "#0a7", padding: 14, borderRadius: 8, alignItems: "center" },
-  warnBtn: { flex: 1, minWidth: 120, backgroundColor: "#e6a700", padding: 14, borderRadius: 8, alignItems: "center" },
-  declineBtn: { flex: 1, minWidth: 120, backgroundColor: "#c33", padding: 14, borderRadius: 8, alignItems: "center" },
-  cancelBtn: { flex: 1, minWidth: 120, backgroundColor: "#eee", padding: 14, borderRadius: 8, alignItems: "center" },
-  cancelBtnText: { color: "#333", fontWeight: "600" },
-  primaryBtnText: { color: "white", fontWeight: "600" },
-  btnDisabled: { backgroundColor: "#9ab" },
-  closeBtn: { padding: 14, alignItems: "center", borderTopWidth: 1, borderTopColor: "#eee" },
-  closeBtnText: { color: "#06c", fontWeight: "600", fontSize: 16 },
-});
