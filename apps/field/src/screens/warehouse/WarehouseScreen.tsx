@@ -18,18 +18,24 @@ import {
 } from "@rfid/domain";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 import { useDb } from "../../db/provider";
 import { shareCsv } from "./shareCsv";
 
 type GroupBy = "bol" | "building";
 
-const STATUS_COLORS: Record<string, string> = {
-  "In Warehouse": "#0a7",
-  Partial: "#e6a700",
-  Delivered: "#888",
-};
+/** Map a status string to a status-token background class. */
+function statusClass(status: string): string {
+  if (status === "In Warehouse") return "bg-status-in";
+  if (status === "Partial") return "bg-status-partial";
+  return "bg-status-delivered";
+}
 
 export function WarehouseScreen(): React.ReactNode {
   const db = useDb();
@@ -64,25 +70,25 @@ export function WarehouseScreen(): React.ReactNode {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.topRow}>
-        <View style={styles.toggle}>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 8 }}>
+      <View className="mb-2 flex-row items-center justify-between">
+        <View className="flex-row">
           <Pressable
-            style={[styles.toggleBtn, groupBy === "bol" && styles.toggleBtnActive]}
+            className={cn("rounded-md px-3.5 py-2", groupBy === "bol" ? "bg-brand-info" : "bg-muted")}
             onPress={() => setGroupBy("bol")}
           >
-            <Text style={[styles.toggleText, groupBy === "bol" && styles.toggleTextActive]}>BOL</Text>
+            <Text className={cn("text-sm font-semibold", groupBy === "bol" ? "text-white" : "text-foreground")}>BOL</Text>
           </Pressable>
           <Pressable
-            style={[styles.toggleBtn, groupBy === "building" && styles.toggleBtnActive]}
+            className={cn("ml-1.5 rounded-md px-3.5 py-2", groupBy === "building" ? "bg-brand-info" : "bg-muted")}
             onPress={() => setGroupBy("building")}
           >
-            <Text style={[styles.toggleText, groupBy === "building" && styles.toggleTextActive]}>Building</Text>
+            <Text className={cn("text-sm font-semibold", groupBy === "building" ? "text-white" : "text-foreground")}>Building</Text>
           </Pressable>
         </View>
-        <Pressable style={styles.filterBtn} onPress={() => setShowFilters((s) => !s)}>
-          <Text style={styles.filterBtnText}>{showFilters ? "Hide filters" : "Filters"}</Text>
-        </Pressable>
+        <Button variant="secondary" onPress={() => setShowFilters((s) => !s)}>
+          <Text>{showFilters ? "Hide filters" : "Filters"}</Text>
+        </Button>
       </View>
 
       {showFilters ? (
@@ -90,11 +96,11 @@ export function WarehouseScreen(): React.ReactNode {
       ) : null}
 
       {tree?.types.length === 0 ? (
-        <Text style={styles.hint}>No boxes match the current filters.</Text>
+        <Text className="my-3 text-sm italic text-muted-foreground">No boxes match the current filters.</Text>
       ) : null}
       {tree?.types.map((t) => (
-        <View key={t.item_type} style={styles.typeBlock}>
-          <Text style={styles.typeHeader}>
+        <View key={t.item_type} className="mt-2">
+          <Text className="mb-1 text-lg font-bold text-foreground">
             {t.item_type} — {t.qty} unit{t.qty === 1 ? "" : "s"}
           </Text>
           {t.groups.map((g) => (
@@ -106,27 +112,27 @@ export function WarehouseScreen(): React.ReactNode {
               }}
               asChild
             >
-              <Pressable style={styles.groupRow}>
-                <View style={styles.groupHead}>
-                  <Text style={styles.groupValue}>{g.value || "(blank)"}</Text>
-                  <View style={[styles.statusChip, { backgroundColor: STATUS_COLORS[g.status] ?? "#888" }]}>
-                    <Text style={styles.statusChipText}>{g.status}</Text>
+              <Pressable className="mb-1.5 rounded-lg border border-border bg-card p-3">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-base font-semibold text-foreground">{g.value || "(blank)"}</Text>
+                  <View className={cn("rounded-full px-2 py-0.5", statusClass(g.status))}>
+                    <Text className="text-[11px] font-bold text-white">{g.status}</Text>
                   </View>
                 </View>
-                <Text style={styles.groupMeta}>
+                <Text className="mt-1 text-xs text-muted-foreground">
                   {g.qty}/{g.total} units · {g.boxes} box{g.boxes === 1 ? "" : "es"}
                   {g.flagged > 0 ? ` · ⚠ ${g.flagged} flagged` : ""}
                   {g.note_count > 0 ? ` · ${g.note_count} note${g.note_count === 1 ? "" : "s"}` : ""}
                 </Text>
-                <Text style={styles.groupMeta}>
+                <Text className="mt-1 text-xs text-muted-foreground">
                   Received {g.received || "n/a"}
                   {g.vendors.length > 0 ? ` · ${g.vendors.join(", ")}` : ""}
                   {g.other_values.length > 0 ? ` · ${g.other_values.join(", ")}` : ""}
                 </Text>
                 {g.bol_doc_id ? (
                   <Link href={{ pathname: "/bol-docs", params: { docId: String(g.bol_doc_id) } }} asChild>
-                    <Pressable style={styles.docLink}>
-                      <Text style={styles.docLinkText}>BOL document →</Text>
+                    <Pressable className="mt-1.5 self-start rounded-md bg-brand-info/15 px-2 py-1">
+                      <Text className="text-xs font-semibold text-brand-info">BOL document →</Text>
                     </Pressable>
                   </Link>
                 ) : null}
@@ -136,10 +142,10 @@ export function WarehouseScreen(): React.ReactNode {
         </View>
       ))}
 
-      <Pressable style={[styles.exportBtn, exporting && styles.exportBtnDisabled]} disabled={exporting} onPress={() => void onExport()}>
-        <Text style={styles.exportBtnText}>{exporting ? "Exporting…" : "Export CSV"}</Text>
-      </Pressable>
-      {exportMsg ? <Text style={styles.exportMsg}>{exportMsg}</Text> : null}
+      <Button className="mt-3" disabled={exporting} onPress={() => void onExport()}>
+        <Text className="text-base font-semibold">{exporting ? "Exporting…" : "Export CSV"}</Text>
+      </Button>
+      {exportMsg ? <Text className="mt-1.5 text-center text-[13px] text-muted-foreground">{exportMsg}</Text> : null}
     </ScrollView>
   );
 }
@@ -154,76 +160,40 @@ function FilterSheet({
 }): React.ReactNode {
   const set = (patch: Partial<InventoryFilters>): void => onChange({ ...filters, ...patch });
   return (
-    <View style={styles.filterSheet}>
-      <Text style={styles.filterLabel}>BOL # (substring)</Text>
-      <TextInput style={styles.input} value={filters.bol ?? ""} onChangeText={(v) => set({ bol: v })} placeholder="any" />
+    <View className="mb-2 rounded-lg border border-border bg-muted/40 p-3">
+      <Text className="mt-2 text-xs font-semibold text-foreground">BOL # (substring)</Text>
+      <Input className="mt-1" value={filters.bol ?? ""} onChangeText={(v) => set({ bol: v })} placeholder="any" />
 
-      <Text style={styles.filterLabel}>Building</Text>
-      <View style={styles.chips}>
+      <Text className="mt-2 text-xs font-semibold text-foreground">Building</Text>
+      <View className="my-1 flex-row flex-wrap gap-1.5">
         <Pressable
-          style={[styles.chip, !filters.building && styles.chipActive]}
+          className={cn("rounded-md px-3 py-1.5", !filters.building ? "bg-brand-info" : "bg-muted")}
           onPress={() => set({ building: undefined })}
         >
-          <Text style={[styles.chipText, !filters.building && styles.chipTextActive]}>any</Text>
+          <Text className={cn("text-[13px]", !filters.building ? "text-white font-semibold" : "text-foreground")}>any</Text>
         </Pressable>
         {BUILDING_OPTIONS.map((opt) => (
           <Pressable
             key={opt}
-            style={[styles.chip, filters.building === opt && styles.chipActive]}
+            className={cn("rounded-md px-3 py-1.5", filters.building === opt ? "bg-brand-info" : "bg-muted")}
             onPress={() => set({ building: opt })}
           >
-            <Text style={[styles.chipText, filters.building === opt && styles.chipTextActive]}>{opt}</Text>
+            <Text className={cn("text-[13px]", filters.building === opt ? "text-white font-semibold" : "text-foreground")}>{opt}</Text>
           </Pressable>
         ))}
       </View>
 
-      <Text style={styles.filterLabel}>Received from / to (yyyy-mm-dd)</Text>
-      <View style={styles.dateRow}>
-        <TextInput style={styles.input} value={filters.received_from ?? ""} onChangeText={(v) => set({ received_from: v })} placeholder="from" />
-        <TextInput style={styles.input} value={filters.received_to ?? ""} onChangeText={(v) => set({ received_to: v })} placeholder="to" />
+      <Text className="mt-2 text-xs font-semibold text-foreground">Received from / to (yyyy-mm-dd)</Text>
+      <View className="mt-1 flex-row gap-2">
+        <Input className="flex-1" value={filters.received_from ?? ""} onChangeText={(v) => set({ received_from: v })} placeholder="from" />
+        <Input className="flex-1" value={filters.received_to ?? ""} onChangeText={(v) => set({ received_to: v })} placeholder="to" />
       </View>
 
-      <Text style={styles.filterLabel}>Checked out from / to (yyyy-mm-dd)</Text>
-      <View style={styles.dateRow}>
-        <TextInput style={styles.input} value={filters.checked_out_from ?? ""} onChangeText={(v) => set({ checked_out_from: v })} placeholder="from" />
-        <TextInput style={styles.input} value={filters.checked_out_to ?? ""} onChangeText={(v) => set({ checked_out_to: v })} placeholder="to" />
+      <Text className="mt-2 text-xs font-semibold text-foreground">Checked out from / to (yyyy-mm-dd)</Text>
+      <View className="mt-1 flex-row gap-2">
+        <Input className="flex-1" value={filters.checked_out_from ?? ""} onChangeText={(v) => set({ checked_out_from: v })} placeholder="from" />
+        <Input className="flex-1" value={filters.checked_out_to ?? ""} onChangeText={(v) => set({ checked_out_to: v })} placeholder="to" />
       </View>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingBottom: 60, gap: 8 },
-  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  toggle: { flexDirection: "row" },
-  toggleBtn: { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: "#eee", borderRadius: 6 },
-  toggleBtnActive: { backgroundColor: "#06c" },
-  toggleText: { fontSize: 14, color: "#333", fontWeight: "600" },
-  toggleTextActive: { color: "white" },
-  filterBtn: { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: "#555", borderRadius: 6 },
-  filterBtnText: { color: "white", fontWeight: "600" },
-  filterSheet: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 12, backgroundColor: "#fafafa", marginBottom: 8 },
-  filterLabel: { fontSize: 12, fontWeight: "600", marginTop: 8, color: "#333" },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 8, fontSize: 14, flex: 1 },
-  dateRow: { flexDirection: "row", gap: 8 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginVertical: 4 },
-  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: "#eee" },
-  chipActive: { backgroundColor: "#06c" },
-  chipText: { fontSize: 13, color: "#333" },
-  chipTextActive: { color: "white", fontWeight: "600" },
-  typeBlock: { marginTop: 8 },
-  typeHeader: { fontSize: 18, fontWeight: "bold", marginBottom: 4 },
-  groupRow: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 12, backgroundColor: "white", marginBottom: 6 },
-  groupHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  groupValue: { fontSize: 16, fontWeight: "600" },
-  statusChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  statusChipText: { color: "white", fontSize: 11, fontWeight: "700" },
-  groupMeta: { fontSize: 12, color: "#666", marginTop: 4 },
-  docLink: { alignSelf: "flex-start", marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#eef", borderRadius: 6 },
-  docLinkText: { fontSize: 12, color: "#336", fontWeight: "600" },
-  hint: { color: "#888", fontStyle: "italic", marginVertical: 12 },
-  exportBtn: { backgroundColor: "#06c", padding: 14, borderRadius: 8, alignItems: "center", marginTop: 12 },
-  exportBtnDisabled: { backgroundColor: "#9ab" },
-  exportBtnText: { color: "white", fontWeight: "600", fontSize: 16 },
-  exportMsg: { fontSize: 13, color: "#555", marginTop: 6, textAlign: "center" },
-});

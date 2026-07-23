@@ -10,7 +10,10 @@
 import { groupTags, lookupForCheckout, deliverUnits, type LookupForCheckoutResult, type Tag } from "@rfid/domain";
 import { useEffect, useState } from "react";
 import { Link, useLocalSearchParams } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Text } from "@/components/ui/text";
 
 import { useDb } from "../../db/provider";
 import { CheckoutConfirmCard } from "../checkout/CheckoutConfirmCard";
@@ -66,8 +69,8 @@ export function WarehouseGroupScreen(): React.ReactNode {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>{itemType} · {value || "(blank)"}</Text>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 8 }}>
+      <Text className="mb-1 text-lg font-bold text-foreground">{itemType} · {value || "(blank)"}</Text>
 
       {checkoutLookup ? (
         <CheckoutConfirmCard
@@ -78,38 +81,37 @@ export function WarehouseGroupScreen(): React.ReactNode {
       ) : null}
 
       {loading ? (
-        <Text style={styles.hint}>Loading…</Text>
+        <Text className="text-sm italic text-muted-foreground">Loading…</Text>
       ) : tags.length === 0 ? (
-        <Text style={styles.hint}>No boxes in this group.</Text>
+        <Text className="text-sm italic text-muted-foreground">No boxes in this group.</Text>
       ) : (
         tags.map((tag) => {
           const { prefix, tail } = splitEpc(tag.epc);
           return (
-            <View key={tag.epc} style={styles.boxCard}>
-              <View style={styles.boxHead}>
-                <Text style={styles.epc}>
-                  <Text style={styles.epcPrefix}>{prefix}</Text>
-                  <Text style={styles.epcTail}>{tail}</Text>
+            <View key={tag.epc} className="rounded-lg border border-border bg-card p-3">
+              <View className="flex-row items-center justify-between">
+                <Text className="font-mono text-[13px] text-foreground">
+                  <Text className="text-muted-foreground/60">{prefix}</Text>
+                  <Text className="font-bold">{tail}</Text>
                 </Text>
-                <Text style={styles.status}>{tag.status}</Text>
+                <Text className="text-xs font-semibold text-muted-foreground">{tag.status}</Text>
               </View>
-              <Text style={styles.meta}>
+              <Text className="mt-0.5 text-xs text-muted-foreground">
                 Item No. {tag.sku || "—"} · Mfc {tag.mfc_date || "—"}
               </Text>
-              <Text style={styles.meta}>
+              <Text className="mt-0.5 text-xs text-muted-foreground">
                 {tag.remaining}/{tag.quantity} units · Bldg {tag.building || "n/a"} · BOL {tag.bol_number || "n/a"}
               </Text>
-              {tag.flag ? <Text style={styles.flag}>⚠ {tag.flag}</Text> : null}
-              <View style={styles.btnRow}>
+              {tag.flag ? <Text className="mt-1 text-xs font-semibold text-destructive">⚠ {tag.flag}</Text> : null}
+              <View className="mt-2.5 flex-row gap-2">
                 <Link href={{ pathname: "/finder", params: { epc: tag.epc } }} asChild>
-                  {/* Slot (asChild) rejects array styles — flatten to one object. */}
-                  <Pressable style={StyleSheet.flatten([styles.btn, styles.btnFind])}>
-                    <Text style={styles.btnText}>Find</Text>
-                  </Pressable>
+                  <Button className="flex-1" variant="secondary">
+                    <Text>Find</Text>
+                  </Button>
                 </Link>
-                <Pressable style={[styles.btn, styles.btnCheckOut]} onPress={() => void onCheckOut(tag.epc)}>
-                  <Text style={styles.btnText}>Check Out</Text>
-                </Pressable>
+                <Button className="flex-1" onPress={() => void onCheckOut(tag.epc)}>
+                  <Text>Check Out</Text>
+                </Button>
               </View>
             </View>
           );
@@ -118,22 +120,3 @@ export function WarehouseGroupScreen(): React.ReactNode {
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingBottom: 60, gap: 8 },
-  title: { fontSize: 18, fontWeight: "bold", marginBottom: 4 },
-  hint: { color: "#888", fontStyle: "italic" },
-  boxCard: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 12, backgroundColor: "white" },
-  boxHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  epc: { fontFamily: "monospace", fontSize: 13 },
-  epcPrefix: { color: "#999" },
-  epcTail: { color: "#222", fontWeight: "bold" },
-  status: { fontSize: 12, fontWeight: "600", color: "#555" },
-  meta: { fontSize: 12, color: "#666", marginTop: 3 },
-  flag: { color: "#c33", fontWeight: "600", fontSize: 12, marginTop: 4 },
-  btnRow: { flexDirection: "row", gap: 8, marginTop: 10 },
-  btn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center" },
-  btnFind: { backgroundColor: "#06c" },
-  btnCheckOut: { backgroundColor: "#0a7" },
-  btnText: { color: "white", fontWeight: "600" },
-});
