@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { allocateEpcs, amendCheckin, receiveShipment } from "../../index";
+import { allocateEpcs, amendCheckin, makeInMemoryEpcAllocator, receiveShipment } from "../../index";
 import { openTestDb } from "../../testing/openTestDb";
 
 describe("intake", () => {
@@ -49,7 +49,7 @@ describe("intake", () => {
 
   test("allocateEpcs mints 24-hex unique EPCs with prefix and device id embedded", async () => {
     const db = await openTestDb();
-    const epcs = await allocateEpcs(db, 3, "01");
+    const epcs = await allocateEpcs(db, 3, makeInMemoryEpcAllocator("01"));
     expect(epcs).toHaveLength(3);
     for (const epc of epcs) {
       expect(epc).toHaveLength(24);
@@ -65,7 +65,7 @@ describe("intake", () => {
     // Pre-create the tag whose EPC allocateEpcs would mint first (serial 1, device 01).
     const colliding = "42473031" + "01" + "00000000000001";
     await receiveShipment(db, [colliding], "TSC", "6", "BOL1", "Acme", { quantity: 1 });
-    const epcs = await allocateEpcs(db, 3, "01");
+    const epcs = await allocateEpcs(db, 3, makeInMemoryEpcAllocator("01"));
     expect(epcs).toHaveLength(3);
     expect(epcs).not.toContain(colliding); // serial 1 was skipped
     expect(new Set(epcs).size).toBe(3);

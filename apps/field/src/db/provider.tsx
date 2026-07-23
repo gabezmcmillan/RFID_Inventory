@@ -9,15 +9,12 @@
  * both RN-safe (no Node `fs` / native addon imports).
  */
 
-import { applyMigrations, getMeta, setMeta, type DomainDb } from "@rfid/domain";
+import { applyMigrations, type DomainDb } from "@rfid/domain";
 import { Database, getDbPath } from "@tursodatabase/sync-react-native";
 import { drizzleTursoRn } from "./drizzleTursoRnDriver";
 
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-
-/** The device id seeded into `local_meta` on first run (plan 004). */
-const DEFAULT_DEVICE_ID = "01";
 
 interface DbContextValue {
   /** The Drizzle-wrapped on-device database, or `null` until open+migrated. */
@@ -31,17 +28,16 @@ interface DbContextValue {
 const DbContext = createContext<DbContextValue | null>(null);
 
 /**
- * Open the on-device database, wrap it with Drizzle, apply migrations, and
- * seed `local_meta.device_id` if absent. Resolves to the ready {@link DomainDb}.
+ * Open the on-device warehouse database, wrap it with Drizzle, and apply
+ * migrations. The device id and EPC serial counter no longer live here — they
+ * moved to the separate local-only `device.db` (plan 010 Phase 2; see
+ * `db/deviceDb.ts`) so two replicas never share a serial sequence.
  */
 async function openDomainDb(): Promise<DomainDb> {
   const client = new Database({ path: getDbPath("inventory.db") });
   await client.connect();
   const db = drizzleTursoRn(client);
   await applyMigrations(db);
-  if (!(await getMeta(db, "device_id"))) {
-    await setMeta(db, "device_id", DEFAULT_DEVICE_ID);
-  }
   return db;
 }
 

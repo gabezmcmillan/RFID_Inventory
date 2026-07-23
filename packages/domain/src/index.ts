@@ -104,8 +104,8 @@ export type {
 export { logEvent, listEvents } from "./repo/events";
 
 // Repository: intake
-export { allocateEpcs, amendCheckin, receiveShipment } from "./repo/intake";
-export type { ItemFields } from "./repo/intake";
+export { allocateEpcs, amendCheckin, makeInMemoryEpcAllocator, receiveShipment } from "./repo/intake";
+export type { EpcSerialAllocator, ItemFields } from "./repo/intake";
 
 // Intake session (Check In armed-shipment state machine)
 export { IntakeSession, NO_SHIPMENT_ARMED } from "./intakeSession";

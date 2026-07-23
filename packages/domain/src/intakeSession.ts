@@ -20,7 +20,7 @@
 
 import type { DomainDb } from "./db";
 import { allocateEpcs, amendCheckin, receiveShipment } from "./repo/intake";
-import type { ItemFields } from "./repo/intake";
+import type { EpcSerialAllocator, ItemFields } from "./repo/intake";
 import { buildLabelZpl } from "./label/zpl";
 import { MAX_LABELS_PER_PRINT } from "./constants";
 import type { AmendCheckinResult, ReceiveShipmentResult } from "./types";
@@ -101,6 +101,16 @@ function formatReceivedTime(d: Date): string {
 export class IntakeSession {
   private _armed: ArmedShipment | null = null;
   private _itemFields: ItemFields = {};
+  private readonly _allocator: EpcSerialAllocator;
+
+  /**
+   * @param allocator Source of this device's permanent 2-hex id and its
+   *   monotonic EPC serial counter (a local-only device DB on-device). The
+   *   print path reserves serials atomically before printing labels.
+   */
+  constructor(allocator: EpcSerialAllocator) {
+    this._allocator = allocator;
+  }
 
   /** Arm check-in for a shipment; scanned tags file under these fields. Clears per-unit item fields. */
   arm(itemType: string, fields: Record<string, string> = {}): void {
@@ -202,7 +212,7 @@ export class IntakeSession {
     const receivedTime = formatReceivedTime(now);
     const cloudBase = deps.cloudBaseUrl.trim().replace(/\/+$/, "");
 
-    const epcs = await allocateEpcs(db, clamped);
+    const epcs = await allocateEpcs(db, clamped, this._allocator);
     const printed: string[] = [];
     let printError = "";
     for (const epc of epcs) {

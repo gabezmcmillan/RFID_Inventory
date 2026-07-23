@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { IntakeSession, createBolDoc, listEvents, NO_SHIPMENT_ARMED, receiveShipment, type PrintDeps } from "../index";
+import { IntakeSession, createBolDoc, listEvents, makeInMemoryEpcAllocator, NO_SHIPMENT_ARMED, receiveShipment, type PrintDeps } from "../index";
 import type { ItemFields } from "../index";
 import { openTestDb } from "../testing/openTestDb";
 
@@ -9,14 +9,14 @@ const EPC = "AAAA11112222333344445555";
 describe("IntakeSession", () => {
   test("a scan with nothing armed returns the no-shipment message", async () => {
     const db = await openTestDb();
-    const session = new IntakeSession();
+    const session = new IntakeSession(makeInMemoryEpcAllocator("01"));
     const res = await session.checkInScanned(db, EPC);
     expect(res).toEqual({ ok: false, message: NO_SHIPMENT_ARMED });
   });
 
   test("arm → scan records the box under the armed shipment fields", async () => {
     const db = await openTestDb();
-    const session = new IntakeSession();
+    const session = new IntakeSession(makeInMemoryEpcAllocator("01"));
     session.arm("TSC", { building_number: "6", bol_number: "TEST1" });
     session.setItemFields({ quantity: 5 });
     const res = await session.checkInScanned(db, EPC);
@@ -32,7 +32,7 @@ describe("IntakeSession", () => {
 
   test("re-arm resets the per-unit item fields", async () => {
     const db = await openTestDb();
-    const session = new IntakeSession();
+    const session = new IntakeSession(makeInMemoryEpcAllocator("01"));
     session.arm("TSC", { building_number: "6", bol_number: "BOL1" });
     session.setItemFields({ quantity: 9, sku: "OLD" });
     // Re-arm: item fields must be cleared so the stale quantity/sku don't leak.
@@ -49,7 +49,7 @@ describe("IntakeSession", () => {
     const db = await openTestDb();
     const epc = "CCCC" + "0".repeat(20);
     await receiveShipment(db, [epc], "TSC", "6", "BOL1", "Acme", { quantity: 4 });
-    const session = new IntakeSession();
+    const session = new IntakeSession(makeInMemoryEpcAllocator("01"));
     // Simulate a UI payload carrying non-amendable keys (item_type, bol_number)
     // alongside the amendable ones; amend must drop the non-amendable keys.
     const payload = {
@@ -72,7 +72,7 @@ describe("IntakeSession", () => {
   test("bol_doc_id is stored as a text id or null", async () => {
     const db = await openTestDb();
     const doc = await createBolDoc(db, "B1", "b1.pdf");
-    const session = new IntakeSession();
+    const session = new IntakeSession(makeInMemoryEpcAllocator("01"));
     session.arm("TSC", { building_number: "6", bol_number: "B1", bol_doc_id: doc.id });
     const res = await session.checkInScanned(db, "DDDD" + "0".repeat(20));
     expect(res.ok).toBe(true);
@@ -88,7 +88,7 @@ describe("IntakeSession", () => {
 
   test("checkInPrinted with nothing armed returns the no-shipment message", async () => {
     const db = await openTestDb();
-    const session = new IntakeSession();
+    const session = new IntakeSession(makeInMemoryEpcAllocator("01"));
     const deps: PrintDeps = { cloudBaseUrl: "", printLabel: async () => {} };
     const res = await session.checkInPrinted(db, deps, 3);
     expect(res).toEqual({ ok: false, message: NO_SHIPMENT_ARMED });
@@ -96,7 +96,7 @@ describe("IntakeSession", () => {
 
   test("checkInPrinted records only the labels that printed; partial print appends the stop suffix", async () => {
     const db = await openTestDb();
-    const session = new IntakeSession();
+    const session = new IntakeSession(makeInMemoryEpcAllocator("01"));
     session.arm("TSC", { building_number: "6", bol_number: "BOL1", vendor: "Acme" });
     session.setItemFields({ quantity: 4 });
     const sent: string[] = [];
@@ -125,7 +125,7 @@ describe("IntakeSession", () => {
 
   test("checkInPrinted with all-fail records zero tags and no IN events (no phantom inventory)", async () => {
     const db = await openTestDb();
-    const session = new IntakeSession();
+    const session = new IntakeSession(makeInMemoryEpcAllocator("01"));
     session.arm("TSC", { building_number: "6", bol_number: "BOL1", vendor: "Acme" });
     session.setItemFields({ quantity: 4 });
     const deps: PrintDeps = {
