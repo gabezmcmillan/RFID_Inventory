@@ -88,15 +88,44 @@ REJECTED (one-line rationale).
   reads/writes, `db.run(sql\`...\`)` for raw statements, and the `sql` template
   operator with typed result mapping for complex aggregates) — no hand-rolled
   SQL seam.
-- **Auth: Better Auth, not Auth.js/NextAuth (2026-07-22, operator decision)**:
-  plan 009 halted before its auth step. When auth is picked back up, use
-  [Better Auth](https://better-auth.com) with the Microsoft/Entra social
-  provider. Same requirements as the original step 4: session required for
-  everything except `/tag/*`, `/api/health`, and auth routes; signed-in
-  name/email prefill the checkout form; a dev bypass guarded by
-  `NODE_ENV !== "production"`. Remove the unused `next-auth` dependency from
-  `apps/web/package.json` when wiring it. `apps/web/src/lib/session.ts` holds
-  the `getUser()` stub (currently returns `null`; nothing is gated yet).
+- **Auth: Better Auth, not Auth.js/NextAuth (2026-07-22, operator decision;
+  concretized 2026-07-23 from the `effectivly` reference repo)**: plan 009
+  halted before its auth step. Auth uses [Better Auth](https://better-auth.com)
+  `1.6.18` (same version as `effectivly`), following that repo's house style:
+  the server instance lives in `apps/web/src/lib/auth.ts` (a `makeAuth()`
+  factory over `betterAuth()`), mounted as a catch-all at
+  `app/api/auth/[...all]/route.ts` via `toNextJsHandler` from
+  `better-auth/next-js`; the browser client is `createAuthClient()` from
+  `better-auth/react` in `apps/web/src/lib/auth-client.ts`. The Microsoft
+  Entra ID social provider is wired env-driven
+  (`MICROSOFT_CLIENT_ID`/`_SECRET`/`_TENANT_ID`), gated on both client id +
+  secret, with `tenantId` required at boot when Microsoft is set (fails loud
+  rather than falling back to Entra's open `common` endpoint). Sessions are
+  read in server components through the `getUser()` seam in
+  `apps/web/src/lib/session.ts`. **Adapter / table separation (deviates from
+  `effectivly`, by necessity):** `effectivly` uses Better Auth's built-in
+  Kysely adapter over a node-postgres `Pool` and lets Better Auth's own
+  migrator own the auth tables — deliberately *not* `@better-auth/drizzle-adapter`,
+  which peers on `drizzle-orm ^0.45` while this repo (like `effectivly`) runs
+  the `1.0.0-rc` line. We keep that same adapter choice (built-in Kysely, own
+  migrator) for the same version reason, BUT the auth tables live in a
+  **separate database** from the warehouse domain: a Turso/libSQL database
+  pointed at by `AUTH_DATABASE_URL` + `AUTH_DATABASE_AUTH_TOKEN` (local dev
+  falls back to a separate file `../../.dev-data/auth.db`). Auth tables
+  (user/session/account/verification) must never pollute `packages/domain`'s
+  schema — that schema is the warehouse domain synced to phones, and the
+  field app must never see auth tables; putting auth in the same Turso
+  database the phones sync would also violate the multi-writer discipline
+  below (the web app would become a second writer to the sync DB). Better
+  Auth's schema/migrations are therefore kept inside `apps/web`
+  (`auth.config.ts` + the `@better-auth/cli` `generate`/`migrate` scripts),
+  run against the auth database only. Same requirements as the original
+  step 4: session required for everything except `/tag/*`, `/api/health`, and
+  auth routes (enforced by `apps/web/src/middleware.ts`); signed-in
+  name/email prefill the checkout form; a dev bypass
+  (`AUTH_DEV_BYPASS=1`) guarded by `NODE_ENV !== "production"` on the same
+  code path. Remove the unused `next-auth` dependency from
+  `apps/web/package.json` when wiring it.
 - **No un-aliased builder joins in `packages/domain` (2026-07-22)**: the field
   app's RN driver adapter (`apps/field/src/db/drizzleTursoRnDriver.ts`) derives
   Drizzle's array-mode rows from object rows, so a builder join selecting

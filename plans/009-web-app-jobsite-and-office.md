@@ -167,23 +167,92 @@ App Router pages, server components calling domain repos directly:
 submitting a 2-line cart creates 2 rows sharing an order_ref (check
 `/requests`); an over-quantity line shows its error inline.
 
-### Step 4: Auth
+### Step 4: Auth (Better Auth, `effectivly` house style)
 
-- Add Auth.js (NextAuth v5) with the **Microsoft Entra ID** provider (B&G is
-  a Microsoft shop; the old deployment already assumed Easy Auth /Entra —
-  `apps/cloud/app.py:148-162` parsed its headers). Env:
-  `AUTH_MICROSOFT_ENTRA_ID_ID/_SECRET/_ISSUER`, `AUTH_SECRET`.
-- Middleware: require a session for everything **except** `/tag/*`,
-  `/api/health`, and auth routes. Signed-in user's name/email prefill the
-  checkout form's requester/contact (same convenience as
-  `_user_from_headers`).
-- Local dev without Entra credentials: a `AUTH_DEV_BYPASS=1` guard that
-  injects a fake session **only when `NODE_ENV !== "production"`** — grep-able
-  and impossible to enable in prod.
+Use [Better Auth](https://better-auth.com) `1.6.18` (the exact version pinned in
+the `effectivly` reference repo — same major + patterns), NOT Auth.js/NextAuth.
+Remove the unused `next-auth` dependency from `apps/web/package.json`.
+
+**Server instance (`apps/web/src/lib/auth.ts`):** a `makeAuth()` factory over
+`betterAuth()`, env-driven. Built-in Kysely adapter (NOT
+`@better-auth/drizzle-adapter`, which peers on `drizzle-orm ^0.45` while this
+repo runs `1.0.0-rc` — the same version reason `effectivly` cites). The
+`database` is a Kysely instance over a **separate** libSQL/Turso auth database:
+`AUTH_DATABASE_URL` + `AUTH_DATABASE_AUTH_TOKEN` (Turso cloud) →
+`@libsql/client` + the `@libsql/kysely` `LibSQLDialect`; absent → local file
+`process.env.LOCAL_AUTH_DB_PATH ?? ../../.dev-data/auth.db`. `AUTH_SECRET` is
+the Better Auth secret; `BETTER_AUTH_URL` is the public origin (required when
+the auth backend is live, fails loud at boot otherwise — same as `effectivly`).
+When `AUTH_DATABASE_URL` + `AUTH_SECRET` are both absent there is no auth
+backend (`auth = null`, the offline gate `effectivly` uses). Microsoft Entra ID
+social provider, env-driven and gated on both `MICROSOFT_CLIENT_ID` +
+`MICROSOFT_CLIENT_SECRET`; `MICROSOFT_TENANT_ID` is required at boot when
+Microsoft is set (throw, do not fall back to Entra's open `common` endpoint).
+Configure `disableProfilePhoto: true`, `prompt: "select_account"`, and
+`account.accountLinking.trustedProviders: ["microsoft"]` (the `effectivly`
+settings). `session.cookieCache: { enabled: true, maxAge: 300 }`.
+
+**Table/schema separation (architectural decision):** Better Auth's tables
+(user/session/account/verification) are owned by Better Auth's own migrator
+and live in the **separate auth database** above — they must NOT be added to
+`packages/domain`'s schema (that schema is the warehouse domain synced to
+phones; the field app must never see auth tables, and the web app writing auth
+rows into the phone-synced Turso database would violate the multi-writer
+discipline in `plans/README.md`). Auth schema/migrations are kept in
+`apps/web`: `auth.config.ts` (the CLI entrypoint, like `effectivly`'s) plus
+`auth:generate` / `auth:migrate` scripts using `@better-auth/cli`. Document this
+separation in the plan and the README standing-decision bullet.
+
+**API route (`apps/web/src/app/api/auth/[...all]/route.ts`):** the catch-all
+`{ GET, POST }` from `toNextJsHandler(auth)` (`better-auth/next-js`); when
+`auth === null` both verbs return 404 (the offline gate).
+
+**Client (`apps/web/src/lib/auth-client.ts`):** `createAuthClient()` from
+`better-auth/react` (same-origin against `/api/auth/*`); used by the sign-in
+button and the header sign-out affordance.
+
+**Session seam (`apps/web/src/lib/session.ts`):** keep the `getUser()` seam
+(the stub that returned `null`). It now resolves the principal:
+- **Dev bypass** (grep-able, one code path): when
+  `process.env.AUTH_DEV_BYPASS === "1" && process.env.NODE_ENV !== "production"`
+  → return a fake `{ name, email }` user (env-tunable via
+  `AUTH_DEV_BYPASS_NAME` / `AUTH_DEV_BYPASS_EMAIL`, with defaults). The
+  `NODE_ENV !== "production"` guard is on the same code path as `AUTH_DEV_BYPASS`
+  so it is impossible to enable in prod.
+- Otherwise → `auth === null` returns `null`; else
+  `auth.api.getSession({ headers })` (via `next/headers`) mapped to
+  `{ name, email }` or `null`.
+
+**Routing gate (`apps/web/src/middleware.ts`):** require a session for
+everything **except** `/tag/*`, `/api/health`, the auth routes (`/api/auth/*`),
+and `/sign-in`. Use `getSessionCookie` from `better-auth/cookies` (cookie
+presence, no DB hit — the Better Auth middleware pattern; `effectivly` gates
+per-page instead, but this plan's Done criteria require a middleware matcher
+that excludes `/tag`). When the dev bypass is active, middleware lets the
+request through. The matcher must exclude `/tag` (grep `tag` in
+`apps/web/src/middleware.ts` → 1+ match).
+
+**Sign-in page (`apps/web/src/app/sign-in/page.tsx` + client form):** a single
+"Continue with Microsoft" button (calls `authClient.signIn.social({
+provider: "microsoft", callbackURL: "/" })`); when Microsoft is not configured
+show a plain note. Redirect to `/` if the auth backend is offline.
+
+**Prefill + sign-out:** the signed-in user's name/email prefill the checkout
+form's requester/contact (the existing `Cart` already reads `user` from
+`getUser()` — wire it through). Add a sign-out affordance in the shared header
+(`Header.tsx`): a small client component calling `authClient.signOut()` then
+pushing `/sign-in`; show the signed-in name/email from `getUser()`.
+
+Env vars: `AUTH_SECRET`, `BETTER_AUTH_URL`, `AUTH_DATABASE_URL`,
+`AUTH_DATABASE_AUTH_TOKEN`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`,
+`MICROSOFT_TENANT_ID`, `AUTH_DEV_BYPASS`, `AUTH_DEV_BYPASS_NAME`,
+`AUTH_DEV_BYPASS_EMAIL`, `LOCAL_AUTH_DB_PATH`. Tenant config may be
+unavailable — wire env-driven and verify with the dev bypass; note the missing
+tenant config in the report (plan 010's deploy step needs it).
 
 **Verify**: `pnpm --filter @rfid/web build` → exit 0; dev with bypass: `/`
-renders with the fake user prefilled; without bypass: `/` redirects to
-sign-in while `/tag/ABC` still renders.
+renders 200 with the fake user prefilled; without bypass: `/` redirects to
+sign-in while `/tag/<seeded-epc>` still renders 200.
 
 ## Test plan
 
@@ -199,9 +268,15 @@ Machine-checkable. ALL must hold:
 - [ ] `pnpm --filter @rfid/domain test` exits 0 incl. `webStock` suite
 - [ ] `pnpm -r typecheck` exits 0
 - [ ] `pnpm --filter @rfid/web build` exits 0
+- [ ] `grep -rn "next-auth" apps/web` → no matches (Better Auth replaces it)
+- [ ] `grep -rn "AUTH_DEV_BYPASS" apps/web/src` shows the
+  `NODE_ENV !== "production"` guard on the same code path (grep
+  `NODE_ENV` near `AUTH_DEV_BYPASS`)
+- [ ] `apps/web/src/middleware.ts` exists and its matcher excludes `/tag`
+  (grep `tag` in `apps/web/src/middleware.ts` → 1+ match)
 - [ ] `grep -rn "SELECT\|INSERT INTO" apps/web/src --include "*.ts" --include "*.tsx" | grep -v lib/db` → no matches (SQL only in domain)
-- [ ] `grep -rn "AUTH_DEV_BYPASS" apps/web/src` shows the `NODE_ENV` guard on the same code path
-- [ ] Middleware matcher excludes `/tag` (grep `tag` in `apps/web/src/middleware.ts` → 1+ match)
+- [ ] Better Auth tables are NOT in `packages/domain/src/schema.ts` (auth
+  schema/migrations live in `apps/web` against a separate auth database)
 - [ ] `plans/README.md` status row updated
 
 ## STOP conditions
