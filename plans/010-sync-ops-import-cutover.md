@@ -279,7 +279,10 @@ same-row last-push-wins result.
    `/api/health` return generic status without raw exception text.
 4. Add basic `@sentry/react-native` and `@sentry/nextjs` crash/error reporting
    with source maps. Redact auth headers/cookies, tokens, BOL/OCR content, EPCs,
-   and request bodies; no replay is required.
+   and request bodies; no replay is required. **(OPERATOR DECISION 2026-07-23:
+   SKIPPED for launch — launch without error tracking; recommended post-launch
+   addition. Redaction spec above is the draft for that future step. No
+   `@sentry/*` packages or `SENTRY_DSN` are required for launch.)**
 5. Write only two concise operational docs:
    - `production-launch.md`: resource/env names, migration verification,
      Turso backup/PITR availability, device/token revoke, main deploy checklist,
@@ -332,8 +335,9 @@ remains required.
 4. Complete `warehouse-acceptance.md`. Any safety/data-loss/hardware blocker is
    NO-GO.
 5. Main merge checklist: approved Phase 1 decision, migrations current,
-   Production env/domain/Entra/Sentry/backup green, CI green, accepted commit and
-   TestFlight build recorded, previous deployment/build rollback identified.
+   Production env/domain/Entra/backup green (Sentry SKIPPED for launch), CI
+   green, accepted commit and TestFlight build recorded, previous
+   deployment/build rollback identified.
 6. Merge the reviewed `rewrite/expo` PR to `main`; verify Vercel Production
    deploys that commit. Install the accepted TestFlight build.
 7. Create only a few labeled smoke inventory records through the new field app;
@@ -345,8 +349,9 @@ remains required.
 
 **Verify**:
 warehouse checklist is fully PASS, `main` commit equals the Production deploy,
-smoke workflow passes, Sentry has no unresolved launch error, and one normal
-warehouse shift completes successfully. Observe for two business days before
+smoke workflow passes (Sentry SKIPPED for launch — no error-tracking gate), and
+one normal warehouse shift completes successfully. Observe for two business days
+before
 Phase 7.
 
 ### Phase 7: Archive Python references after the launch window

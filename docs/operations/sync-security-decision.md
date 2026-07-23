@@ -496,11 +496,28 @@ will be seeded to the build's `SCHEMA_VERSION` on the first production request
 - Sentry init: add `@sentry/nextjs` (web) + `@sentry/react-native` (field),
   init with redaction (auth headers/cookies, tokens, BOL/OCR content, EPCs,
   request bodies), and confirm one symbolicated redacted Expo error + one Next
-  error arrive. Blocked on a Sentry DSN/account.
+  error arrive. Blocked on a Sentry DSN/account. **(OPERATOR DECISION 2026-07-23:
+  SKIPPED for launch — see "Sentry — SKIPPED for launch" below. Launch without
+  error tracking; recommended post-launch addition.)**
 - Entra production callback + sign-in/sign-out verification (needs the
   production Entra app registration).
 - Production field default: set `EXPO_PUBLIC_DEFAULT_SERVER_URL` to the
   production HTTPS domain at EAS build time (the in-app lock is in place).
+
+### Sentry — SKIPPED for launch (operator decision, 2026-07-23)
+
+**Decision: launch WITHOUT error tracking.** The operator approved skipping
+Sentry for launch. Rationale: no Sentry DSN/account is provisioned and wiring it
+mid-flight risks a native-dep rebuild + redaction review; the launch surface is
+small and warehouse-day acceptance is in person. This is a **recommended
+post-launch addition**, not a permanent deferral.
+
+**What this means for the checklist:** the Phase-4 "Sentry init" operator-action
+item above is annotated SKIPPED (not pending). No `@sentry/*` packages are added;
+no `SENTRY_DSN` env is required for launch. The production-launch runbook should
+list "add Sentry" under post-launch hardening (redaction spec already drafted in
+the Phase-4 bullet above: auth headers/cookies, tokens, BOL/OCR content, EPCs,
+request bodies).
 
 ## Operator scope addition — device PIN, registry lifecycle, linked-by (2026-07-23)
 

@@ -66,7 +66,8 @@ Record the restore contact / retention window here before launch:
 ## Deploy checklist (main)
 
 1. Phase 1 decision doc shows `DIRECT_SYNC_PASS`.
-2. Migrations current (above); production env/domain/Entra/Sentry/backup green.
+2. Migrations current (above); production env/domain/Entra/backup green
+   (Sentry SKIPPED for launch — not required).
 3. CI green on the commit to merge.
 4. Merge the reviewed `rewrite/expo` PR to `main`; Vercel Production deploys
    that commit (confirm the deployed SHA == `main` HEAD).
