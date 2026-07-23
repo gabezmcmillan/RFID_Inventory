@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 
 import { Button } from "@/components/ui/button";
@@ -157,7 +157,11 @@ export default function SettingsScreen(): React.ReactNode {
   };
 
   return (
-    <View className="flex-1 p-5 gap-4">
+    <ScrollView
+      className="flex-1"
+      contentContainerStyle={{ padding: 20, gap: 16, paddingBottom: 60 }}
+      keyboardShouldPersistTaps="handled"
+    >
       <View className="flex-row items-center justify-between">
         <View>
           <Text className="text-base font-semibold">Native Bluetooth sled</Text>
@@ -272,6 +276,6 @@ export default function SettingsScreen(): React.ReactNode {
           <Text className="font-mono">{SERVER_URL_KEY}</Text>
         </Text>
       ) : null}
-    </View>
+    </ScrollView>
   );
 }
