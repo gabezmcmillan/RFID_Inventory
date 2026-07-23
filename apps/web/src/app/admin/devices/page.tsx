@@ -2,16 +2,27 @@
  * Admin Devices page (plan 010, operator scope addition). Lists the
  * field-device registry with an editable display name, the linker's identity
  * ("Linked by", not "Owner"), last-seen/last-sync, and the lifecycle actions.
- * Server component: reads the registry directly; the {@link DevicesTable}
- * client component drives the mutations and refreshes.
+ *
+ * Server Component: prefetches the registry into a per-request `QueryClient`
+ * and dehydrates it into a `<HydrationBoundary>`. The {@link DevicesTable}
+ * client component owns the list display (count, empty / loading / error
+ * states) and the mutations — it reads the prefetched data instantly and
+ * refetches via `GET /api/admin/devices` on invalidation / focus. This is the
+ * canonical TanStack Query v5 + App Router prefetch pattern (see the
+ * "Advanced Server Rendering" guide): the server prefetches, the client owns
+ * the data, and mutations call the existing Server Actions in `./actions`
+ * (no API redesign).
  */
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
+
 import { Header } from "@/components/Header";
-import { EmptyState, PageHeader } from "@/components/PageHeader";
+import { PageHeader } from "@/components/PageHeader";
 import { listDevicesWithLinker } from "@/lib/devices";
+import { getQueryClient } from "@/lib/query/get-query-client";
 
 import { DevicesTable } from "./DevicesTable";
+import { devicesQueryKey } from "./queries";
 
 // Auth-gated + reads the auth DB at render (`listDevicesWithLinker`), so this
 // page is inherently request-time. `force-dynamic` stops Next from prerendering
@@ -22,7 +33,14 @@ import { DevicesTable } from "./DevicesTable";
 export const dynamic = "force-dynamic";
 
 export default async function AdminDevicesPage(): Promise<React.ReactNode> {
-  const devices = await listDevicesWithLinker();
+  const queryClient = getQueryClient();
+  // Prefetch the registry directly from the server DB (no client fetch on first
+  // paint). `prefetchQuery` is awaited so the dehydrated state is ready.
+  await queryClient.prefetchQuery({
+    queryKey: devicesQueryKey,
+    queryFn: () => listDevicesWithLinker(),
+  });
+
   return (
     <>
       <Header active="devices" />
@@ -31,21 +49,9 @@ export default async function AdminDevicesPage(): Promise<React.ReactNode> {
           title="Field devices"
           description="The person who links a device via QR is setting it up — they are not necessarily the person using it day-to-day. “Linked by” names that operator, not an owner."
         />
-        {devices.length === 0 ? (
-          <EmptyState
-            title="No devices linked yet"
-            description="Link a field device from your user menu to see it here."
-          />
-        ) : (
-          <Card>
-            <CardHeader className="border-b border-border">
-              <CardTitle>{devices.length} device{devices.length === 1 ? "" : "s"}</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <DevicesTable devices={devices} />
-            </CardContent>
-          </Card>
-        )}
+        <HydrationBoundary state={dehydrate(queryClient)}>
+          <DevicesTable />
+        </HydrationBoundary>
       </main>
     </>
   );

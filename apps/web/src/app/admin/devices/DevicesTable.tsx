@@ -5,25 +5,32 @@
  * scope addition). Renders one row per device with an editable display name,
  * the linker's identity ("Linked by", not "Owner"), last-seen/last-sync, an
  * active/inactive badge, and the lifecycle actions (rename, deactivate /
- * reactivate, revoke). Actions call the server actions in
- * {@link ./actions} then refresh the route so the server component re-reads
- * the registry.
+ * reactivate, revoke).
+ *
+ * Data is owned by TanStack Query ({@link useDevicesQuery}); the server page
+ * prefetches + dehydrates it so first paint is instant, and refetches (focus,
+ * invalidation) hit `GET /api/admin/devices`. Mutations call the Server
+ * Actions in `./actions` via the hooks in `./queries` with optimistic updates
+ * + invalidation — no more `router.refresh()` dance. The count + empty /
+ * loading / error states live here (the client owns the list display).
  */
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 
+import { EmptyState } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import {
-  deactivateDeviceAction,
-  reactivateDeviceAction,
-  renameDeviceAction,
-  revokeDeviceAction,
-} from "./actions";
 import type { DeviceWithLinker } from "@/lib/devices";
+import {
+  useDeactivateDevice,
+  useDevicesQuery,
+  useReactivateDevice,
+  useRenameDevice,
+  useRevokeDevice,
+} from "./queries";
 
 /** Format an ISO timestamp for display, or "—" when null. */
 function fmt(iso: string | null): string {
@@ -51,52 +58,76 @@ function statusBadge(d: DeviceWithLinker): { label: string; className: string } 
   return { label: "Inactive", className: `${base} border-border text-muted-foreground` };
 }
 
-export function DevicesTable({ devices }: { devices: DeviceWithLinker[] }): React.ReactNode {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
+export function DevicesTable(): React.ReactNode {
+  const { data: devices, isPending, isError, error } = useDevicesQuery();
 
-  const refresh = (): void => startTransition(() => router.refresh());
+  if (isPending) {
+    return (
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle>Loading devices…</CardTitle>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return (
+      <EmptyState
+        title="Couldn’t load devices"
+        description={error instanceof Error ? error.message : "Try refreshing the page."}
+      />
+    );
+  }
+
+  if (devices.length === 0) {
+    return (
+      <EmptyState
+        title="No devices linked yet"
+        description="Link a field device from your user menu to see it here."
+      />
+    );
+  }
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Device</TableHead>
-          <TableHead>Linked by</TableHead>
-          <TableHead>Last seen</TableHead>
-          <TableHead>Last sync</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {devices.map((d) => (
-          <DeviceRow key={d.id} d={d} disabled={pending} onAfter={refresh} />
-        ))}
-      </TableBody>
-    </Table>
+    <Card>
+      <CardHeader className="border-b border-border">
+        <CardTitle>{devices.length} device{devices.length === 1 ? "" : "s"}</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Device</TableHead>
+              <TableHead>Linked by</TableHead>
+              <TableHead>Last seen</TableHead>
+              <TableHead>Last sync</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {devices.map((d) => (
+              <DeviceRow key={d.id} d={d} />
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 
-function DeviceRow({
-  d,
-  disabled,
-  onAfter,
-}: {
-  d: DeviceWithLinker;
-  disabled: boolean;
-  onAfter: () => void;
-}): React.ReactNode {
+function DeviceRow({ d }: { d: DeviceWithLinker }): React.ReactNode {
   const [label, setLabel] = useState(d.label ?? "");
-  const [busy, startBusy] = useTransition();
+  const rename = useRenameDevice();
+  const deactivate = useDeactivateDevice();
+  const reactivate = useReactivateDevice();
+  const revoke = useRevokeDevice();
   const chip = statusBadge(d);
 
-  const run = (fn: () => Promise<unknown>): void => {
-    startBusy(async () => {
-      await fn();
-      onAfter();
-    });
-  };
+  // A mutation is "busy" for this row when any of its own actions is in flight.
+  const busy =
+    rename.isPending || deactivate.isPending || reactivate.isPending || revoke.isPending;
 
   return (
     <tr>
@@ -113,10 +144,10 @@ function DeviceRow({
             <Button
               size="sm"
               variant="secondary"
-              disabled={disabled || busy || label.trim() === (d.label ?? "")}
-              onClick={() => run(() => renameDeviceAction(d.id, label))}
+              disabled={busy || label.trim() === (d.label ?? "")}
+              onClick={() => rename.mutate({ deviceId: d.id, label })}
             >
-              Save
+              {rename.isPending ? "Saving…" : "Save"}
             </Button>
           </div>
         </div>
@@ -139,32 +170,32 @@ function DeviceRow({
             <Button
               size="sm"
               variant="secondary"
-              disabled={disabled || busy}
-              onClick={() => run(() => deactivateDeviceAction(d.id))}
+              disabled={busy}
+              onClick={() => deactivate.mutate(d.id)}
             >
-              Deactivate
+              {deactivate.isPending ? "…" : "Deactivate"}
             </Button>
           ) : (
             <Button
               size="sm"
               variant="secondary"
-              disabled={disabled || busy || d.revoked_at !== null || d.unlinked_at !== null}
-              onClick={() => run(() => reactivateDeviceAction(d.id))}
+              disabled={busy || d.revoked_at !== null || d.unlinked_at !== null}
+              onClick={() => reactivate.mutate(d.id)}
             >
-              Reactivate
+              {reactivate.isPending ? "…" : "Reactivate"}
             </Button>
           )}
           <Button
             size="sm"
             variant="destructive"
-            disabled={disabled || busy || d.revoked_at !== null}
+            disabled={busy || d.revoked_at !== null}
             onClick={() => {
               if (confirm("Revoke this device? Its session is killed and its EPC byte is retired.")) {
-                run(() => revokeDeviceAction(d.id));
+                revoke.mutate(d.id);
               }
             }}
           >
-            Revoke
+            {revoke.isPending ? "…" : "Revoke"}
           </Button>
         </div>
       </TableCell>
