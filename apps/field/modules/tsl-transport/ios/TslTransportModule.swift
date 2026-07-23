@@ -10,6 +10,15 @@ import ExternalAccessory
  * output stream — buffering when the stream has no free space. Accessory
  * connect/disconnect notifications are re-emitted to JS as `onConnectionChange`.
  *
+ * Liveness: registers for `EAAccessoryDidConnect`/`EAAccessoryDidDisconnect`
+ * local notifications (`registerForLocalNotifications` is required for either
+ * to fire — e.g. toggling Bluetooth off/on). On disconnect the session is torn
+ * down and `onConnectionChange: false` is emitted; on reconnect, if JS has
+ * expressed interest (`wantsConnection`, set by `connect()` and cleared by an
+ * explicit `disconnect()`), the session is re-opened automatically and
+ * `onConnectionChange: true` is emitted. Stream `.endEncountered`/`.errorOccurred`
+ * are treated as disconnects too (the accessory may vanish without a notification).
+ *
  * The stream delegate runs on a dedicated thread's run loop so reads/writes
  * never block the main thread.
  */
@@ -29,12 +38,61 @@ public class TslTransportModule: Module {
   private let outputLock = NSLock()
   private var outputBuffer = Data()
 
-  /// Observer for `EAAccessoryDidDisconnectNotification`.
+  /// The protocol string of the currently (or most recently) open session, so
+  /// an `EAAccessoryDidConnect` reconnect can re-open the same protocol.
+  private var lastProtocol: String?
+
+  /// True when JS wants an active session — set by `connect()`, cleared by an
+  /// explicit `disconnect()`. Survives an accessory drop so a reconnect
+  /// (`EAAccessoryDidConnect`) re-opens the session automatically.
+  private var wantsConnection = false
+
+  /// Observers for `EAAccessoryDidConnect`/`EAAccessoryDidDisconnect`. Registered
+  /// in `OnCreate` (before any `connect()`) so a sled that appears after launch
+  /// is still observed.
+  private var connectObserver: NSObjectProtocol?
   private var disconnectObserver: NSObjectProtocol?
 
   public func definition() -> ModuleDefinition {
     Name("TslTransport")
     Events("onData", "onConnectionChange")
+
+    // Register for local accessory notifications BEFORE observing them. Apple
+    // only posts `EAAccessoryDidConnect`/`EAAccessoryDidDisconnect` to apps that
+    // have called `registerForLocalNotifications`; without this, toggling
+    // Bluetooth off/on (which tears down / re-establishes the MFi accessory
+    // session) is invisible to the module.
+    OnCreate {
+      EAAccessoryManager.shared().registerForLocalNotifications()
+      let center = NotificationCenter.default
+      self.connectObserver = center.addObserver(
+        forName: .EAAccessoryDidConnect,
+        object: nil,
+        queue: .main
+      ) { [weak self] notification in
+        self?.handleAccessoryConnect(notification)
+      }
+      self.disconnectObserver = center.addObserver(
+        forName: .EAAccessoryDidDisconnect,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        self?.handleAccessoryDisconnect()
+      }
+    }
+
+    OnDestroy {
+      EAAccessoryManager.shared().unregisterForLocalNotifications()
+      if let o = self.connectObserver {
+        NotificationCenter.default.removeObserver(o)
+        self.connectObserver = nil
+      }
+      if let o = self.disconnectObserver {
+        NotificationCenter.default.removeObserver(o)
+        self.disconnectObserver = nil
+      }
+      self.closeSession()
+    }
 
     // List connected MFi accessories with their advertised protocol strings.
     Function("listAccessories") {
@@ -51,9 +109,11 @@ public class TslTransportModule: Module {
       return self.connect(protocolString: protocolString)
     }
 
-    // Close the session and stop the stream thread.
+    // Close the session and stop the stream thread (explicit JS disconnect).
     AsyncFunction("disconnect") {
-      self.disconnect()
+      self.wantsConnection = false
+      self.closeSession()
+      self.sendEvent("onConnectionChange", ["connected": false])
     }
 
     // Write a command string to the reader (buffered if the stream is full).
@@ -65,16 +125,28 @@ public class TslTransportModule: Module {
   // MARK: - Connection
 
   private func connect(protocolString: String) -> Bool {
-    disconnect()
+    // JS asked to connect: remember the protocol and that it wants a session so
+    // a later `EAAccessoryDidConnect` (sled reappearing after BT toggle) can
+    // re-open automatically.
+    wantsConnection = true
+    lastProtocol = protocolString
+
+    // Tear down any stale session first (no event — we emit the result below).
+    closeSession()
 
     guard let accessory = EAAccessoryManager.shared().connectedAccessories
             .first(where: { $0.protocolStrings.contains(protocolString) }) else {
       return false
     }
+    return openSession(accessory: accessory, protocolString: protocolString)
+  }
+
+  /// Open (or re-open) an EASession for the accessory. Emits `onConnectionChange:
+  /// true` on success. Does NOT touch `wantsConnection` — callers manage that.
+  private func openSession(accessory: EAAccessory, protocolString: String) -> Bool {
     guard let eaSession = EASession(accessory: accessory, forProtocol: protocolString) else {
       return false
     }
-
     self.session = eaSession
     if let input = eaSession.inputStream {
       input.delegate = streamDelegate
@@ -90,22 +162,13 @@ public class TslTransportModule: Module {
     self.streamThread = thread
     thread.start()
 
-    // Watch for the sled being unplugged while connected.
-    if disconnectObserver == nil {
-      disconnectObserver = NotificationCenter.default.addObserver(
-        forName: .EAAccessoryDidDisconnect,
-        object: nil,
-        queue: .main
-      ) { [weak self] _ in
-        self?.handleDisconnect()
-      }
-    }
-
     sendEvent("onConnectionChange", ["connected": true])
     return true
   }
 
-  private func disconnect() {
+  /// Tear down the current session + stream thread and clear the output buffer.
+  /// Emits nothing and does not clear `wantsConnection` — callers decide.
+  private func closeSession() {
     streamThread?.cancel()
     streamThread = nil
     session = nil
@@ -114,8 +177,31 @@ public class TslTransportModule: Module {
     outputLock.unlock()
   }
 
-  private func handleDisconnect() {
-    disconnect()
+  /// `EAAccessoryDidConnect`: the sled (re)appeared. If JS still wants a session,
+  /// re-open it on the last-used protocol and emit the new connection state.
+  private func handleAccessoryConnect(_ notification: Notification) {
+    guard wantsConnection, session == nil else { return }
+    let protocolString = lastProtocol ?? Self.defaultProtocol
+
+    // Prefer the accessory the system handed us; fall back to a scan if absent.
+    let accessory: EAAccessory? = (notification.userInfo?[EAAccessoryKey] as? EAAccessory)
+      ?? EAAccessoryManager.shared().connectedAccessories
+        .first(where: { $0.protocolStrings.contains(protocolString) })
+    guard let accessory = accessory else { return }
+
+    let ok = openSession(accessory: accessory, protocolString: protocolString)
+    if !ok {
+      // Re-open failed — surface the disconnect so JS isn't left in limbo; the
+      // next `EAAccessoryDidConnect` will retry.
+      sendEvent("onConnectionChange", ["connected": false])
+    }
+  }
+
+  /// `EAAccessoryDidDisconnect`: the sled vanished (Bluetooth off, unpaired,
+  /// power loss). Tear down and notify JS. `wantsConnection` is preserved so a
+  /// reconnect can re-open.
+  private func handleAccessoryDisconnect() {
+    closeSession()
     sendEvent("onConnectionChange", ["connected": false])
   }
 
@@ -182,12 +268,20 @@ extension TslTransportModule {
     case .hasSpaceAvailable:
       flushOutput()
     case .endEncountered:
-      handleDisconnect()
+      // Stream closed (e.g. accessory gone). Treat as a disconnect but keep
+      // `wantsConnection` so a reconnect can re-open.
+      handleStreamDisconnect()
     case .errorOccurred:
-      handleDisconnect()
+      handleStreamDisconnect()
     default:
       break
     }
+  }
+
+  /// Stream-level disconnect: tear down + notify JS. Keeps `wantsConnection`.
+  fileprivate func handleStreamDisconnect() {
+    closeSession()
+    sendEvent("onConnectionChange", ["connected": false])
   }
 
   private func readAvailable(_ input: InputStream) {
@@ -196,7 +290,7 @@ extension TslTransportModule {
     while input.hasBytesAvailable {
       let read = input.read(&buffer, maxLength: bufferSize)
       if read < 0 {
-        handleDisconnect()
+        handleStreamDisconnect()
         return
       }
       if read == 0 {
