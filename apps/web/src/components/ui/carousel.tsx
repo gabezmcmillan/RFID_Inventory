@@ -95,7 +95,11 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api) return
-    onSelect(api)
+    // Defer the initial sync off the effect's synchronous body (avoids the
+    // setState-in-effect cascading-render lint) while still updating the
+    // scroll buttons before paint. The `reInit`/`select` subscriptions keep
+    // them in sync thereafter.
+    queueMicrotask(() => onSelect(api))
     api.on("reInit", onSelect)
     api.on("select", onSelect)
 

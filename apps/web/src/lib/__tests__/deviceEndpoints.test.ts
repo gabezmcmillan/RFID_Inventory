@@ -1,4 +1,4 @@
-import { Kysely, sql } from "kysely";
+import { Kysely } from "kysely";
 import { LibsqlDialect } from "kysely-libsql";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 

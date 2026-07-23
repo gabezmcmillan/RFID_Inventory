@@ -8,7 +8,6 @@
  */
 
 import { getAuth } from "@/lib/auth";
-import { env } from "@/lib/env";
 import { getActiveDeviceForUser, unlinkDevice, deleteSessionById } from "@/lib/devices";
 import { json, resolveDeviceSession, unauthorized } from "@/lib/deviceAuth";
 
