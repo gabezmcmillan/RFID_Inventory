@@ -33,6 +33,22 @@
 - **Category**: security, migration, tests, operations
 - **Planned at**: commit `d73717b`, 2026-07-23
 - **Status**: IN_PROGRESS — Phase 1 credential gate PASSED (`DIRECT_SYNC_PASS`); Phase 2 (collision-safe IDs, local-only device state, credential control) PASSED its verify gate; Phase 3 (local-first sync coordinator, status UI, BOL upload queue, two-replica convergence) PASSED its verify gate; Phase 4 deterministic code done (health hardening + test, production server-URL lock, CI workflow, launch/acceptance runbooks, web build + field iOS export verified, production DB verified empty with separate Preview hosts) — remaining Phase 4 (Entra/Sentry/Blob env, Sentry init, Entra callback) operator-blocked on secrets; Phases 5–7 pending
+- **Operator scope addition (2026-07-23, authoritative)**: the device linker is
+  the *setup* person, not necessarily the daily user. Three additions folded in
+  and implemented in reviewable batches (commits below): (a) an offline-capable,
+  required **device PIN** — salted PBKDF2-HMAC-SHA256 hash in `expo-secure-store`,
+  set immediately after linking, required on launch and on return-to-foreground
+  after a timeout, with retry backoff; the legacy AsyncStorage admin PIN is
+  reconciled into the same hashed store (separate "admin" slot) so there is one
+  PIN mechanism, not two; (b) **device registry lifecycle** — `field_devices`
+  gained `last_seen_at`/`last_sync_at`/`deactivated_at`, the credential endpoint
+  touches them on each mint, DEACTIVATE blocks credential refresh (pushes stop
+  within the token TTL) and the field coordinator reacts to 403 by entering its
+  terminal `reauth` state (no infinite retry), with unambiguous
+  reactivate-vs-revoke semantics; (c) `linked_by` is tracked distinctly from
+  "current user" and the admin UI says "Linked by", not "Owner". Web admin UI is
+  a minimal shadcn page at `/admin/devices`. Tests cover PIN hash/verify/backoff,
+  deactivate→refresh denial→coordinator stops, and registry fields.
 
 ## Why this matters
 
@@ -115,8 +131,16 @@ Run from the repository root. Never print or commit secret values.
 - `packages/domain/**`: globally unique field-created IDs and migrations/tests
 - `apps/field/**`: local device metadata, credential refresh, sync coordinator,
   status UI, BOL upload queue, Sentry, EAS, focused tests
+- `apps/field/**` (operator scope addition): offline-capable device PIN
+  (salted PBKDF2 hash in `expo-secure-store`), lock gate (launch + foreground
+  relock after timeout, retry backoff), reconciliation of the legacy admin PIN
+  into the same hashed store, and the field-side 403 → reauth reaction
 - `apps/web/**`: minimal field-device credential/revoke API, allowlist, Blob
   upload token route, generic health errors, Sentry, focused tests
+- `apps/web/**` (operator scope addition): device registry lifecycle columns
+  (`last_seen_at`/`last_sync_at`/`deactivated_at`), rename/deactivate/reactivate
+  server actions + endpoints, credential-endpoint touch on mint, and a minimal
+  shadcn admin devices page (`/admin/devices`) with "Linked by" copy
 - `scripts/**` and `.github/workflows/ci.yml`: one DB check and one basic CI
 - `docs/operations/{production-launch,warehouse-acceptance}.md`: two concise
   launch/rollback and one-day hardware checklists
@@ -337,6 +361,11 @@ shows mechanical moves in the separate archive commit.
   short-lived refresh, unlink/lost-device revoke, no auth DB access.
 - **Sync**: serialized push/pull, four triggers, bounded retry, 401 refresh,
   offline restart/reconnect, schema mismatch, known same-row last-push-wins.
+- **Device PIN + registry (operator scope addition)**: PIN hash/verify/backoff
+  (PBKDF2, constant-time, lockout), lock-state reducer (launch + foreground
+  relock after timeout), legacy-admin-PIN migration to the hashed store,
+  deactivate → credential refresh denied (403) → coordinator stops, registry
+  field presence (last_seen/last_sync/deactivated) and linked-by join.
 - **BOL/web**: authenticated idempotent upload/retry, `storage_url` link,
   generic health errors, Sentry redaction.
 - **Manual**: one warehouse day covering iPhone, sled, printer, camera/OCR,
@@ -357,6 +386,15 @@ ALL must hold:
 - [ ] two-replica insert/offline/reconnect tests pass and last-push-wins limits
       are documented/accepted
 - [ ] unlink/lost-device revoke blocks credential refresh
+- [ ] (operator scope addition) device PIN verifies fully locally (salted
+      PBKDF2 hash in `expo-secure-store`, no network); the lock gate fires on
+      launch and on return-to-foreground after a timeout; the legacy admin PIN
+      is reconciled into one hashed-PIN mechanism (not two half-baked systems)
+- [ ] (operator scope addition) deactivate blocks credential refresh (403) and
+      the field coordinator enters its terminal reauth state (no infinite
+      retry); reactivate-vs-revoke are unambiguous; the registry/admin UI shows
+      "Linked by" (not "Owner") and the editable name, last-seen/last-sync, and
+      active status
 - [ ] BOL upload makes the current public tag-page link work
 - [ ] field/web have real focused tests; full tests/typecheck/lint/build/export
       and minimal CI pass

@@ -501,3 +501,103 @@ will be seeded to the build's `SCHEMA_VERSION` on the first production request
   production Entra app registration).
 - Production field default: set `EXPO_PUBLIC_DEFAULT_SERVER_URL` to the
   production HTTPS domain at EAS build time (the in-app lock is in place).
+
+## Operator scope addition — device PIN, registry lifecycle, linked-by (2026-07-23)
+
+Authoritative operator requirement, folded into Plan 010 mid-flight. Insight:
+the person who links a device via QR is *setting it up* — they are not
+necessarily the person using it day-to-day. Three additions, implemented as
+reviewable batches on `rewrite/expo` (no push). Extends existing Phase 2 device
+tables/endpoints and the Phase 3 coordinator reauth state rather than
+duplicating them.
+
+### A. Offline-capable device PIN (required)
+
+- **Crypto** (`apps/field/src/auth/pinCrypto.ts`): pure PBKDF2-HMAC-SHA256
+  (RFC 8018, single block, dkLen ≤ 32), 16-byte random salt, 50k iterations,
+  constant-time compare. `hashPin` → `{ n, s, h }` (iterations, salt, derived
+  key, all base64); `verifyPin` re-derives and constant-time-compares;
+  `nextLockoutMs(attempts)` gives a small exponential backoff; `isValidPin`
+  enforces 4–8 digits. No PIN is ever stored — only the salted hash.
+- **Store** (`apps/field/src/auth/pinStore.ts` + `pinStoreApp.ts`): named slots
+  ("device", "admin") in `expo-secure-store`; wrong-entry backoff persists
+  across instances. **Reconciliation:** the legacy plaintext AsyncStorage admin
+  PIN is migrated once (idempotent, `migrateLegacyAdminPinOnce`) into the hashed
+  "admin" slot, defaulting to a documented value if none existed. One PIN
+  mechanism, two slots — admin-area gating keeps its own PIN, the device-unlock
+  gate uses the "device" slot. `adminPin.tsx`/`AdminScreen.tsx` now use the
+  shared `PinEntry` + `pinStoreApp` singleton.
+- **Lock gate** (`apps/field/src/auth/lockState.ts` pure reducer +
+  `LockProvider.tsx` + `LockScreen.tsx`): locks on launch; relocks on
+  return-to-foreground after a timeout (configurable; `inactive` ignored to
+  avoid relocking on system dialogs); `set-pin.tsx` collects+confirms the PIN
+  immediately after a successful link; `link-device.tsx` navigates to it;
+  `settings.tsx` exposes change-PIN and clears the device PIN on unlink. The
+  `LockScreen` overlays (absolute fill) so child providers (`SyncProvider`)
+  keep their state across lock/unlock.
+- **Tests**: `pinCrypto.test.ts` (PBKDF2 cross-checked vs `node:crypto`
+  `pbkdf2Sync`, hash/verify, salt randomness, iteration binding, malformed
+  hash, backoff, validity), `pinStore.test.ts` (set/verify/clear, slot
+  independence, persistent backoff, legacy migration incl. malformed data),
+  `lockState.test.ts` (launch, PIN set/clear, background/foreground relock
+  incl. timeout and zero threshold, unlock).
+
+### B. Device registry lifecycle
+
+- **Schema** (`apps/web/src/lib/devices.ts`): `field_devices` gained
+  `deactivated_at`, `last_seen_at`, `last_sync_at` (idempotent
+  `addColumnIfMissing` for existing DBs; `ensureAuthSchema` creates them on new
+  DBs). `register` stamps `last_seen_at=now`, `last_sync_at=null`,
+  `deactivated_at=null`.
+- **Touch on mint**: `POST /api/device/credential` calls
+  `touchDevice(id, { lastSync: true })` after a successful mint, so both
+  `last_seen_at` (alive) and `last_sync_at` (sync attempt proxy) bump each
+  cycle.
+- **Deactivate vs revoke (unambiguous)**: `deactivateDevice` sets `active=0` +
+  `deactivated_at=now` but does **not** revoke the Better Auth session — so a
+  deactivated device's existing short-lived token dies within its TTL and the
+  next credential refresh is denied (403), yet reactivation is a single
+  `reactivateDevice` (no re-link). `revokeDevice` (lost device) additionally
+  kills the session and retires the EPC byte (never reused). The credential
+  endpoint requires `active=1`, so a deactivated device gets 403 on refresh.
+- **Field reaction**: the Phase 3 coordinator already maps 403 → single refresh
+  → terminal `reauth` state (no infinite retry). The credential module
+  propagates 403 as an `AuthError`, so a deactivated/revoked device stops
+  syncing and surfaces `Re-link or upgrade required` instead of looping.
+- **Tests**: `devices.test.ts` (registry fields, `listDevicesWithLinker` join +
+  order, rename, deactivate, reactivate, touch, deactivate-vs-revoke
+  distinction), `deviceEndpoints.test.ts` (deactivate → credential 403,
+  reactivate → credential 200).
+
+### C. `linked_by` distinct from "current user"
+
+- The linker is recorded as `linked_by` (user + timestamp) and is **not**
+  treated as the operator of every action. Event attribution to a person is
+  explicitly future work; no such assumption is baked into naming or UI copy.
+- The admin devices page says **"Linked by"** (with the linker's name, email,
+  and link timestamp), not "Owner". `listDevicesWithLinker` LEFT JOINs `user`
+  for the linker identity.
+
+### Admin UI (minimal, shadcn)
+
+`/admin/devices` (server component) lists the registry via
+`listDevicesWithLinker`; a client `DevicesTable` drives rename/deactivate/
+reactivate/revoke through the existing server actions and `router.refresh()`.
+Header gains a "Devices" nav link. Uses the shared status palette for the
+active/deactivated/revoked badges.
+
+### Commits (this scope addition)
+
+- `feat(field): offline device PIN crypto + store + tests` (batch 1)
+- `feat(field): reconcile legacy admin PIN to hashed store` (batch 2)
+- `feat(field): device lock gate (lockState + LockProvider + LockScreen)` (batch 3)
+- `feat(web): device registry lifecycle columns + repo fns + tests` (batch 4)
+- `feat(web): device admin endpoints (rename/deactivate/reactivate) + tests` (batch 5)
+- `feat(web): admin devices registry page with linked-by copy` (batch 6)
+
+### Verify gate for this addition
+
+`pnpm -r typecheck`, `pnpm --filter @rfid/domain test`,
+`pnpm --filter @rfid/web test`, `pnpm --filter @rfid/field test`, and
+`pnpm --filter @rfid/web build` all exit 0 (see the final report for counts).
+Physical on-device PIN + deactivation behavior is Phase 6 warehouse acceptance.
