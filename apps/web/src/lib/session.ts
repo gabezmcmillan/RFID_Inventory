@@ -11,7 +11,9 @@
  *    on the same expression as `AUTH_DEV_BYPASS`, so it is impossible to enable
  *    in production — `AUTH_DEV_BYPASS=1` in prod is a no-op (the `&&` short-
  *    circuits). The fake user's name/email are env-tunable
- *    (`AUTH_DEV_BYPASS_NAME` / `AUTH_DEV_BYPASS_EMAIL`) with defaults.
+ *    (`AUTH_DEV_BYPASS_NAME` / `AUTH_DEV_BYPASS_EMAIL`) with defaults. The
+ *    bypass logic itself lives in `dev-bypass.ts` (edge-safe) so the middleware
+ *    can use it without importing this Node-only module.
  *
  * 2. **Real session**: when a live auth backend is configured (`getAuth()` is
  *    not `null`) it calls `auth.api.getSession({ headers })` and maps the
@@ -23,33 +25,9 @@ import { cache } from "react";
 import { headers } from "next/headers";
 
 import { getAuth } from "@/lib/auth";
+import { devBypassUser, isDevBypassActive, type SessionUser } from "@/lib/dev-bypass";
 
-/** The signed-in user's display name + email, used to prefill the checkout form. */
-export interface SessionUser {
-  name: string;
-  email: string;
-}
-
-/** Default fake principal for the dev bypass. */
-const DEFAULT_BYPASS_NAME = "Dev User";
-const DEFAULT_BYPASS_EMAIL = "dev@example.local";
-
-/**
- * Whether the dev bypass is active. The `NODE_ENV !== "production"` guard is
- * on the same expression as `AUTH_DEV_BYPASS` so a grep for either finds both,
- * and the bypass cannot activate in production.
- */
-export function isDevBypassActive(): boolean {
-  return process.env.AUTH_DEV_BYPASS === "1" && process.env.NODE_ENV !== "production";
-}
-
-/** The fake principal returned while the dev bypass is active. */
-function devBypassUser(): SessionUser {
-  return {
-    name: process.env.AUTH_DEV_BYPASS_NAME ?? DEFAULT_BYPASS_NAME,
-    email: process.env.AUTH_DEV_BYPASS_EMAIL ?? DEFAULT_BYPASS_EMAIL,
-  };
-}
+export type { SessionUser };
 
 /**
  * Resolve the signed-in user for the current request, or `null`. Server

@@ -9,6 +9,7 @@
     "test": "pnpm -r test"
   },
   "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"],
     "patchedDependencies": {
       "@better-auth/drizzle-adapter@1.6.18": "patches/@better-auth__drizzle-adapter@1.6.18.patch"
     }

@@ -184,9 +184,10 @@ repo runs `1.0.0-rc` — the same version reason `effectivly` cites). The
 Auth guide, `secret`/`baseURL` are NOT set in the config — Better Auth reads
 `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL` from the environment itself; `BETTER_AUTH_URL`
 is required when the auth backend is live (fails loud at boot otherwise — same
-as `effectivly`). When `AUTH_DATABASE_URL` + `BETTER_AUTH_SECRET` are both
-absent there is no auth backend (`auth = null`, the offline gate `effectivly`
-uses). Microsoft Entra ID social provider, env-driven and gated on both
+as `effectivly`). When `BETTER_AUTH_SECRET` is absent there is no auth backend
+(`auth = null`, the offline gate `effectivly` uses — `AUTH_DATABASE_URL`
+defaults to a local dev file, so the gate keys on the secret). Microsoft Entra
+ID social provider, env-driven and gated on both
 `MICROSOFT_CLIENT_ID` + `MICROSOFT_CLIENT_SECRET`; `MICROSOFT_TENANT_ID` is
 required at boot when Microsoft is set (throw, do not fall back to Entra's open
 `common` endpoint). Configure `disableProfilePhoto: true`, `prompt: "select_account"`, and

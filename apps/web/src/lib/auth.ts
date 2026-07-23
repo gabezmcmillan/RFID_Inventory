@@ -14,16 +14,17 @@
  * them and the web app never becomes a second writer to the phone-synced Turso
  * database (multi-writer discipline, `plans/README.md`).
  *
- * Offline gate (same shape as `effectivly`): when `AUTH_DATABASE_URL` +
- * `BETTER_AUTH_SECRET` are both absent there is no auth backend and
- * {@link getAuth} returns `null` — the `/api/auth` route then 404s and the
- * {@link getUser} seam returns `null` (pages redirect to `/sign-in`; the dev
- * bypass, when active, short-circuits before this). When a live backend IS
- * configured, `BETTER_AUTH_URL` is required (the public origin OAuth callbacks
- * and session cookies are built against) and a missing value fails loudly at
- * boot rather than surfacing as an opaque redirect mismatch later. Per the
- * Better Auth guide, `secret`/`baseURL` are NOT set in the config — Better Auth
- * reads `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL` from the environment itself.
+ * Offline gate (same shape as `effectivly`): when `BETTER_AUTH_SECRET` is absent
+ * there is no auth backend and {@link getAuth} returns `null` — the `/api/auth`
+ * route then 404s and the {@link getUser} seam returns `null` (pages redirect to
+ * `/sign-in`; the dev bypass, when active, short-circuits before this).
+ * `AUTH_DATABASE_URL` defaults to a separate local dev file, so the gate keys
+ * on the secret. When a live backend IS configured, `BETTER_AUTH_URL` is
+ * required (the public origin OAuth callbacks and session cookies are built
+ * against) and a missing value fails loudly at boot rather than surfacing as an
+ * opaque redirect mismatch later. Per the Better Auth guide, `secret`/`baseURL`
+ * are NOT set in the config — Better Auth reads `BETTER_AUTH_SECRET`/
+ * `BETTER_AUTH_URL` from the environment itself.
  */
 
 import { resolve } from "node:path";
@@ -39,8 +40,9 @@ const DEFAULT_LOCAL_AUTH_DB_PATH = "../../.dev-data/auth.db";
 
 /**
  * Build the Kysely libSQL dialect for the auth database. Cloud path uses the
- * `AUTH_DATABASE_URL` (`libsql://...`) + `AUTH_DATABASE_AUTH_TOKEN`; the local
- * path uses a `file:` URL against a separate dev file so auth tables never
+ * `AUTH_DATABASE_URL` (`libsql://...`) + `AUTH_DATABASE_AUTH_TOKEN`; when that is
+ * unset the auth database defaults to a **separate** local dev file
+ * (`LOCAL_AUTH_DB_PATH`, default `../../.dev-data/auth.db`) so auth tables never
  * share the warehouse domain database. The dialect is what Better Auth's
  * built-in adapter consumes (it wraps it in its own Kysely instance).
  */
@@ -48,10 +50,7 @@ function buildDialect(): { dialect: LibsqlDialect; url: string } {
   const url = process.env.AUTH_DATABASE_URL;
   if (url) {
     const authToken = process.env.AUTH_DATABASE_AUTH_TOKEN;
-    return {
-      url,
-      dialect: new LibsqlDialect({ url, authToken }),
-    };
+    return { url, dialect: new LibsqlDialect({ url, authToken }) };
   }
   const localPath = resolve(
     process.env.LOCAL_AUTH_DB_PATH ?? DEFAULT_LOCAL_AUTH_DB_PATH,
@@ -61,25 +60,26 @@ function buildDialect(): { dialect: LibsqlDialect; url: string } {
 
 /**
  * Build the live Better Auth instance from the resolved environment, or
- * `null` when no auth backend is configured (the offline gate — both
- * `AUTH_DATABASE_URL` + `AUTH_SECRET` absent). The return type is inferred
- * (not annotated) so {@link AuthInstance} captures the concrete generic rather
- * than the widened `Auth<BetterAuthOptions>` — the latter's `$context` is
- * incompatible with the real instance's options shape. Throws loudly at boot
- * on a misconfigured live backend (missing `BETTER_AUTH_URL`, or Microsoft
- * credentials without a `MICROSOFT_TENANT_ID` — Entra's `common` fallback
- * would otherwise accept any Microsoft account, including personal ones).
+ * `null` when no auth backend is configured (the offline gate —
+ * `BETTER_AUTH_SECRET` absent). `AUTH_DATABASE_URL` defaults to a local dev
+ * file, so the gate keys on the secret: no secret → no auth backend. The
+ * return type is inferred (not annotated) so {@link AuthInstance} captures the
+ * concrete generic rather than the widened `Auth<BetterAuthOptions>` — the
+ * latter's `$context` is incompatible with the real instance's options shape.
+ * Throws loudly at boot on a misconfigured live backend (missing
+ * `BETTER_AUTH_URL`, or Microsoft credentials without a `MICROSOFT_TENANT_ID`
+ * — Entra's `common` fallback would otherwise accept any Microsoft account,
+ * including personal ones).
  */
 export function createAuth() {
   const secret = process.env.BETTER_AUTH_SECRET;
-  const databaseUrl = process.env.AUTH_DATABASE_URL;
-  if (!secret || !databaseUrl) {
+  if (!secret) {
     return null;
   }
   const baseURL = process.env.BETTER_AUTH_URL;
   if (!baseURL) {
     throw new Error(
-      "BETTER_AUTH_URL must be set alongside AUTH_DATABASE_URL + BETTER_AUTH_SECRET — it is this app's public origin for OAuth callbacks and session cookies.",
+      "BETTER_AUTH_URL must be set alongside BETTER_AUTH_SECRET — it is this app's public origin for OAuth callbacks and session cookies.",
     );
   }
   const microsoftClientId = process.env.MICROSOFT_CLIENT_ID;

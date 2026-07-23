@@ -18,7 +18,7 @@ import { createAuth } from "./src/lib/auth";
 const auth = createAuth();
 if (auth === null) {
   throw new Error(
-    "AUTH_DATABASE_URL + BETTER_AUTH_SECRET must be set to run Better Auth migrations.",
+    "BETTER_AUTH_SECRET must be set to run Better Auth migrations (AUTH_DATABASE_URL defaults to a local dev file).",
   );
 }
 

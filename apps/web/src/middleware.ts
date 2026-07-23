@@ -1,7 +1,7 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { type NextRequest, NextResponse } from "next/server";
 
-import { isDevBypassActive } from "@/lib/session";
+import { isDevBypassActive } from "@/lib/dev-bypass";
 
 /**
  * Auth gate: require a Better Auth session cookie for everything EXCEPT the
