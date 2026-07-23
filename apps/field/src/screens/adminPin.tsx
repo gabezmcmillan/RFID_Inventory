@@ -1,53 +1,72 @@
 /**
- * Admin PIN gate (plan 006): "light protection for a trusted machine, not real
- * security". The PIN lives in AsyncStorage (default "1234"); a correct PIN
- * unlocks the admin surface. Shared by the Admin screen and the BOL-documents
- * delete gate (plan 007 step 4) so there is one source of truth for the PIN.
+ * Admin-surface PIN gate (plan 006/007, reconciled under plan 010's scope
+ * addition). The PIN is now a salted hash in the iOS Keychain via the shared
+ * {@link PinStore} (`"admin"` slot) — NOT the legacy plaintext AsyncStorage
+ * value. The first time the admin surface opens after upgrade, the legacy
+ * plaintext PIN (`rfid.field.adminPin`, default "1234") is migrated into the
+ * hashed slot and removed, so existing operator access keeps working until
+ * the PIN is changed.
+ *
+ * Shared by the Admin screen and the BOL-documents delete gate so there is one
+ * source of truth for the admin PIN — and the same mechanism as the device
+ * unlock gate (different slot, same crypto/backoff).
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
+import { migrateLegacyAdminPinOnce, pinStore } from "../auth/pinStoreApp";
 
-/** AsyncStorage key for the admin PIN (config.py:159). */
-export const ADMIN_PIN_KEY = "rfid.field.adminPin";
-/** Default PIN (config.py:159). */
-export const DEFAULT_ADMIN_PIN = "1234";
-
-/** Load the stored admin PIN (default when unset). */
-export async function loadAdminPin(): Promise<string> {
-  return (await AsyncStorage.getItem(ADMIN_PIN_KEY)) ?? DEFAULT_ADMIN_PIN;
-}
-
-/** Persist a new admin PIN. */
-export async function saveAdminPin(pin: string): Promise<void> {
-  await AsyncStorage.setItem(ADMIN_PIN_KEY, pin);
-}
-
-/** True when `candidate` matches the stored PIN. */
-export async function verifyAdminPin(candidate: string): Promise<boolean> {
-  return candidate === (await loadAdminPin());
+/** Set (replace) the admin PIN. Throws a user-facing message on an invalid PIN. */
+export async function setAdminPin(pin: string): Promise<void> {
+  await pinStore.setPin("admin", pin);
 }
 
 /**
  * A PIN entry card. Calls {@link onUnlock} on a match, shows an error on a
- * mismatch. Used by the Admin screen and the BOL-doc delete gate.
+ * mismatch, and honors the persisted wrong-entry backoff (lockout countdown).
+ * Used by the Admin screen and the BOL-doc delete gate.
  */
 export function PinPrompt({ onUnlock }: { onUnlock: () => void }): React.ReactNode {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [lockoutUntil, setLockoutUntil] = useState(0);
+  const [now, setNow] = useState(Date.now());
+
+  // Migrate the legacy plaintext admin PIN into the hashed slot on first open.
+  useEffect(() => {
+    void migrateLegacyAdminPinOnce();
+  }, []);
+
+  // Tick once a second while a lockout is active so the countdown stays live.
+  useEffect(() => {
+    if (now >= lockoutUntil) return;
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [now, lockoutUntil]);
+
+  const locked = now < lockoutUntil;
+  const remainingMs = locked ? lockoutUntil - now : 0;
 
   const submit = async (): Promise<void> => {
-    if (await verifyAdminPin(pin)) {
+    if (locked) return;
+    const result = await pinStore.verify("admin", pin);
+    setNow(Date.now());
+    if (result.ok) {
       onUnlock();
+      return;
+    }
+    if (result.lockoutUntil > 0) {
+      setLockoutUntil(result.lockoutUntil);
+      setNow(Date.now());
+      setError("Too many wrong attempts. Wait before retrying.");
     } else {
       setError("Invalid PIN.");
-      setPin("");
     }
+    setPin("");
   };
 
   return (
@@ -59,11 +78,12 @@ export function PinPrompt({ onUnlock }: { onUnlock: () => void }): React.ReactNo
         placeholder="PIN"
         secureTextEntry
         keyboardType="number-pad"
+        editable={!locked}
       />
-      <Button onPress={() => void submit()}>
-        <Text>Unlock</Text>
+      <Button disabled={locked} onPress={() => void submit()}>
+        <Text>{locked ? `Wait ${Math.ceil(remainingMs / 1000)}s` : "Unlock"}</Text>
       </Button>
-      {error ? <Text className="text-destructive mt-2">{error}</Text> : null}
+      {error && !locked ? <Text className="text-destructive mt-2">{error}</Text> : null}
     </View>
   );
 }

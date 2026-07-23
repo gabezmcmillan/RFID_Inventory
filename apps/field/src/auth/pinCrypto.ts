@@ -50,7 +50,7 @@ function bytesToB64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-function b64ToBytes(b64: string): Uint8Array {
+function b64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -60,7 +60,7 @@ function b64ToBytes(b64: string): Uint8Array {
 /** Cryptographically-strong random bytes. Falls back to Math.random only when
  *  `crypto.getRandomValues` is unavailable (older test runtimes); production
  *  always has it via React Native's polyfill. */
-function randomBytes(n: number): Uint8Array {
+function randomBytes(n: number): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(n);
   const crypto = globalThis.crypto;
   if (crypto?.getRandomValues) {
@@ -76,13 +76,13 @@ function randomBytes(n: number): Uint8Array {
 // ---- PBKDF2-HMAC-SHA256 ----------------------------------------------------
 
 /** One HMAC-SHA256 step returning a fresh Uint8Array (32 bytes). */
-function hmacSha256(key: Uint8Array, msg: Uint8Array): Uint8Array {
+function hmacSha256(key: Uint8Array, msg: Uint8Array): Uint8Array<ArrayBuffer> {
   const ab = sha256.hmac.arrayBuffer(key, msg);
   return new Uint8Array(ab);
 }
 
 /** XOR two equal-length byte arrays into a new array. */
-function xor(a: Uint8Array, b: Uint8Array): Uint8Array {
+function xor(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(a.length);
   for (let i = 0; i < a.length; i++) out[i] = a[i] ^ b[i];
   return out;
@@ -98,23 +98,29 @@ export function pbkdf2HmacSha256(
   salt: Uint8Array,
   iterations: number,
   dkLen: number,
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   if (dkLen > 32) throw new Error("pbkdf2: dkLen > 32 not supported");
   const blockIndex = 1;
   const intBytes = new Uint8Array(4);
   intBytes[3] = blockIndex; // big-endian 1
   const u1 = hmacSha256(password, concat(salt, intBytes));
-  let t = u1.slice();
+  // Copy into a fresh ArrayBuffer-backed array so `t` stays Uint8Array<ArrayBuffer>
+  // (u1.slice() widens to ArrayBufferLike, which the xor/concat helpers reject).
+  let t = new Uint8Array(u1);
   let u = u1;
   for (let i = 1; i < iterations; i++) {
     u = hmacSha256(password, u);
     t = xor(t, u);
   }
-  return t.slice(0, dkLen);
+  // Copy into a fresh ArrayBuffer-backed array so the return type is
+  // Uint8Array<ArrayBuffer> (t.slice() widens to ArrayBufferLike under strict libs).
+  const out = new Uint8Array(dkLen);
+  out.set(t.subarray(0, dkLen));
+  return out;
 }
 
 /** Concatenate two byte arrays into a new one. */
-function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
+function concat(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(a.length + b.length);
   out.set(a, 0);
   out.set(b, a.length);
@@ -131,7 +137,7 @@ export function hashPin(pin: string): PinHash {
 }
 
 /** UTF-8 encode a string into a new Uint8Array. */
-function utf8(s: string): Uint8Array {
+function utf8(s: string): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(s);
 }
 

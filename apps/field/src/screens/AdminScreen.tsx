@@ -32,7 +32,7 @@ import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 
 import { useDb } from "../db/provider";
-import { PinPrompt, saveAdminPin } from "./adminPin";
+import { PinPrompt, setAdminPin } from "./adminPin";
 
 const STATUS_OPTIONS = [STATUS_IN, STATUS_PARTIAL, STATUS_DELIVERED];
 
@@ -301,18 +301,26 @@ function ClearDbSection({ onConfirm }: { onConfirm: () => void }): React.ReactNo
   );
 }
 
-/** Change the stored admin PIN. */
+/** Change the stored admin PIN (salted hash in the Keychain, not plaintext). */
 function ChangePinSection({ onMsg }: { onMsg: (m: string) => void }): React.ReactNode {
   const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
   const run = async (): Promise<void> => {
     const clean = pin.trim();
-    if (clean.length < 1) {
-      onMsg("PIN cannot be empty.");
+    if (clean.length < 4) {
+      onMsg("PIN must be at least 4 digits.");
       return;
     }
-    await saveAdminPin(clean);
-    setPin("");
-    onMsg("PIN updated.");
+    setBusy(true);
+    try {
+      await setAdminPin(clean);
+      setPin("");
+      onMsg("PIN updated.");
+    } catch (err) {
+      onMsg(err instanceof Error ? err.message : "Could not update PIN.");
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <View className="rounded-lg border border-border bg-card p-3">
@@ -320,11 +328,11 @@ function ChangePinSection({ onMsg }: { onMsg: (m: string) => void }): React.Reac
       <Input
         value={pin}
         onChangeText={setPin}
-        placeholder="New PIN"
+        placeholder="New PIN (4–8 digits)"
         secureTextEntry
         keyboardType="number-pad"
       />
-      <Button className="mt-2.5" onPress={() => void run()}><Text>Save PIN</Text></Button>
+      <Button className="mt-2.5" disabled={busy} onPress={() => void run()}><Text>{busy ? "…" : "Save PIN"}</Text></Button>
     </View>
   );
 }
