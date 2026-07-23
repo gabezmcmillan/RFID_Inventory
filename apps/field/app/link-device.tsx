@@ -16,6 +16,7 @@ import { Text } from "@/components/ui/text";
 import {
   exchangeOneTimeToken,
   getServerUrl,
+  registerDevice,
   unreachableServerMessage,
 } from "../src/auth";
 
@@ -41,7 +42,9 @@ export default function LinkDeviceScreen(): React.ReactNode {
     setError(null);
     try {
       const serverUrl = await getServerUrl();
-      await exchangeOneTimeToken(serverUrl, token);
+      const cred = await exchangeOneTimeToken(serverUrl, token);
+      // Register the device with the server (allowlist + permanent EPC byte).
+      await registerDevice(serverUrl, cred.token);
       router.back();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

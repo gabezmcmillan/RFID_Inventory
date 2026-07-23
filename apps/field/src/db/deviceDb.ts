@@ -72,3 +72,14 @@ export async function setDeviceId(id: string): Promise<void> {
     sql`INSERT INTO device_state (key, value) VALUES ('device_id', ${id}) ON CONFLICT(key) DO UPDATE SET value = ${id}`,
   );
 }
+
+/**
+ * Reset the local device state (plan 010, Phase 2). Called on unlink: clears
+ * the server-assigned device id and zeroes the EPC serial counter so a
+ * re-link (which assigns a fresh, never-reused byte) starts a clean device.
+ * Local-only; never synced.
+ */
+export async function resetDeviceState(): Promise<void> {
+  const db = await openDeviceDb();
+  await db.run(sql`DELETE FROM device_state WHERE key IN ('device_id', 'epc_serial')`);
+}

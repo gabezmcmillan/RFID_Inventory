@@ -44,6 +44,10 @@ export { isLocalPrivateHost, normalizeServerUrl } from "../config/url";
 const LINK_TOKEN_KEY = "rfid.link.token";
 /** Secure-store key for the linked user identity (name/email) for display. */
 const LINK_IDENTITY_KEY = "rfid.link.identity";
+/** Secure-store key for the server-assigned device id (UUID; for display/unlink). */
+const LINK_DEVICE_ID_KEY = "rfid.link.deviceId";
+/** Secure-store key for the server-assigned 2-hex EPC device byte (for display). */
+const LINK_EPC_BYTE_KEY = "rfid.link.epcByte";
 
 /** The signed-in identity mirrored from the web session, for Settings display. */
 export interface LinkedIdentity {
@@ -283,5 +287,147 @@ export async function clearLinkedCredential(): Promise<void> {
   await Promise.all([
     SecureStore.deleteItemAsync(LINK_TOKEN_KEY).catch(() => {}),
     SecureStore.deleteItemAsync(LINK_IDENTITY_KEY).catch(() => {}),
+    SecureStore.deleteItemAsync(LINK_DEVICE_ID_KEY).catch(() => {}),
+    SecureStore.deleteItemAsync(LINK_EPC_BYTE_KEY).catch(() => {}),
   ]);
+}
+
+/** The server-assigned device id (UUID), or null when not linked/registered. */
+export async function getLinkedDeviceId(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(LINK_DEVICE_ID_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** The server-assigned 2-hex EPC device byte, or null when not linked/registered. */
+export async function getLinkedEpcByte(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(LINK_EPC_BYTE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Outcome of {@link registerDevice}: the server-assigned device id + EPC byte. */
+export interface RegisteredDevice {
+  deviceId: string;
+  epcByte: string;
+}
+
+/**
+ * Register this field device with the server (plan 010, Phase 2). Called after
+ * {@link exchangeOneTimeToken} with the freshly-stored bearer. The server
+ * checks the allowlist, assigns a permanent never-reused 2-hex EPC byte, and
+ * returns it; we persist the device id + byte in Secure Store and write the
+ * byte into the local-only device DB (so the print path embeds it in EPCs).
+ * Throws a user-facing message on any failure.
+ */
+export async function registerDevice(
+  serverUrl: string,
+  bearer: string,
+  label?: string,
+): Promise<RegisteredDevice> {
+  const base = normalizeServerUrl(serverUrl);
+  let res: Response;
+  try {
+    res = await fetch(`${base}/api/device/register`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearer}`,
+      },
+      body: JSON.stringify(label ? { label } : {}),
+    });
+  } catch {
+    throw new Error(unreachableServerMessage(base));
+  }
+  if (!res.ok) {
+    const message = await deviceErrorMessage(res);
+    throw new Error(message);
+  }
+  const body = (await res.json()) as { deviceId?: string; epcByte?: string };
+  if (!body.deviceId || !body.epcByte) {
+    throw new Error("register response missing deviceId or epcByte");
+  }
+  const deviceId = body.deviceId;
+  const epcByte = body.epcByte;
+  await SecureStore.setItemAsync(LINK_DEVICE_ID_KEY, deviceId);
+  await SecureStore.setItemAsync(LINK_EPC_BYTE_KEY, epcByte);
+  // Write the byte into the local-only device DB so allocateEpcs embeds it.
+  const { setDeviceId } = await import("../db/deviceDb");
+  await setDeviceId(epcByte);
+  return { deviceId, epcByte };
+}
+
+/**
+ * Unlink this device from the server (plan 010, Phase 2). Tells the server to
+ * mark the device inactive + revoke the session, then clears the local
+ * bearer/identity/device-id and resets the local-only device DB. Best-effort:
+ * local state is cleared even if the server call fails (so a lost/offline
+ * device can still be reset locally). Never throws.
+ */
+export async function unlinkDevice(serverUrl: string, bearer: string): Promise<void> {
+  const base = normalizeServerUrl(serverUrl);
+  try {
+    await fetch(`${base}/api/device/unlink`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bearer}` },
+    });
+  } catch {
+    // Network failure — still clear local state below.
+  }
+  await clearLinkedCredential();
+  const { resetDeviceState } = await import("../db/deviceDb");
+  await resetDeviceState();
+}
+
+/** Outcome of {@link fetchSyncToken}: a short-lived Turso sync token + TTL. */
+export interface SyncTokenResult {
+  token: string;
+  expiresAt: number;
+}
+
+/**
+ * Fetch a short-lived Turso sync token from the server (plan 010, Phase 2).
+ * The phone's sync `authToken` callback calls this with the stored bearer; the
+ * server mints a fine-grained database token only for an active, allowlisted
+ * device. Throws a user-facing message on any failure.
+ */
+export async function fetchSyncToken(
+  serverUrl: string,
+  bearer: string,
+): Promise<SyncTokenResult> {
+  const base = normalizeServerUrl(serverUrl);
+  let res: Response;
+  try {
+    res = await fetch(`${base}/api/device/credential`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bearer}` },
+    });
+  } catch {
+    throw new Error(unreachableServerMessage(base));
+  }
+  if (!res.ok) {
+    const message = await deviceErrorMessage(res);
+    throw new Error(message);
+  }
+  const body = (await res.json()) as { token?: string; expiresAt?: number };
+  if (!body.token || typeof body.expiresAt !== "number") {
+    throw new Error("credential response missing token or expiresAt");
+  }
+  return { token: body.token, expiresAt: body.expiresAt };
+}
+
+/** Extract a user-facing error message from a device-endpoint error response. */
+async function deviceErrorMessage(res: Response): Promise<string> {
+  let message = `request failed (${res.status})`;
+  try {
+    const body = (await res.json()) as { error?: string; message?: string };
+    message = body.error ?? body.message ?? message;
+  } catch {
+    /* keep the status-based message */
+  }
+  return message;
 }

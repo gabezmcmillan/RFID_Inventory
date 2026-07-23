@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"no tests yet\" && exit 0",
+    "test": "vitest run",
     "auth:generate": "pnpm dlx @better-auth/cli@latest generate --config auth.ts -y",
     "auth:migrate": "pnpm dlx @better-auth/cli@latest migrate --config auth.ts -y",
     "pull:dev": "bash ../../scripts/pull-dev-env.sh"
@@ -54,6 +54,7 @@
     "postcss": "^8.5.22",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.0.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.0.0"
   }
 }

@@ -60,6 +60,20 @@ const serverSchema = z
     TURSO_DATABASE_URL: z.string().optional(),
     TURSO_AUTH_TOKEN: z.string().optional(),
     LOCAL_DB_PATH: z.string().optional(),
+    // Plan 010: server-only Turso Platform API token used to mint short-lived,
+    // fine-grained database tokens for field devices. NEVER exposed to a client
+    // (no NEXT_PUBLIC_/EXPO_PUBLIC_ prefix). Broad `all` scope today (the CLI
+    // user is not an org admin); see docs/operations/sync-security-decision.md
+    // for the tradeoff + rotation note.
+    TURSO_MINT_TOKEN: z.string().optional(),
+    // Turso Platform API targets for minting field-device sync tokens: the
+    // organization name + database NAME (as in `turso db list`), NOT the libSQL
+    // hostname. Server-only.
+    TURSO_ORG: z.string().optional(),
+    TURSO_DB_NAME: z.string().optional(),
+    // Plan 010: server-only allowlist of operator emails permitted to link a
+    // field device. Comma- and/or whitespace-separated, case-insensitive.
+    FIELD_OPERATOR_ALLOWLIST: z.string().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.BETTER_AUTH_SECRET && !val.BETTER_AUTH_URL) {

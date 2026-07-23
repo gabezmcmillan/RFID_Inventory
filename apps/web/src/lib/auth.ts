@@ -67,6 +67,16 @@ function buildDialect(): { dialect: LibsqlDialect; url: string } {
 }
 
 /**
+ * The Kysely libSQL dialect for the auth database (shared by Better Auth and
+ * the custom `field_devices`/`auth_meta` device repo). Same resolution as
+ * {@link buildDialect} — cloud `AUTH_DATABASE_URL` + token, else a separate
+ * local dev file.
+ */
+export function buildAuthDialect(): LibsqlDialect {
+  return buildDialect().dialect;
+}
+
+/**
  * Build the live Better Auth instance from the resolved environment, or
  * `null` when no auth backend is configured (the offline gate —
  * `BETTER_AUTH_SECRET` absent). `AUTH_DATABASE_URL` defaults to a local dev

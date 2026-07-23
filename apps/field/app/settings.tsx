@@ -36,12 +36,14 @@ import {
   clearLinkedCredential,
   DEFAULT_SERVER_URL,
   getLinkedIdentity,
+  getLinkedToken,
   getServerUrl,
   type LinkedIdentity,
   SERVER_URL_KEY,
   setServerUrl,
   testServerConnection,
   trySetServerUrl,
+  unlinkDevice,
   validateServerUrl,
 } from "../src/auth";
 
@@ -175,7 +177,14 @@ export default function SettingsScreen(): React.ReactNode {
   const unlink = async (): Promise<void> => {
     setUnlinking(true);
     try {
-      await clearLinkedCredential();
+      // Tell the server to revoke the device + session, then clear local state.
+      const url = await getServerUrl();
+      const token = await getLinkedToken();
+      if (token) {
+        await unlinkDevice(url, token);
+      } else {
+        await clearLinkedCredential();
+      }
       setLinked(null);
     } finally {
       setUnlinking(false);
