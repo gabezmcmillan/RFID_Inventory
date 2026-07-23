@@ -126,7 +126,8 @@ REJECTED (one-line rationale).
   auth routes (enforced by `apps/web/src/middleware.ts`); signed-in
   name/email prefill the checkout form; a dev bypass
   (`AUTH_DEV_BYPASS=1`) guarded by `NODE_ENV !== "production"` on the same
-  code path. Remove the unused `next-auth` dependency from
+  code path (enforced by `apps/web/src/proxy.ts` — the Next.js 16 renamed
+  middleware convention). Remove the unused `next-auth` dependency from
   `apps/web/package.json` when wiring it.
 - **No un-aliased builder joins in `packages/domain` (2026-07-22)**: the field
   app's RN driver adapter (`apps/field/src/db/drizzleTursoRnDriver.ts`) derives
@@ -155,9 +156,49 @@ REJECTED (one-line rationale).
   web-app UI must use these shadcn components + tokens rather than hand-rolled
   CSS; pages stay Server Components where they already are, with `"use client"`
   only on genuinely interactive islands (cart, sign-in form, user menu,
-  focus-refresh). The shadcn CLI's `base-nova` preset builds on `@base-ui/react`
+  focus-refresh).   The shadcn CLI's `base-nova` preset builds on `@base-ui/react`
   (not Radix), so component APIs use the `render` prop / `useRender` pattern
   rather than `asChild`.
+- **Typed, schema-validated env for `apps/web` (2026-07-23)**: all
+  `process.env` reads in `apps/web/src` go through a single edge-safe zod
+  schema in `apps/web/src/lib/env.ts` (mirrors the `effectivly` `AppConfig`
+  house style — one declared schema, raw `process.env` anywhere else is an
+  anti-pattern — but zod instead of Effect `Config`, since this repo has no
+  Effect dependency). The schema parses once at boot and throws one clear
+  message listing every problem. Server vs client (`NEXT_PUBLIC_*`) vars are
+  separated. The offline gate is unchanged: `BETTER_AUTH_SECRET` stays optional
+  (absent = no auth backend); the only required vars are conditional
+  (`BETTER_AUTH_URL` with the secret; `MICROSOFT_TENANT_ID` with both Entra
+  client id+secret), so the dev-bypass path still works with zero env. The env
+  module is edge-safe (zod + `process.env` only) so the proxy and `dev-bypass`
+  can import it without dragging in Node-only `auth.ts`/`db.ts`. `apps/field`
+  has no `process.env`/`EXPO_PUBLIC_*` reads today, so none was added.
+- **Full UI component sets vendored for both apps (2026-07-23)**: every shadcn
+  component is vendored under `apps/web/src/components/ui/` (60 files, via
+  `shadcn add --all` against the `base-nova` preset) and every React Native
+  Reusables component under `apps/field/src/components/ui/` (32 files, via
+  `@react-native-reusables/cli add --all`). AI agents should never need to
+  install another UI component — everything is available offline. Generated
+  files are left unedited; peer deps added in single installs.
+- **QR one-time-code device linking (2026-07-23)**: mobile auth uses Better
+  Auth's shipped `oneTimeToken` plugin (single-use, 5-min expiry,
+  `disableSetSessionCookie` so the phone — no cookie jar — receives the
+  session `token` in the verify response body) plus the `bearer` plugin (the
+  phone sends `Authorization: Bearer <session.token>` on future requests).
+  Flow: a signed-in web user opens `/link-device` (listed in the user menu),
+  the server mints a one-time token rendered as a QR (`qrcode.react`); the
+  field app's Settings → Link device screen scans it with `expo-camera`
+  `CameraView`, exchanges it at `/api/auth/one-time-token/verify`, and stores
+  the returned session token + identity in `expo-secure-store` (the
+  `apps/field/src/auth/` module exposes the stored credential for future
+  sync). The web server URL is configurable in Settings (dev default
+  `http://localhost:3000`; set to the Mac's LAN IP for a physical device).
+  No hand-rolled token crypto — only shipped plugins. Existing web auth
+  (proxy gating, dev bypass, Entra sign-in) is unchanged in behavior.
+  `expo-camera` is a new native module, so the field app needs a native
+  rebuild; the full end-to-end loop requires a live auth backend
+  (`BETTER_AUTH_SECRET` + a sign-in method), so the dev-bypass smoke only
+  exercises the page render.
 
 ## Considered and rejected
 
