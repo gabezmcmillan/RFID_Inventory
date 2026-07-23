@@ -15,11 +15,16 @@ import { issueBolGetUrl } from "@/lib/bolBlob";
 import { getDb } from "@/lib/db";
 import { inventoryStatusBadge } from "@/lib/status";
 
-/** Public QR-code landing page (`/tag/{epc}`): box details + a link to its BOL
- * document. Printed labels carry this URL, so it must not require sign-in. The
- * "View bill of lading" link renders only when the doc row has a `storage_url`;
- * the `rfid-bol` Blob store is private, so the link is a short-lived presigned
- * GET URL minted on render (no read-write token in the page). */
+/** QR-code landing page (`/tag/{epc}`): box details + a link to its BOL document.
+ * Printed labels carry this URL. Per the 2026-07-23 operator decision the whole
+ * cloud app requires login, so this page is now behind the auth gate
+ * (`src/proxy.ts`) — a label QR requires sign-in on first scan (warehouse staff
+ * all have Entra accounts). See the decision doc § "Cloud app auth gate".
+ *
+ * The "View bill of lading" link renders only when the doc row has a
+ * `storage_url`; the `rfid-bol` Blob store is private, so the link is a
+ * short-lived presigned GET URL minted on render (no read-write token in the
+ * page). */
 export default async function TagPage({ params }: { params: Promise<{ epc: string }> }) {
   const { epc } = await params;
   const db = await getDb();

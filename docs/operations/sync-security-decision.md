@@ -897,3 +897,43 @@ secrets (Scott Coleman's `.p12` + the provisioning profile). The version-check
 compare/banner logic, the `/api/field/version` and `/api/field/manifest.plist`
 routes, and the install page are covered by deterministic tests and are
 gate-green now.
+
+## Cloud app auth gate — require login globally (operator decision, 2026-07-23)
+
+**Decision: the whole cloud app requires a signed-in session.** Earlier plans
+assumed the `/tag/{epc}` QR pages were public (printed labels open them). The
+operator now requires login for the entire cloud app; warehouse staff all have
+Entra accounts, so a label QR now requires sign-in on first scan. The
+`src/proxy.ts` auth gate (Next.js 16 proxy = renamed middleware) enforces this
+with an explicit, documented allowlist.
+
+**Public allowlist (no auth at all — leak nothing sensitive):**
+- `/sign-in` (sign-in page), `/login` (stale-URL redirect stub → `/sign-in`)
+- `/api/auth/*` (Better Auth handlers)
+- `/api/health` (liveness probe)
+- `/field/install`, `/api/field/manifest.plist`, `/api/field/version` (enterprise
+  IPA install surface — a fresh phone has no session; the manifest's presigned
+  IPA URL is short-lived)
+
+**Bearer-only API (NOT cookie-gated — the route enforces a bearer device
+session itself):**
+- `/api/device/*` (register / credential / unlink) and `/api/bol/upload-grant`
+- These have no session cookie (the phone carries `Authorization: Bearer`); the
+  routes resolve the bearer via `resolveDeviceSession` and return 401/403
+  themselves. Cookie-gating them would redirect the phone to `/sign-in` and
+  break field sync — a latent bug the prior matcher had (it only excluded
+  `tag/`, `api/health`, `api/auth/`, `sign-in`), now fixed: the matcher and the
+  function both exclude the bearer prefixes.
+
+**Gated (require a session cookie):** everything else, including `/tag/{epc}`
+(now behind sign-in per operator instruction) and `/link-device` (already
+requires a REAL session to mint a one-time token). The dev bypass
+(`AUTH_DEV_BYPASS`, guarded by `NODE_ENV !== "production"`) still lets every
+request through for local dev; production always requires a real session.
+
+**Tests:** `src/__tests__/proxy.test.ts` covers each formerly-open page
+redirecting to `/sign-in` when unauthenticated, the public allowlist staying
+reachable without a cookie, the bearer-only API passing the proxy (route
+enforces bearer), authenticated requests passing, and the dev bypass. The
+function is the single source of truth; the matcher is a perf hint + safety
+net.
