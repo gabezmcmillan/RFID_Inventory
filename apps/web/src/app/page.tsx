@@ -15,8 +15,8 @@ export default async function Home() {
   return (
     <>
       <Header active="stock" />
-      <main className="container">
-        <h1>Stock &amp; requests</h1>
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16">
+        <h1 className="mb-4 text-2xl font-semibold tracking-tight">Stock &amp; requests</h1>
         <Cart stock={stock} buildings={buildingList} user={user} />
       </main>
     </>

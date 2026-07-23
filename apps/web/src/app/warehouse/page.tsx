@@ -1,7 +1,21 @@
 import { BUILDING_OPTIONS, inventoryTree, type InventoryType } from "@rfid/domain";
 
 import { Header } from "@/components/Header";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { getDb } from "@/lib/db";
+import { inventoryStatusBadge } from "@/lib/status";
+import { cn } from "@/lib/utils";
 
 /** Office warehouse view: read-only reuse of the domain `inventoryTree`, with the
  * same group-by toggle + building filter as the field app's warehouse screen.
@@ -17,8 +31,12 @@ export default async function WarehousePage({
   const db = await getDb();
   const tree = await inventoryTree(db, groupBy, filters);
 
-  const toggle = (label: string, key: string, active: boolean) => (
-    <a href={key} aria-current={active ? "page" : undefined} className="nav-link">
+  const toggle = (label: string, href: string, active: boolean) => (
+    <a
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(buttonVariants({ variant: active ? "default" : "outline", size: "sm" }))}
+    >
       {label}
     </a>
   );
@@ -26,53 +44,82 @@ export default async function WarehousePage({
   return (
     <>
       <Header active="warehouse" />
-      <main className="container">
-        <h1>Warehouse (office view)</h1>
-        <div className="warehouse-controls">
-          <span className="muted">Group by:</span>
-          {toggle("BOL", "/warehouse?group=bol" + (building ? `&building=${building}` : ""), groupBy === "bol")}
-          {toggle("Building", "/warehouse?group=building" + (building ? `&building=${building}` : ""), groupBy === "building")}
-          <span className="muted">·</span>
-          <a href="/warehouse" aria-current={!building ? "page" : undefined} className="nav-link">All buildings</a>
-          {BUILDING_OPTIONS.map((b) => (
-            <a
-              key={b}
-              href={`/warehouse?group=${groupBy}&building=${b}`}
-              aria-current={building === b ? "page" : undefined}
-              className="nav-link"
-            >
-              Bldg {b}
-            </a>
-          ))}
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16">
+        <h1 className="mb-4 text-2xl font-semibold tracking-tight">Warehouse (office view)</h1>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-sm text-muted-foreground">Group by:</span>
+          {toggle(
+            "BOL",
+            "/warehouse?group=bol" + (building ? `&building=${building}` : ""),
+            groupBy === "bol",
+          )}
+          {toggle(
+            "Building",
+            "/warehouse?group=building" + (building ? `&building=${building}` : ""),
+            groupBy === "building",
+          )}
+          <Separator orientation="vertical" className="mx-1 h-6" />
+          {toggle("/warehouse", "All buildings", !building)}
+          {BUILDING_OPTIONS.map((b) =>
+            toggle(
+              `Bldg ${b}`,
+              `/warehouse?group=${groupBy}&building=${b}`,
+              building === b,
+            ),
+          )}
         </div>
         {tree.types.length === 0 ? (
-          <p className="muted">No boxes match.</p>
+          <p className="text-sm text-muted-foreground">No boxes match.</p>
         ) : (
-          <ul className="warehouse-list">
+          <ul className="flex flex-col gap-3">
             {tree.types.map((t: InventoryType) => (
-              <li key={t.item_type} className="stock-card">
-                <div className="stock-card-head">
-                  <span className="stock-type">{t.item_type}</span>
-                  <span className="muted">{t.named ? "named" : "plain"}</span>
-                  <span className="stock-units">{t.qty} units</span>
-                </div>
-                <table className="mini-table">
-                  <thead>
-                    <tr><th>{t.named ? "Component" : tree.group_by === "bol" ? "BOL" : "Building"}</th><th>In wh</th><th>Capacity</th><th>Boxes</th><th>Status</th><th>First received</th></tr>
-                  </thead>
-                  <tbody>
-                    {t.groups.map((g) => (
-                      <tr key={g.value}>
-                        <td>{g.value || "—"}</td>
-                        <td>{g.in_wh}</td>
-                        <td>{g.capacity}</td>
-                        <td>{g.boxes}</td>
-                        <td>{g.status}</td>
-                        <td>{g.received || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <li key={t.item_type}>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>{t.item_type}</CardTitle>
+                    <CardAction>
+                      <Badge variant="outline" className="border-border text-muted-foreground">
+                        {t.named ? "named" : "plain"}
+                      </Badge>
+                      <span className="ml-2 text-sm text-muted-foreground">{t.qty} units</span>
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>
+                            {t.named ? "Component" : tree.group_by === "bol" ? "BOL" : "Building"}
+                          </TableHead>
+                          <TableHead>In wh</TableHead>
+                          <TableHead>Capacity</TableHead>
+                          <TableHead>Boxes</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>First received</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {t.groups.map((g) => {
+                          const chip = inventoryStatusBadge(g.status);
+                          return (
+                            <TableRow key={g.value}>
+                              <TableCell>{g.value || "—"}</TableCell>
+                              <TableCell>{g.in_wh}</TableCell>
+                              <TableCell>{g.capacity}</TableCell>
+                              <TableCell>{g.boxes}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className={chip.className}>
+                                  {chip.label}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>{g.received || "—"}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
               </li>
             ))}
           </ul>

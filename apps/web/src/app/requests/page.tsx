@@ -1,63 +1,68 @@
 import { listOrders, type Order } from "@rfid/domain";
 
 import { Header } from "@/components/Header";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getDb } from "@/lib/db";
+import { orderStateBadge, requestStatusBadge } from "@/lib/status";
 import { FocusRefresh } from "./FocusRefresh";
-
-/** Status chip label + class for a request row. */
-function statusChip(status: string): { label: string; className: string } {
-  switch (status) {
-    case "pending":
-      return { label: "Pending", className: "chip chip-pending" };
-    case "staging":
-      return { label: "Staging", className: "chip chip-staging" };
-    case "fulfilled":
-      return { label: "Fulfilled", className: "chip chip-fulfilled" };
-    case "declined":
-      return { label: "Declined", className: "chip chip-declined" };
-    default:
-      return { label: status, className: "chip" };
-  }
-}
 
 function OrderCard({ order }: { order: Order }) {
   const ref = order.order_ref || "";
+  const state = orderStateBadge(order.open);
   return (
-    <article className="order-card">
-      <header className="order-card-head">
-        <h3>{ref ? `Order ${ref}` : `Request #${order.lines[0]?.id ?? ""}`}</h3>
-        <span className={order.open ? "chip chip-open" : "chip chip-closed"}>
-          {order.open ? "Open" : "Closed"}
-        </span>
-        <span className="muted">{order.created_at || ""}</span>
-      </header>
-      <div className="order-meta">
-        <span>{order.requester || "—"}</span>
-        {order.contact ? <span className="muted">· {order.contact}</span> : null}
-        {order.jobsite ? <span className="muted">· {order.jobsite}</span> : null}
-        {order.building ? <span className="muted">· to Building {order.building}</span> : null}
-      </div>
-      <table className="order-lines">
-        <thead>
-          <tr><th>Item</th><th>Qty</th><th>To</th><th>Status</th><th>Note</th></tr>
-        </thead>
-        <tbody>
-          {order.lines.map((l) => {
-            const chip = statusChip(l.status);
-            const label = l.item_name ? `${l.item_type} | ${l.item_name}` : l.item_type;
-            return (
-              <tr key={l.id}>
-                <td>{label}</td>
-                <td>{l.quantity}</td>
-                <td>Building {l.building || "—"}</td>
-                <td><span className={chip.className}>{chip.label}</span></td>
-                <td>{l.handler_note || ""}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </article>
+    <Card>
+      <CardHeader className="border-b border-border">
+        <CardTitle>{ref ? `Order ${ref}` : `Request #${order.lines[0]?.id ?? ""}`}</CardTitle>
+        <CardAction>
+          <Badge variant="outline" className={state.className}>
+            {state.label}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <div className="mb-3 flex flex-wrap gap-2 text-sm text-muted-foreground">
+          <span>{order.requester || "—"}</span>
+          {order.contact ? <span>· {order.contact}</span> : null}
+          {order.jobsite ? <span>· {order.jobsite}</span> : null}
+          {order.building ? <span>· to Building {order.building}</span> : null}
+          {order.created_at ? <span>· {order.created_at}</span> : null}
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Item</TableHead>
+              <TableHead>Qty</TableHead>
+              <TableHead>To</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Note</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {order.lines.map((l) => {
+              const chip = requestStatusBadge(l.status);
+              const label = l.item_name ? `${l.item_type} | ${l.item_name}` : l.item_type;
+              return (
+                <tr key={l.id}>
+                  <TableCell className="py-2 align-middle">{label}</TableCell>
+                  <TableCell className="py-2 align-middle">{l.quantity}</TableCell>
+                  <TableCell className="py-2 align-middle">
+                    Building {l.building || "—"}
+                  </TableCell>
+                  <TableCell className="py-2 align-middle">
+                    <Badge variant="outline" className={chip.className}>
+                      {chip.label}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="py-2 align-middle">{l.handler_note || ""}</TableCell>
+                </tr>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -73,14 +78,16 @@ export default async function RequestsPage({
   return (
     <>
       <Header active="requests" />
-      <main className="container">
-        <h1>Requests</h1>
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16">
+        <h1 className="mb-4 text-2xl font-semibold tracking-tight">Requests</h1>
         <FocusRefresh />
-        {ok ? <p className="success">Order {ok} submitted.</p> : null}
+        {ok ? (
+          <p className="mb-4 font-semibold text-status-in">Order {ok} submitted.</p>
+        ) : null}
         {orders.length === 0 ? (
-          <p className="muted">No requests yet.</p>
+          <p className="text-sm text-muted-foreground">No requests yet.</p>
         ) : (
-          <div className="order-list">
+          <div className="flex flex-col gap-3">
             {orders.map((o) => (
               <OrderCard key={o.order_ref || `request-${o.lines[0]?.id ?? 0}`} order={o} />
             ))}

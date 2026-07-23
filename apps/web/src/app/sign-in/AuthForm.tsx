@@ -3,6 +3,14 @@
 import { useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 /**
  * Single sign-on entry point. Microsoft Entra ID is the only sign-in method
@@ -18,16 +26,26 @@ export function AuthForm({ microsoftEnabled }: { microsoftEnabled: boolean }) {
     await authClient.signIn.social({ provider: "microsoft", callbackURL: "/" });
   };
   return (
-    <main className="container" style={{ maxWidth: 480, marginTop: "4rem" }}>
-      <h1>Sign in</h1>
-      <p className="muted">Sign in with your organization account to reach the warehouse.</p>
-      {microsoftEnabled ? (
-        <button type="button" className="add-btn" disabled={busy} onClick={signIn}>
-          {busy ? "Redirecting…" : "Continue with Microsoft"}
-        </button>
-      ) : (
-        <p className="muted">Single sign-on isn’t configured for this environment.</p>
-      )}
+    <main className="mx-auto mt-16 w-full max-w-md px-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Sign in</CardTitle>
+          <CardDescription>
+            Sign in with your organization account to reach the warehouse.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {microsoftEnabled ? (
+            <Button type="button" disabled={busy} onClick={signIn} className="w-full">
+              {busy ? "Redirecting…" : "Continue with Microsoft"}
+            </Button>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Single sign-on isn&apos;t configured for this environment.
+            </p>
+          )}
+        </CardContent>
+      </Card>
     </main>
   );
 }

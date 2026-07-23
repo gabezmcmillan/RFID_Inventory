@@ -4,6 +4,15 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 /**
  * The signed-in principal + sign-out affordance, rendered in the shared header.
@@ -20,12 +29,24 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
     router.refresh();
   };
   return (
-    <span className="user-menu">
-      <span className="user-name">{name}</span>
-      <span className="muted user-email">{email}</span>
-      <button type="button" className="remove-btn" disabled={busy} onClick={signOut}>
-        {busy ? "Signing out…" : "Sign out"}
-      </button>
-    </span>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="outline" size="sm" className="ml-auto">
+            {name}
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" sideOffset={4}>
+        <DropdownMenuLabel className="flex flex-col gap-0.5">
+          <span className="font-semibold text-foreground">{name}</span>
+          <span className="text-xs font-normal text-muted-foreground">{email}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" disabled={busy} onClick={signOut}>
+          {busy ? "Signing out…" : "Sign out"}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -6,6 +6,22 @@ import { useTransition, useState } from "react";
 import type { CartLineError, StockRow } from "@rfid/domain";
 
 import type { SessionUser } from "@/lib/session";
+import { inventoryStatusBadge } from "@/lib/status";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { submitCart, type CartSubmission } from "./actions";
 
 /** One editable cart line (a stock selection with quantity + delivery building). */
@@ -90,88 +106,133 @@ export function Cart({
   }
 
   return (
-    <div className="cart-layout">
-      <section className="stock-section">
-        <h2>Stock on hand</h2>
+    <div className="grid grid-cols-[1fr_360px] items-start gap-6 max-md:grid-cols-1">
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">Stock on hand</h2>
         {stock.length === 0 ? (
-          <p className="muted">No stock available right now.</p>
+          <p className="text-sm text-muted-foreground">No stock available right now.</p>
         ) : (
-          <ul className="stock-list">
+          <ul className="flex flex-col gap-3">
             {stock.map((row) =>
               row.named ? (
-                <li key={"n-" + row.item_type} className="stock-card">
-                  <div className="stock-card-head">
-                    <span className="stock-type">{row.item_type}</span>
-                    <span className="muted">named type</span>
-                    <span className="stock-units">{row.units} units / {row.boxes} boxes</span>
-                  </div>
-                  <ul className="component-list">
-                    {row.components.map((c) => (
-                      <li key={"c-" + row.item_type + "-" + c.item_name + "-" + c.building}>
-                        <div className="component-row">
-                          <span className="component-name">{c.item_name}</span>
-                          <span className="muted">Building {c.building || "—"}</span>
-                          <span>{c.units}/{c.capacity} units · {c.status}</span>
-                          <span className="muted">{c.boxes} boxes</span>
-                          <button
-                            type="button"
-                            className="add-btn"
-                            onClick={() =>
-                              addLine({
-                                itemType: row.item_type,
-                                itemName: c.item_name,
-                                stockBuilding: c.building,
-                                label: `${row.item_type} | ${c.item_name} (Bldg ${c.building || "—"})`,
-                              })
-                            }
-                          >
-                            Add
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                <li key={"n-" + row.item_type}>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>{row.item_type}</CardTitle>
+                      <CardAction>
+                        <span className="text-sm text-muted-foreground">
+                          {row.units} units / {row.boxes} boxes
+                        </span>
+                      </CardAction>
+                    </CardHeader>
+                    <CardContent>
+                      <Badge variant="outline" className="mb-3 border-border text-muted-foreground">
+                        named type
+                      </Badge>
+                      <ul className="flex flex-col gap-2">
+                        {row.components.map((c) => {
+                          const chip = inventoryStatusBadge(c.status);
+                          return (
+                            <li
+                              key={"c-" + row.item_type + "-" + c.item_name + "-" + c.building}
+                              className="flex flex-wrap items-center gap-3 text-sm"
+                            >
+                              <span className="min-w-32 font-semibold">{c.item_name}</span>
+                              <span className="text-muted-foreground">
+                                Building {c.building || "—"}
+                              </span>
+                              <span>
+                                {c.units}/{c.capacity} units · {c.status}
+                              </span>
+                              <span className="text-muted-foreground">{c.boxes} boxes</span>
+                              <Badge variant="outline" className={chip.className}>
+                                {chip.label}
+                              </Badge>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="ml-auto"
+                                onClick={() =>
+                                  addLine({
+                                    itemType: row.item_type,
+                                    itemName: c.item_name,
+                                    stockBuilding: c.building,
+                                    label: `${row.item_type} | ${c.item_name} (Bldg ${c.building || "—"})`,
+                                  })
+                                }
+                              >
+                                Add
+                              </Button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </CardContent>
+                  </Card>
                 </li>
               ) : (
-                <li key={"p-" + row.item_type + "-" + row.building} className="stock-card">
-                  <div className="stock-card-head">
-                    <span className="stock-type">{row.item_type}</span>
-                    <span className="muted">Building {row.building || "—"}</span>
-                    <span className="stock-units">{row.units} units / {row.boxes} boxes</span>
-                    <button
-                      type="button"
-                      className="add-btn"
-                      onClick={() =>
-                        addLine({
-                          itemType: row.item_type,
-                          itemName: "",
-                          stockBuilding: row.building,
-                          label: `${row.item_type} (Bldg ${row.building || "—"})`,
-                        })
-                      }
-                    >
-                      Add
-                    </button>
-                  </div>
-                  <details>
-                    <summary className="muted">BOL breakdown ({row.groups.length})</summary>
-                    <table className="mini-table">
-                      <thead>
-                        <tr><th>BOL</th><th>Vendor</th><th>Units</th><th>Boxes</th><th>First received</th></tr>
-                      </thead>
-                      <tbody>
-                        {row.groups.map((g, i) => (
-                          <tr key={i}>
-                            <td>{g.bol_number || "—"}</td>
-                            <td>{g.vendor || "—"}</td>
-                            <td>{g.units}</td>
-                            <td>{g.boxes}</td>
-                            <td>{g.first_received || "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </details>
+                <li key={"p-" + row.item_type + "-" + row.building}>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>{row.item_type}</CardTitle>
+                      <CardAction>
+                        <span className="text-sm text-muted-foreground">
+                          {row.units} units / {row.boxes} boxes
+                        </span>
+                      </CardAction>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-sm text-muted-foreground">
+                          Building {row.building || "—"}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="ml-auto"
+                          onClick={() =>
+                            addLine({
+                              itemType: row.item_type,
+                              itemName: "",
+                              stockBuilding: row.building,
+                              label: `${row.item_type} (Bldg ${row.building || "—"})`,
+                            })
+                          }
+                        >
+                          Add
+                        </Button>
+                      </div>
+                      <details className="mt-3">
+                        <summary className="cursor-pointer text-sm text-muted-foreground">
+                          BOL breakdown ({row.groups.length})
+                        </summary>
+                        <Table className="mt-2">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>BOL</TableHead>
+                              <TableHead>Vendor</TableHead>
+                              <TableHead>Units</TableHead>
+                              <TableHead>Boxes</TableHead>
+                              <TableHead>First received</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {row.groups.map((g, i) => (
+                              <TableRow key={i}>
+                                <TableCell>{g.bol_number || "—"}</TableCell>
+                                <TableCell>{g.vendor || "—"}</TableCell>
+                                <TableCell>{g.units}</TableCell>
+                                <TableCell>{g.boxes}</TableCell>
+                                <TableCell>{g.first_received || "—"}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </details>
+                    </CardContent>
+                  </Card>
                 </li>
               ),
             )}
@@ -179,73 +240,126 @@ export function Cart({
         )}
       </section>
 
-      <aside className="cart-section">
-        <h2>Cart ({lines.length})</h2>
-        {topError ? <p className="error">{topError}</p> : null}
-        {lines.length === 0 ? (
-          <p className="muted">Add stock to your cart.</p>
-        ) : (
-          <ul className="cart-list">
-            {lines.map((l, idx) => {
-              const err = errors.find((e) => e.line === idx)?.message;
-              return (
-                <li key={l.key} className={err ? "cart-line has-error" : "cart-line"}>
-                  <div className="cart-line-label">{l.label}</div>
-                  <div className="cart-line-controls">
-                    <label>
-                      Qty
-                      <input
-                        type="number"
-                        min={1}
-                        value={l.quantity}
-                        onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
-                      />
-                    </label>
-                    <label>
-                      Deliver to
-                      <select
-                        value={l.deliveryBuilding}
-                        onChange={(e) => updateLine(l.key, { deliveryBuilding: e.target.value })}
-                      >
-                        <option value="">—</option>
-                        {buildings.map((b) => (
-                          <option key={b} value={b}>Building {b}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <button type="button" className="remove-btn" onClick={() => removeLine(l.key)}>
-                      Remove
-                    </button>
-                  </div>
-                  {err ? <p className="error line-error">{err}</p> : null}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+      <aside>
+        <Card className="sticky top-4">
+          <CardHeader>
+            <CardTitle>Cart ({lines.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {topError ? <p className="mb-3 text-sm text-destructive">{topError}</p> : null}
+            {lines.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Add stock to your cart.</p>
+            ) : (
+              <ul className="flex flex-col gap-3">
+                {lines.map((l, idx) => {
+                  const err = errors.find((e) => e.line === idx)?.message;
+                  return (
+                    <li
+                      key={l.key}
+                      className={
+                        "rounded-lg border p-2.5" + (err ? " border-destructive" : " border-border")
+                      }
+                    >
+                      <div className="text-sm font-semibold">{l.label}</div>
+                      <div className="mt-2 flex flex-wrap items-end gap-3 text-sm">
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs text-muted-foreground">Qty</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={l.quantity}
+                            onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
+                            className="w-20"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs text-muted-foreground">Deliver to</Label>
+                          <Select
+                            value={l.deliveryBuilding}
+                            onValueChange={(v) =>
+                              updateLine(l.key, { deliveryBuilding: (v ?? "") as string })
+                            }
+                          >
+                            <SelectTrigger className="w-40">
+                              <SelectValue placeholder="—" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="">—</SelectItem>
+                              {buildings.map((b) => (
+                                <SelectItem key={b} value={b}>
+                                  Building {b}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeLine(l.key)}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                      {err ? <p className="mt-2 text-sm text-destructive">{err}</p> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
 
-        <form className="checkout-form" onSubmit={onSubmit}>
-          <h3>Checkout</h3>
-          <label>
-            Your name
-            <input value={requester} onChange={(e) => setRequester(e.target.value)} required />
-          </label>
-          <label>
-            Contact
-            <input value={contact} onChange={(e) => setContact(e.target.value)} />
-          </label>
-          <label>
-            Jobsite
-            <input value={jobsite} onChange={(e) => setJobsite(e.target.value)} />
-          </label>
-          <label>
-            Note
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
-          </label>
-          <button type="submit" disabled={pending || lines.length === 0}>
-            {pending ? "Submitting…" : "Submit request"}
-          </button>
-        </form>
+            <Separator className="my-4" />
+            <form className="flex flex-col gap-2.5" onSubmit={onSubmit}>
+              <h3 className="text-sm font-semibold">Checkout</h3>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="requester" className="text-xs text-muted-foreground">
+                  Your name
+                </Label>
+                <Input
+                  id="requester"
+                  value={requester}
+                  onChange={(e) => setRequester(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="contact" className="text-xs text-muted-foreground">
+                  Contact
+                </Label>
+                <Input
+                  id="contact"
+                  value={contact}
+                  onChange={(e) => setContact(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="jobsite" className="text-xs text-muted-foreground">
+                  Jobsite
+                </Label>
+                <Input
+                  id="jobsite"
+                  value={jobsite}
+                  onChange={(e) => setJobsite(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="note" className="text-xs text-muted-foreground">
+                  Note
+                </Label>
+                <Textarea
+                  id="note"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                />
+              </div>
+              <Button type="submit" disabled={pending || lines.length === 0} className="mt-1">
+                {pending ? "Submitting…" : "Submit request"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </aside>
     </div>
   );
