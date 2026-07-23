@@ -10,7 +10,10 @@
 import { countOpenRequests } from "@rfid/domain";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+
+import { Badge } from "@/components/ui/badge";
+import { Text } from "@/components/ui/text";
 
 import { useDb } from "../src/db/provider";
 import { readerService } from "../src/reader/readerService";
@@ -59,30 +62,36 @@ export default function HomeScreen(): React.ReactNode {
   }, [db]);
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>RFID Field</Text>
-      <Text style={styles.status}>
+    <View className="flex-1 p-5 gap-3">
+      <Text variant="h1" className="mt-3 text-left">RFID Field</Text>
+      <Text className="text-sm text-muted-foreground mb-2">
         Reader: {connected ? "connected" : "disconnected"}
       </Text>
-      <View style={styles.grid}>
+      <View className="flex-row flex-wrap gap-2.5">
         {MODES.map((m) => (
           <Link key={m.href} href={m.href} asChild>
-            {/* Slot (asChild) rejects array styles — flatten to one object. */}
-            <Pressable style={StyleSheet.flatten([styles.card, { borderColor: m.accent }])}>
-              <Text style={[styles.cardTitle, { color: m.accent }]}>{m.title}</Text>
-              <Text style={styles.cardSubtitle}>{m.subtitle}</Text>
+            {/* Slot (asChild) needs a single resolvable style; NativeWind
+                collapses className + the inline accent style into one. */}
+            <Pressable
+              className="w-[47%] flex-grow rounded-lg border-2 bg-card p-4"
+              style={{ borderColor: m.accent }}
+            >
+              <Text className="text-lg font-bold mb-1" style={{ color: m.accent }}>{m.title}</Text>
+              <Text className="text-sm text-muted-foreground">{m.subtitle}</Text>
             </Pressable>
           </Link>
         ))}
         <Link href="/requests" asChild>
-          {/* Slot (asChild) rejects array styles — flatten to one object. */}
-          <Pressable style={StyleSheet.flatten([styles.card, { borderColor: REQUESTS_ACCENT }])}>
-            <Text style={[styles.cardTitle, { color: REQUESTS_ACCENT }]}>Requests</Text>
-            <Text style={styles.cardSubtitle}>Open material requests</Text>
+          <Pressable
+            className="w-[47%] flex-grow rounded-lg border-2 bg-card p-4"
+            style={{ borderColor: REQUESTS_ACCENT }}
+          >
+            <Text className="text-lg font-bold mb-1" style={{ color: REQUESTS_ACCENT }}>Requests</Text>
+            <Text className="text-sm text-muted-foreground">Open material requests</Text>
             {openCount > 0 ? (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{openCount}</Text>
-              </View>
+              <Badge variant="destructive" className="absolute right-2 top-2">
+                {openCount}
+              </Badge>
             ) : null}
           </Pressable>
         </Link>
@@ -90,15 +99,3 @@ export default function HomeScreen(): React.ReactNode {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, gap: 12 },
-  title: { fontSize: 28, fontWeight: "bold", marginTop: 12 },
-  status: { fontSize: 14, color: "#777", marginBottom: 8 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  card: { width: "47%", flexGrow: 1, borderWidth: 2, borderRadius: 10, padding: 16, backgroundColor: "white" },
-  cardTitle: { fontSize: 18, fontWeight: "bold", marginBottom: 4 },
-  cardSubtitle: { fontSize: 13, color: "#777" },
-  badge: { position: "absolute", top: 8, right: 8, minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: "#c33", alignItems: "center", justifyContent: "center" },
-  badgeText: { color: "white", fontWeight: "700", fontSize: 13 },
-});

@@ -9,7 +9,12 @@
 
 import { createRequest } from "@rfid/domain";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Text } from "@/components/ui/text";
 
 import { useDb } from "../src/db/provider";
 import { readerService } from "../src/reader/readerService";
@@ -58,41 +63,30 @@ export default function DevToolsScreen(): React.ReactNode {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.label}>Inject EPCs (whitespace/comma separated)</Text>
-      <TextInput
-        style={styles.input}
+    <View className="flex-1 p-5 gap-3">
+      <Text className="text-sm font-semibold">Inject EPCs (whitespace/comma separated)</Text>
+      <Input
         value={text}
         onChangeText={setText}
         placeholder="AAAA11112222333344445555"
         multiline
         autoCapitalize="characters"
+        className="min-h-20 font-mono"
       />
-      <Pressable style={styles.button} onPress={inject}>
-        <Text style={styles.buttonText}>Inject scan</Text>
-      </Pressable>
-      <Text style={styles.hint}>
+      <Button onPress={inject}>
+        <Text>Inject scan</Text>
+      </Button>
+      <Text className="text-xs text-muted-foreground">
         Tip: arm a shipment on the Check In screen first, then inject here to record it.
       </Text>
 
-      <View style={styles.divider} />
+      <Separator className="my-1" />
 
-      <Text style={styles.label}>Requests</Text>
-      <Pressable style={styles.button} onPress={() => void insertSampleRequest()}>
-        <Text style={styles.buttonText}>Insert sample request</Text>
-      </Pressable>
-      {msg ? <Text style={styles.msg}>{msg}</Text> : null}
+      <Text className="text-sm font-semibold">Requests</Text>
+      <Button onPress={() => void insertSampleRequest()}>
+        <Text>Insert sample request</Text>
+      </Button>
+      {msg ? <Text className="text-primary font-semibold">{msg}</Text> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, gap: 12 },
-  label: { fontSize: 14, fontWeight: "600" },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 12, fontSize: 14, minHeight: 80, fontFamily: "monospace" },
-  button: { backgroundColor: "#0a7", padding: 14, borderRadius: 8, alignItems: "center" },
-  buttonText: { color: "white", fontSize: 16, fontWeight: "600" },
-  hint: { fontSize: 12, color: "#888" },
-  divider: { height: 1, backgroundColor: "#eee", marginVertical: 4 },
-  msg: { color: "#0a7", fontWeight: "600" },
-});

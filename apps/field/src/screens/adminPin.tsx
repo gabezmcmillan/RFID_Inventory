@@ -7,7 +7,11 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Text } from "@/components/ui/text";
 
 /** AsyncStorage key for the admin PIN (config.py:159). */
 export const ADMIN_PIN_KEY = "rfid.field.adminPin";
@@ -47,29 +51,19 @@ export function PinPrompt({ onUnlock }: { onUnlock: () => void }): React.ReactNo
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Admin PIN</Text>
-      <TextInput
-        style={styles.input}
+    <View className="flex-1 p-5 gap-3">
+      <Text className="text-2xl font-bold mb-2">Admin PIN</Text>
+      <Input
         value={pin}
         onChangeText={setPin}
         placeholder="PIN"
         secureTextEntry
         keyboardType="number-pad"
       />
-      <Pressable style={styles.primary} onPress={() => void submit()}>
-        <Text style={styles.primaryText}>Unlock</Text>
-      </Pressable>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <Button onPress={() => void submit()}>
+        <Text>Unlock</Text>
+      </Button>
+      {error ? <Text className="text-destructive mt-2">{error}</Text> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, gap: 12 },
-  title: { fontSize: 22, fontWeight: "bold", marginBottom: 8 },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 6, padding: 10, fontSize: 16 },
-  primary: { backgroundColor: "#0a7", padding: 14, borderRadius: 8, alignItems: "center" },
-  primaryText: { color: "white", fontWeight: "600" },
-  error: { color: "#c33", marginTop: 8 },
-});
