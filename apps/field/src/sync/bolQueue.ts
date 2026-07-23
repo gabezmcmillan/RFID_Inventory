@@ -26,9 +26,17 @@ export interface BlobGrant {
   headers?: Record<string, string>;
 }
 
+/** Context the grant provider needs to mint a content-bound upload grant. */
+export interface GrantRequest {
+  docId: string;
+  contentHash: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
 export interface GrantProvider {
-  /** Request a short-lived upload grant for a given content key. */
-  getUploadGrant(contentKey: string): Promise<BlobGrant>;
+  /** Request a short-lived upload grant bound to one artifact's content. */
+  getUploadGrant(req: GrantRequest): Promise<BlobGrant>;
 }
 
 export interface QueueStorage {
@@ -61,6 +69,10 @@ export type EntryStatus = "pending" | "uploading" | "done" | "dead";
 export interface QueueEntry {
   docId: string;
   contentHash: string;
+  /** Content type of the artifact (e.g. image/jpeg, application/pdf). */
+  contentType: string;
+  /** Artifact size in bytes (sent to the grant endpoint for size-capped grants). */
+  sizeBytes: number;
   /** The object URL the upload produced (set on success). */
   storageUrl: string | null;
   status: EntryStatus;
@@ -121,10 +133,17 @@ export class BolUploadQueue {
 
   /**
    * Enqueue an upload. `blob` is the artifact bytes; `contentHash` is a stable
-   * hash of those bytes (the app computes it). Returns the storage URL when the
-   * content is already uploaded, or null when freshly queued.
+   * SHA-256 hex of those bytes (the app computes it); `contentType`/`sizeBytes`
+   * describe the artifact for the size-capped, content-bound grant. Returns the
+   * storage URL when the content is already uploaded, or null when freshly queued.
    */
-  async enqueue(docId: string, contentHash: string, blob: Blob): Promise<string | null> {
+  async enqueue(
+    docId: string,
+    contentHash: string,
+    contentType: string,
+    sizeBytes: number,
+    blob: Blob,
+  ): Promise<string | null> {
     const existing = this._entries.find(
       (e) => e.docId === docId && e.contentHash === contentHash,
     );
@@ -137,6 +156,8 @@ export class BolUploadQueue {
     this._entries.push({
       docId,
       contentHash,
+      contentType,
+      sizeBytes,
       storageUrl: null,
       status: "pending",
       attempts: 0,
@@ -217,7 +238,12 @@ export class BolUploadQueue {
     entry.status = "uploading";
     entry.attempts += 1;
     try {
-      const grant = await this._grant.getUploadGrant(entry.contentHash);
+      const grant = await this._grant.getUploadGrant({
+        docId: entry.docId,
+        contentHash: entry.contentHash,
+        contentType: entry.contentType,
+        sizeBytes: entry.sizeBytes,
+      });
       const method = grant.method ?? "PUT";
       const res = await this._fetch(grant.uploadUrl, {
         method,

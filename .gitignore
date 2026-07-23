@@ -44,3 +44,4 @@ test_intake.py
 *.db-wal
 *.db-shm
 .vercel
+.env*.local

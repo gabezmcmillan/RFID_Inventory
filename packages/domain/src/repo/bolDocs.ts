@@ -210,6 +210,14 @@ export async function setBolDocPages(db: DomainDb, docId: string, pages: number)
 }
 
 /**
+ * Record the Vercel Blob URL of an uploaded BOL page artifact (plan 010, Phase
+ * 3). Set only after a successful upload so the public tag page can link it.
+ */
+export async function setBolDocStorageUrl(db: DomainDb, docId: string, storageUrl: string): Promise<void> {
+  await db.update(bolDocs).set({ storage_url: storageUrl }).where(eq(bolDocs.id, docId));
+}
+
+/**
  * Fold a re-run OCR extraction into the document (db.py:632-673).
  *
  * Non-destructive: the BOL number is replaced only while still

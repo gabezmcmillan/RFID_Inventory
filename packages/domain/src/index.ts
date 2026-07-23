@@ -159,6 +159,7 @@ export {
   listBolDocs,
   renameBolDoc,
   setBolDocPages,
+  setBolDocStorageUrl,
 } from "./repo/bolDocs";
 
 // Repository: requests

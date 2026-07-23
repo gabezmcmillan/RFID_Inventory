@@ -74,6 +74,10 @@ const serverSchema = z
     // Plan 010: server-only allowlist of operator emails permitted to link a
     // field device. Comma- and/or whitespace-separated, case-insensitive.
     FIELD_OPERATOR_ALLOWLIST: z.string().optional(),
+    // Plan 010: server-only Vercel Blob read-write token for the `rfid-bol` store.
+    // Used only to mint short-lived client-upload grants for BOL page artifacts;
+    // never exposed to a client (no NEXT_PUBLIC_/EXPO_PUBLIC_ prefix).
+    BLOB_READ_WRITE_TOKEN: z.string().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.BETTER_AUTH_SECRET && !val.BETTER_AUTH_URL) {

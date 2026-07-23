@@ -30,6 +30,7 @@ import {
 } from "@rfid/domain";
 import { Directory, File, Paths } from "expo-file-system";
 import * as DocumentPicker from "expo-document-picker";
+import { enqueueBolArtifact } from "../sync/bolUpload";
 import { useEffect, useState } from "react";
 import DocumentScanner, {
   ResponseType,
@@ -82,6 +83,18 @@ export function defaultBolReference(now = new Date()): string {
   return `BOL ${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${hour}:${pad2(now.getMinutes())}${now.getHours() < 12 ? "AM" : "PM"}`;
 }
 
+/**
+ * Map a picked image's MIME type to one the BOL upload grant allows
+ * (image/jpeg | image/pdf), or null when the type isn't uploadable. The grant
+ * endpoint rejects other content types, so we skip enqueueing those rather
+ * than dead-letter them.
+ */
+function allowedImageContentType(mimeType: string | undefined): "image/jpeg" | "image/png" | null {
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg") return "image/jpeg";
+  if (mimeType === "image/png") return "image/png";
+  return null;
+}
+
 /** The `scans/` directory under the document directory, created idempotently. */
 function scansDir(): Directory {
   const scans = new Directory(Paths.document, "scans");
@@ -115,7 +128,7 @@ function pageUrisForBase(base: string, count: number): string[] {
 }
 
 /** Read a file's bytes (RN-safe via `File.arrayBuffer`). */
-async function readBytes(uri: string): Promise<Uint8Array> {
+export async function readBytes(uri: string): Promise<Uint8Array> {
   const buf = await new File(uri).arrayBuffer();
   return new Uint8Array(buf);
 }
@@ -288,7 +301,7 @@ export async function uploadBolDocument(db: DomainDb, deps: CaptureDeps): Promis
   const extraction = isPdf ? await ladderFromPdf(saved.uri, deps) : await ladderFromImages([saved.uri], deps);
   const stem = asset.name.replace(/\.[^.]+$/, "").trim();
   const reference = extraction.bol_number || stem || defaultBolReference();
-  return createBolDoc(
+  const doc = await createBolDoc(
     db,
     reference,
     filename,
@@ -299,6 +312,15 @@ export async function uploadBolDocument(db: DomainDb, deps: CaptureDeps): Promis
     extraction.ocr_text,
     extraction.line_items,
   );
+  // Enqueue the single uploaded artifact for cloud storage (fire-and-forget; the
+  // queue schedules its own retries and sets storage_url on success). Scan docs
+  // (multi-page JPEGs) are NOT enqueued here — their single-artifact upload
+  // awaits the deferred multi-page PDF assembly (see MISTRAL_PAGE1_NOTE above).
+  if (doc) {
+    const contentType = isPdf ? "application/pdf" : allowedImageContentType(asset.mimeType);
+    if (contentType) void enqueueBolArtifact(db, doc.id, saved.uri, contentType);
+  }
+  return doc;
 }
 
 /**

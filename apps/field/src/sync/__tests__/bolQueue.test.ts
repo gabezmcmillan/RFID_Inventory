@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BolUploadQueue, type BlobGrant, type GrantProvider, type QueueEntry, type QueueStorage } from "../bolQueue";
+import { BolUploadQueue, type BlobGrant, type GrantProvider, type GrantRequest, type QueueEntry, type QueueStorage } from "../bolQueue";
 import { FakeClock } from "./fakeClock";
 
 function flush(): Promise<void> {
@@ -15,10 +15,10 @@ function makeGrantProvider(): GrantProvider & {
   return {
     grants,
     calls,
-    getUploadGrant: async (key: string) => {
-      calls.push(key);
-      const g = grants.get(key);
-      if (!g) throw new Error("no grant configured for " + key);
+    getUploadGrant: async (req: GrantRequest) => {
+      calls.push(req.contentHash);
+      const g = grants.get(req.contentHash);
+      if (!g) throw new Error("no grant configured for " + req.contentHash);
       return g;
     },
   };
@@ -63,7 +63,7 @@ describe("BolUploadQueue", () => {
       callbacks: { onUploaded: uploaded },
     });
     const blob = new Blob(["bytes"], { type: "application/pdf" });
-    const url = await q.enqueue("doc1", "hashA", blob);
+    const url = await q.enqueue("doc1", "hashA", "application/pdf", 5, blob);
     expect(url).toBeNull();
     await q.flush();
     expect(uploaded).toHaveBeenCalledWith("doc1", "https://blob.example/stored");
@@ -85,11 +85,11 @@ describe("BolUploadQueue", () => {
       config: { baseMs: 1_000, maxBackoffMs: 30_000, maxAttempts: 3, rand: () => 0.5 },
     });
     const blob = new Blob(["bytes"], { type: "application/pdf" });
-    await q.enqueue("doc1", "hashA", blob);
+    await q.enqueue("doc1", "hashA", "application/pdf", 5, blob);
     await q.flush();
     expect(fetchMock.calls.length).toBe(1);
     // Re-enqueue identical content → returns the stored URL, no new upload.
-    const url = await q.enqueue("doc1", "hashA", blob);
+    const url = await q.enqueue("doc1", "hashA", "application/pdf", 5, blob);
     expect(url).toBe("https://blob.example/stored");
     expect(fetchMock.calls.length).toBe(1);
   });
@@ -108,8 +108,8 @@ describe("BolUploadQueue", () => {
       clock,
       config: { baseMs: 1_000, maxBackoffMs: 30_000, maxAttempts: 3, rand: () => 0.5 },
     });
-    await q.enqueue("doc1", "hashA", new Blob(["a"]));
-    await q.enqueue("doc1", "hashB", new Blob(["b"]));
+    await q.enqueue("doc1", "hashA", "application/pdf", 1, new Blob(["a"]));
+    await q.enqueue("doc1", "hashB", "application/pdf", 1, new Blob(["b"]));
     await q.flush();
     // Only the latest content (hashB) is uploaded.
     expect(grant.calls).toEqual(["hashB"]);
@@ -132,7 +132,7 @@ describe("BolUploadQueue", () => {
       clock,
       config: { baseMs: 1_000, maxBackoffMs: 30_000, maxAttempts: 3, rand: () => 0.5 },
     });
-    await q.enqueue("doc1", "hashA", new Blob(["x"]));
+    await q.enqueue("doc1", "hashA", "application/pdf", 1, new Blob(["x"]));
     await q.flush();
     expect(fetchMock.calls.length).toBe(1); // first attempt failed
     expect(q.size).toBe(1);
@@ -158,7 +158,7 @@ describe("BolUploadQueue", () => {
       config: { baseMs: 1_000, maxBackoffMs: 30_000, maxAttempts: 2, rand: () => 0.5 },
       callbacks: { onDeadLetter: dead },
     });
-    await q.enqueue("doc1", "hashA", new Blob(["x"]));
+    await q.enqueue("doc1", "hashA", "application/pdf", 1, new Blob(["x"]));
     await q.flush(); // attempt 1
     await clock.advance(1_000); // attempt 2 (async _process)
     await flush();
@@ -183,6 +183,8 @@ describe("BolUploadQueue", () => {
       {
         docId: "doc1",
         contentHash: "hashA",
+        contentType: "application/pdf",
+        sizeBytes: 1,
         storageUrl: null,
         status: "pending",
         attempts: 0,

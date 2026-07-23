@@ -15,6 +15,7 @@ import { applyMigrations, type DomainDb } from "@rfid/domain";
 import { Database, getDbPath } from "@tursodatabase/sync-react-native";
 import { drizzleTursoRn } from "./drizzleTursoRnDriver";
 import { SyncCredentialStore } from "../sync/credentialStore";
+import { buildBolQueue } from "../sync/bolUpload";
 
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -80,6 +81,9 @@ export function DatabaseProvider({ children }: { children: ReactNode }): ReactNo
       .then(({ db, client }) => {
         if (!cancelled) {
           setState({ db, client, credStore, loading: false, error: null });
+          // Build + restore the BOL upload queue now that the domain db is open.
+          // Fire-and-forget: it schedules its own retries and persists to AsyncStorage.
+          void buildBolQueue(db);
         }
       })
       .catch((err: unknown) => {
