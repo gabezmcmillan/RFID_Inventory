@@ -18,6 +18,7 @@ import { LockProvider } from "../src/auth/LockProvider";
 import { VersionCheckProvider } from "../src/version/VersionCheckProvider";
 import { readerService } from "../src/reader/readerService";
 import { ReaderStatusChip } from "../src/reader/ReaderStatusChip";
+import { HeaderBackButton } from "../src/components/HeaderBackButton";
 import { useEffect } from "react";
 
 /**
@@ -67,7 +68,32 @@ export default function RootLayout(): React.ReactNode {
                 headerBackTitleStyle: { fontSize: 16 },
                 headerTintColor: "hsl(var(--brand-navy))",
                 headerTitleStyle: { fontWeight: "700" },
+                headerStyle: { backgroundColor: "hsl(var(--background))" },
+                // Cross-platform fallback (Android): plain headerRight element.
                 headerRight: () => <ReaderStatusChip />,
+                // iOS 26: the native nav bar wraps header items in Liquid Glass
+                // capsules. Render the chip + back button as `custom` items with
+                // `hidesSharedBackground: true` so iOS draws no glass capsule
+                // around them — keeping the header flat per the brand direction.
+                // `unstable_headerRightItems` overrides `headerRight` on iOS;
+                // `unstable_headerLeftItems` overrides the native back button.
+                unstable_headerRightItems: () => [
+                  {
+                    type: "custom",
+                    element: <ReaderStatusChip />,
+                    hidesSharedBackground: true,
+                  },
+                ],
+                unstable_headerLeftItems: ({ canGoBack }) =>
+                  canGoBack
+                    ? [
+                        {
+                          type: "custom",
+                          element: <HeaderBackButton />,
+                          hidesSharedBackground: true,
+                        },
+                      ]
+                    : [],
                 contentStyle: { backgroundColor: "hsl(var(--background))" },
               }}
             >
