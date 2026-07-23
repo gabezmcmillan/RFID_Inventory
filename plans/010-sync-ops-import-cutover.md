@@ -32,7 +32,7 @@
     production never uses Tailscale
 - **Category**: security, migration, tests, operations
 - **Planned at**: commit `d73717b`, 2026-07-23
-- **Status**: TODO
+- **Status**: IN_PROGRESS — Phase 1 credential gate PASSED (`DIRECT_SYNC_PASS`); Phases 2–7 pending
 
 ## Why this matters
 
