@@ -6,7 +6,7 @@ import { getUser } from "@/lib/session";
 
 /** Shared site header: nav + header counts (warehouse units, open requests) + last updated,
  * plus the signed-in user's name/email and a sign-out affordance. */
-export async function Header({ active }: { active?: "stock" | "requests" | "warehouse" }) {
+export async function Header({ active }: { active?: "stock" | "requests" | "warehouse" | "devices" }) {
   let units = 0;
   let pending = 0;
   let updated = "";
@@ -47,6 +47,7 @@ export async function Header({ active }: { active?: "stock" | "requests" | "ware
           {navLink("/", "Stock", "stock")}
           {navLink("/requests", "Requests", "requests")}
           {navLink("/warehouse", "Warehouse", "warehouse")}
+          {navLink("/admin/devices", "Devices", "devices")}
         </nav>
         {user ? <UserMenu name={user.name} email={user.email} /> : null}
       </div>
