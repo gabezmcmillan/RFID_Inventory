@@ -31,7 +31,7 @@ import {
   type ItemFields,
 } from "@rfid/domain";
 import { useEffect, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -283,7 +283,11 @@ export function CheckInScreen(): React.ReactNode {
 
   if (phase === "setup") {
     return (
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 4 }}>
+      <ScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 4 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      >
         <Text className="mt-2 text-sm font-semibold text-foreground">BOL document</Text>
         <View className="my-2 flex-row flex-wrap gap-2">
           <Button disabled={capturing} onPress={() => void onScanBol()}>
@@ -368,7 +372,11 @@ export function CheckInScreen(): React.ReactNode {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 4 }}>
+    <ScrollView
+      contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 4 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+    >
       <View className="mb-3 flex-row items-center justify-between">
         <Text className="text-base font-semibold text-foreground">
           {itemType} · BOL {shipment.bol_number ?? ""} · Bldg {shipment.building_number ?? ""}

@@ -10,7 +10,7 @@
 import { groupTags, lookupForCheckout, deliverUnits, type LookupForCheckoutResult, type Tag } from "@rfid/domain";
 import { useEffect, useState } from "react";
 import { Link, useLocalSearchParams } from "expo-router";
-import { Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
@@ -69,7 +69,11 @@ export function WarehouseGroupScreen(): React.ReactNode {
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 8 }}>
+    <ScrollView
+      contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 8 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+    >
       <Text className="mb-1 text-lg font-bold text-foreground">{itemType} · {value || "(blank)"}</Text>
 
       {checkoutLookup ? (

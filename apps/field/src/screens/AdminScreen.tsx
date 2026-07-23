@@ -24,7 +24,7 @@ import {
   type Tag,
 } from "@rfid/domain";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -103,7 +103,11 @@ function AdminTools(): React.ReactNode {
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
+    <ScrollView
+      contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+    >
       <TagEditor onMsg={setMsg} />
       <ClearFlagSection onMsg={setMsg} />
       <DeleteGroupSection onConfirm={onDeleteGroup} />

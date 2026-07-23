@@ -17,7 +17,7 @@ import {
 } from "@rfid/domain";
 import { useEffect, useState } from "react";
 import { router, useLocalSearchParams } from "expo-router";
-import { Image, Pressable, ScrollView, View } from "react-native";
+import { Image, Platform, Pressable, ScrollView, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -143,7 +143,11 @@ function BolDocDetail({
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
+    <ScrollView
+      contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+    >
       <Text className="text-xl font-bold text-foreground">{doc.bol_number || "(unnamed)"}</Text>
       <Text className="text-[13px] text-muted-foreground">
         {doc.source} · {doc.pages} page{doc.pages === 1 ? "" : "s"}

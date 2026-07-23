@@ -32,11 +32,12 @@ import {
 } from "@rfid/domain";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { Modal, ScrollView, View } from "react-native";
+import { Modal, Platform, ScrollView, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
+import { KeyboardDismissible } from "@/components/KeyboardDismissible";
 import { cn } from "@/lib/utils";
 
 import { useDb } from "../../db/provider";
@@ -164,7 +165,11 @@ function NormalCheckOut({
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
+    <ScrollView
+      contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+    >
       <Text className="mb-1 text-sm italic text-muted-foreground">Pull the trigger on a box to look it up for check-out…</Text>
 
       {lookup ? (
@@ -329,7 +334,11 @@ function StagingCheckOut({
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
+    <ScrollView
+      contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+    >
       <View className="rounded-lg border border-brand-info bg-brand-info/10 p-3">
         <Text className="text-lg font-bold text-brand-info">{itemLabel(request)}</Text>
         <Text className="mt-0.5 text-[13px] text-brand-info/80">
@@ -398,7 +407,7 @@ function StagingCheckOut({
       ) : null}
 
       <Modal visible={shortfall !== null} transparent animationType="slide" onRequestClose={() => setShortfall(null)}>
-        <View className="flex-1 justify-end bg-black/40">
+        <KeyboardDismissible className="flex-1 justify-end bg-black/40">
           <View className="rounded-t-2xl bg-background p-4 pb-6">
             <Text className="mb-2 text-xl font-bold text-foreground">Shortfall</Text>
             <Text className="mb-3 text-sm text-foreground">{shortfall ?? ""}</Text>
@@ -422,7 +431,7 @@ function StagingCheckOut({
               </Button>
             </View>
           </View>
-        </View>
+        </KeyboardDismissible>
       </Modal>
     </ScrollView>
   );

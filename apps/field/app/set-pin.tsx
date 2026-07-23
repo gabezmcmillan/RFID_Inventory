@@ -8,12 +8,13 @@
  */
 
 import { useState } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
+import { KeyboardDismissible } from "@/components/KeyboardDismissible";
 import { useLock } from "../src/auth/LockProvider";
 
 export default function SetPinScreen(): React.ReactNode {
@@ -47,7 +48,7 @@ export default function SetPinScreen(): React.ReactNode {
   };
 
   return (
-    <View className="flex-1 p-6 gap-3">
+    <KeyboardDismissible className="flex-1 p-6 gap-3">
       <Text className="text-2xl font-bold mb-2">Set device PIN</Text>
       <Text className="text-sm text-muted-foreground mb-2">
         This PIN unlocks the app on this device. The person who links the device may not be the
@@ -71,6 +72,6 @@ export default function SetPinScreen(): React.ReactNode {
         {busy ? <ActivityIndicator /> : <Text>Set PIN and finish</Text>}
       </Button>
       {error ? <Text className="text-destructive mt-2">{error}</Text> : null}
-    </View>
+    </KeyboardDismissible>
   );
 }

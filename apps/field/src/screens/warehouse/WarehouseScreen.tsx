@@ -18,7 +18,7 @@ import {
 } from "@rfid/domain";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "expo-router";
-import { Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,7 +70,11 @@ export function WarehouseScreen(): React.ReactNode {
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 8 }}>
+    <ScrollView
+      contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 8 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+    >
       <View className="mb-2 flex-row items-center justify-between">
         <View className="flex-row">
           <Pressable

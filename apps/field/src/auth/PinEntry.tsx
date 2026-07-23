@@ -7,11 +7,11 @@
  */
 
 import { useEffect, useState } from "react";
-import { View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
+import { KeyboardDismissible } from "@/components/KeyboardDismissible";
 import { pinStore } from "./pinStoreApp";
 import type { PinSlot } from "./pinStore";
 
@@ -65,7 +65,7 @@ export function PinEntry({ slot, title, placeholder = "PIN", onUnlock }: PinEntr
   };
 
   return (
-    <View className="flex-1 p-5 gap-3">
+    <KeyboardDismissible className="flex-1 p-5 gap-3">
       <Text className="text-2xl font-bold mb-2">{title}</Text>
       <Input
         value={pin}
@@ -79,6 +79,6 @@ export function PinEntry({ slot, title, placeholder = "PIN", onUnlock }: PinEntr
         <Text>{locked ? `Wait ${Math.ceil(remainingMs / 1000)}s` : "Unlock"}</Text>
       </Button>
       {error && !locked ? <Text className="text-destructive mt-2">{error}</Text> : null}
-    </View>
+    </KeyboardDismissible>
   );
 }

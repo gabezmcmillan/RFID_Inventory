@@ -228,6 +228,7 @@ export default function SettingsScreen(): React.ReactNode {
       className="flex-1"
       contentContainerStyle={{ padding: 20, gap: 16, paddingBottom: 60 }}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
     >
       <View className="flex-row items-center justify-between">
         <View>

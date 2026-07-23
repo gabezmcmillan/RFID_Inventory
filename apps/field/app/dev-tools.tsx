@@ -9,12 +9,12 @@
 
 import { createRequest } from "@rfid/domain";
 import { useState } from "react";
-import { View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Text } from "@/components/ui/text";
+import { KeyboardDismissible } from "@/components/KeyboardDismissible";
 
 import { useDb } from "../src/db/provider";
 import { readerService } from "../src/reader/readerService";
@@ -63,7 +63,7 @@ export default function DevToolsScreen(): React.ReactNode {
   };
 
   return (
-    <View className="flex-1 p-5 gap-3">
+    <KeyboardDismissible className="flex-1 p-5 gap-3">
       <Text className="text-sm font-semibold">Inject EPCs (whitespace/comma separated)</Text>
       <Input
         value={text}
@@ -87,6 +87,6 @@ export default function DevToolsScreen(): React.ReactNode {
         <Text>Insert sample request</Text>
       </Button>
       {msg ? <Text className="text-primary font-semibold">{msg}</Text> : null}
-    </View>
+    </KeyboardDismissible>
   );
 }

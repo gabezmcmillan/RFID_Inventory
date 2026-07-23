@@ -23,7 +23,7 @@ import {
 } from "@rfid/domain";
 import { router } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, View } from "react-native";
+import { Modal, Platform, Pressable, ScrollView, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -201,7 +201,11 @@ function RequestDetail({
     <Modal visible={req !== null} transparent animationType="slide" onRequestClose={onClose}>
       <View className="flex-1 justify-end bg-black/40">
         <View className="max-h-[85%] rounded-t-2xl bg-background pb-4">
-          <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
+          <ScrollView
+            contentContainerStyle={{ padding: 16, gap: 8 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          >
             <View className="mb-2 flex-row items-center justify-between">
               <Text className="flex-1 text-xl font-bold text-foreground">{itemLabel(req)}</Text>
               <View className={cn("ml-2 rounded-full px-2 py-0.5", statusClass(req.status))}>

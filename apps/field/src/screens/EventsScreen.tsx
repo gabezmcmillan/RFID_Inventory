@@ -6,10 +6,11 @@
 
 import { EVENT_FILTERS, listEvents, type EventRow } from "@rfid/domain";
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
+import { KeyboardDismissible } from "@/components/KeyboardDismissible";
 import { cn } from "@/lib/utils";
 
 import { useDb } from "../db/provider";
@@ -32,7 +33,7 @@ export function EventsScreen(): React.ReactNode {
   }, [load]);
 
   return (
-    <View className="flex-1 gap-2 p-4">
+    <KeyboardDismissible className="flex-1 gap-2 p-4">
       <View className="flex-row flex-wrap gap-2">
         {FILTERS.map((f) => (
           <Pressable
@@ -53,7 +54,11 @@ export function EventsScreen(): React.ReactNode {
         autoCorrect={false}
       />
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 40, gap: 6 }}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 40, gap: 6 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      >
         {events.length === 0 ? (
           <Text className="mt-3 text-sm italic text-muted-foreground">No events match.</Text>
         ) : (
@@ -74,6 +79,6 @@ export function EventsScreen(): React.ReactNode {
           ))
         )}
       </ScrollView>
-    </View>
+    </KeyboardDismissible>
   );
 }

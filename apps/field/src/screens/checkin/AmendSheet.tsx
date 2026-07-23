@@ -10,6 +10,7 @@ import { Modal, View } from "react-native";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
+import { KeyboardDismissible } from "@/components/KeyboardDismissible";
 
 import type { ItemFields } from "@rfid/domain";
 
@@ -39,7 +40,7 @@ export function AmendSheet({ epc, initial, onAmend, onClose }: AmendSheetProps):
   const visible = epc !== null;
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View className="flex-1 justify-end bg-black/40">
+      <KeyboardDismissible className="flex-1 justify-end bg-black/40">
         <View className="gap-2 rounded-t-2xl bg-background p-5">
           <Text className="text-xl font-bold">Amend tag</Text>
           <Text className="mb-2 font-mono text-xs text-muted-foreground">{epc ?? ""}</Text>
@@ -68,7 +69,7 @@ export function AmendSheet({ epc, initial, onAmend, onClose }: AmendSheetProps):
             </Button>
           </View>
         </View>
-      </View>
+      </KeyboardDismissible>
     </Modal>
   );
 }
