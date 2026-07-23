@@ -134,6 +134,14 @@ REJECTED (one-line rationale).
   duplicate column names (two `id`s) would collapse and misalign columns. Any
   builder join must use an explicit `.select({...})` projection with unique
   aliases; raw `sql` aggregates with named result columns are unaffected.
+- **React Native Reusables + NativeWind is the field-app UI standard
+  (2026-07-23)**: `apps/field` screens are styled with NativeWind (Tailwind)
+  classes and the vendored React Native Reusables (shadcn/ui-style) components
+  under `apps/field/src/components/ui/`, with theme CSS variables in
+  `apps/field/global.css` (light default; dark wired, no toggle). New field-app
+  UI must use these components + tokens rather than ad-hoc `StyleSheet` objects
+  (keep `StyleSheet` only for genuinely computed numeric styles, e.g. the
+  finder proximity-bar width/height).
 
 ## Considered and rejected
 
