@@ -1,44 +1,58 @@
 /**
- * Mode home — the landing screen. A grid of cards for every operator mode,
+ * Mode home — the landing screen. A grid of tiles for every operator mode,
  * each linking to its route. Find a Tag is entered from a warehouse box row
- * (it needs a target EPC), so it has no home card. The Requests card carries a
+ * (it needs a target EPC), so it has no home tile. The Requests tile carries a
  * `countOpenRequests` badge that refreshes on mount and whenever a request is
  * mutated on any screen (see `screens/requests/refresh`). The reader stays
- * idle here.
+ * idle here. The SyncStatusBanner renders above this screen from the
+ * SyncProvider; the reader connection chip here gives a glanceable hardware
+ * status.
  */
 
 import { countOpenRequests } from "@rfid/domain";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
+import {
+  Boxes,
+  ClipboardList,
+  FileText,
+  History,
+  PackageCheck,
+  PackageMinus,
+  Radar,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  Terminal,
+  type LucideIcon,
+} from "lucide-react-native";
 
 import { Badge } from "@/components/ui/badge";
+import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 
 import { useDb } from "../src/db/provider";
 import { readerService } from "../src/reader/readerService";
 import { subscribeRequestsChanged } from "../src/screens/requests/refresh";
 
-interface ModeCard {
+interface ModeTile {
   readonly href: string;
   readonly title: string;
   readonly subtitle: string;
-  readonly accent: string;
+  readonly icon: LucideIcon;
 }
 
-const MODES: readonly ModeCard[] = [
-  { href: "/check-in", title: "Check In", subtitle: "Arm a shipment, scan tags in", accent: "#0a7" },
-  { href: "/check-out", title: "Check Out", subtitle: "Draw units out for site", accent: "#06c" },
-  { href: "/sweep", title: "Sweep & Count", subtitle: "Audit what's present", accent: "#7c5" },
-  { href: "/warehouse", title: "Warehouse", subtitle: "Browse & find boxes", accent: "#a06" },
-  { href: "/bol-docs", title: "BOL Docs", subtitle: "Scanned bills of lading", accent: "#36c" },
-  { href: "/events", title: "Event Log", subtitle: "Audit trail", accent: "#555" },
-  { href: "/admin", title: "Admin", subtitle: "PIN-gated tools", accent: "#c63" },
-  { href: "/settings", title: "Settings", subtitle: "Reader, printer, cloud", accent: "#444" },
-  { href: "/dev-tools", title: "Dev Tools", subtitle: "Inject scans", accent: "#999" },
+const MODES: readonly ModeTile[] = [
+  { href: "/check-in", title: "Check In", subtitle: "Arm a shipment, scan tags in", icon: PackageCheck },
+  { href: "/check-out", title: "Check Out", subtitle: "Draw units out for site", icon: PackageMinus },
+  { href: "/sweep", title: "Sweep & Count", subtitle: "Audit what's present", icon: Radar },
+  { href: "/warehouse", title: "Warehouse", subtitle: "Browse & find boxes", icon: Boxes },
+  { href: "/bol-docs", title: "BOL Docs", subtitle: "Scanned bills of lading", icon: FileText },
+  { href: "/events", title: "Event Log", subtitle: "Audit trail", icon: History },
+  { href: "/admin", title: "Admin", subtitle: "PIN-gated tools", icon: ShieldCheck },
+  { href: "/settings", title: "Settings", subtitle: "Reader, printer, cloud", icon: SettingsIcon },
+  { href: "/dev-tools", title: "Dev Tools", subtitle: "Inject scans", icon: Terminal },
 ];
-
-const REQUESTS_ACCENT = "#06c";
 
 export default function HomeScreen(): React.ReactNode {
   const db = useDb();
@@ -62,34 +76,42 @@ export default function HomeScreen(): React.ReactNode {
   }, [db]);
 
   return (
-    <View className="flex-1 p-5 gap-3">
-      <Text variant="h1" className="mt-3 text-left">RFID Field</Text>
-      <Text className="text-sm text-muted-foreground mb-2">
-        Reader: {connected ? "connected" : "disconnected"}
-      </Text>
-      <View className="flex-row flex-wrap gap-2.5">
+    <View className="flex-1 px-5 pt-2">
+      <View className="flex-row items-center justify-between pb-3">
+        <Text className="text-3xl font-extrabold tracking-tight text-brand-navy">RFID Field</Text>
+        <View
+          className={`flex-row items-center gap-1.5 rounded-full px-3 py-1.5 ${
+            connected ? "bg-status-in/15" : "bg-muted"
+          }`}
+        >
+          <View className={`h-2 w-2 rounded-full ${connected ? "bg-status-in" : "bg-muted-foreground"}`} />
+          <Text className={`text-xs font-semibold ${connected ? "text-status-in" : "text-muted-foreground"}`}>
+            {connected ? "Reader connected" : "Reader off"}
+          </Text>
+        </View>
+      </View>
+
+      <View className="flex-row flex-wrap gap-3">
         {MODES.map((m) => (
           <Link key={m.href} href={m.href} asChild>
-            {/* Slot (asChild) needs a single resolvable style; NativeWind
-                collapses className + the inline accent style into one. */}
-            <Pressable
-              className="w-[47%] flex-grow rounded-lg border-2 bg-card p-4"
-              style={{ borderColor: m.accent }}
-            >
-              <Text className="text-lg font-bold mb-1" style={{ color: m.accent }}>{m.title}</Text>
-              <Text className="text-sm text-muted-foreground">{m.subtitle}</Text>
+            <Pressable className="w-[47%] flex-grow rounded-2xl border border-border bg-card p-4 active:opacity-70">
+              <View className="mb-2 h-11 w-11 items-center justify-center rounded-xl bg-brand-navy/10">
+                <Icon as={m.icon} size={22} className="text-brand-navy" />
+              </View>
+              <Text className="text-lg font-bold text-foreground">{m.title}</Text>
+              <Text className="mt-0.5 text-sm leading-snug text-muted-foreground">{m.subtitle}</Text>
             </Pressable>
           </Link>
         ))}
         <Link href="/requests" asChild>
-          <Pressable
-            className="w-[47%] flex-grow rounded-lg border-2 bg-card p-4"
-            style={{ borderColor: REQUESTS_ACCENT }}
-          >
-            <Text className="text-lg font-bold mb-1" style={{ color: REQUESTS_ACCENT }}>Requests</Text>
-            <Text className="text-sm text-muted-foreground">Open material requests</Text>
+          <Pressable className="relative w-[47%] flex-grow rounded-2xl border border-border bg-card p-4 active:opacity-70">
+            <View className="mb-2 h-11 w-11 items-center justify-center rounded-xl bg-brand-info/15">
+              <Icon as={ClipboardList} size={22} className="text-brand-info" />
+            </View>
+            <Text className="text-lg font-bold text-foreground">Requests</Text>
+            <Text className="mt-0.5 text-sm leading-snug text-muted-foreground">Open material requests</Text>
             {openCount > 0 ? (
-              <Badge variant="destructive" className="absolute right-2 top-2">
+              <Badge variant="destructive" className="absolute right-2.5 top-2.5">
                 {openCount}
               </Badge>
             ) : null}

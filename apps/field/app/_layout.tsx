@@ -59,7 +59,16 @@ export default function RootLayout(): React.ReactNode {
         <Gate>
           <VersionCheckProvider>
             <SyncProvider>
-            <Stack screenOptions={{ headerShown: true }}>
+            <Stack
+              screenOptions={{
+                headerShown: true,
+                headerBackTitle: "Back",
+                headerBackTitleStyle: { fontSize: 16 },
+                headerTintColor: "hsl(var(--brand-navy))",
+                headerTitleStyle: { fontWeight: "700" },
+                contentStyle: { backgroundColor: "hsl(var(--background))" },
+              }}
+            >
               <Stack.Screen name="index" options={{ title: "RFID Field" }} />
               <Stack.Screen name="check-in" options={{ title: "Check In" }} />
               <Stack.Screen name="check-out" options={{ title: "Check Out" }} />
