@@ -43,3 +43,4 @@ test_intake.py
 .dev-data/
 *.db-wal
 *.db-shm
+.vercel
