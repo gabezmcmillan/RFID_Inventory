@@ -22,11 +22,23 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
+import { fieldEnv } from "../config/env";
+import { isLocalPrivateHost, normalizeServerUrl } from "../config/url";
 
 /** AsyncStorage key for the web app base URL (config, not secret). */
 export const SERVER_URL_KEY = "rfid.field.serverUrl";
-/** Default web app URL — works only in the iOS simulator (host's localhost). */
-export const DEFAULT_SERVER_URL = "http://localhost:3000";
+/**
+ * Default web app URL — read from the typed env seam (`config/env.ts`), which
+ * validates `EXPO_PUBLIC_DEFAULT_SERVER_URL` (an exact http/https origin) and
+ * falls back to `http://localhost:3000` for the simulator. `pnpm tailscale:setup`
+ * writes this key into `apps/field/.env.local`. Re-exported here so existing
+ * callers keep one import surface.
+ */
+export const DEFAULT_SERVER_URL = fieldEnv.defaultServerUrl;
+
+// Re-export the pure URL helpers so the existing auth barrel (`src/auth/index.ts`)
+// keeps one import surface; the canonical definitions live in `config/url.ts`.
+export { isLocalPrivateHost, normalizeServerUrl } from "../config/url";
 
 /** Secure-store key for the linked session bearer token (the secret). */
 const LINK_TOKEN_KEY = "rfid.link.token";
@@ -65,38 +77,25 @@ export interface ConnectionTestResult {
 /**
  * Trim whitespace and trailing slashes from a URL-ish string. Does NOT
  * validate — use {@link validateServerUrl} for that. Pure (no I/O).
+ *
+ * Canonical definition moved to `config/url.ts`; re-exported above.
  */
-export function normalizeServerUrl(input: string): string {
-  return input.trim().replace(/\/+$/, "");
-}
 
 /**
  * Whether `hostname` is a loopback, private (RFC1918), or link-local address,
  * or a `.local`/`.localhost` mDNS name — i.e. a host for which plain HTTP is
  * acceptable in development. Pure (no I/O).
+ *
+ * Canonical definition moved to `config/url.ts`; re-exported above.
  */
-export function isLocalPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().trim();
-  if (h === "") return false;
-  if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
-  if (h.endsWith(".localhost") || h.endsWith(".local")) return true;
-  // IPv4 dotted-quad private / link-local ranges.
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (m) {
-    const a = Number(m[1]);
-    const b = Number(m[2]);
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local
-  }
-  return false;
-}
 
 /**
  * Validate a user-entered web server URL: require http/https, reject malformed
  * URLs, and allow plain HTTP only for local/private dev hosts (production must
  * use HTTPS). Returns a normalized URL on success. Pure (no I/O).
+ *
+ * Unlike {@link validateOriginUrl} (used for the env default), this permits a
+ * path — the Settings field accepts full URLs, not bare origins.
  */
 export function validateServerUrl(input: string): ServerUrlValidation {
   const normalized = normalizeServerUrl(input);

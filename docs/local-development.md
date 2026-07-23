@@ -37,12 +37,19 @@ tailscale serve --bg http://127.0.0.1:3000
 
 If a **conflicting** Serve mapping already exists, setup refuses to overwrite it
 and prints the one exact remediation (it never resets automatically). Funnel is
-never enabled. The command prints the Field API URL to paste into the field app.
+never enabled. After Serve is configured it also writes
+`EXPO_PUBLIC_DEFAULT_SERVER_URL=<origin>` into `apps/field/.env.local` (the field
+app's gitignored Expo env), preserving any other values, and prints
+`Restart Metro to load the updated Expo env.`
 
 ## 4. Wire the field app
 
-In the field app: **Settings → Web server URL →** paste the URL from step 3 →
-**Test connection**.
+The field app reads its default server origin from the typed env seam
+(`apps/field/src/config/env.ts` → `EXPO_PUBLIC_DEFAULT_SERVER_URL` in
+`apps/field/.env.local`), falling back to `http://localhost:3000` for the
+simulator. After `pnpm tailscale:setup`, restart Metro so the new env is
+inlined. You can still override per-device in the field app: **Settings → Web
+server URL** (runtime Settings wins over the env default).
 
 ## 5. Troubleshooting
 
@@ -51,13 +58,19 @@ pnpm tailscale:doctor
 ```
 
 Read-only. Emits concise `PASS`/`WARN`/`FAIL` lines for: CLI present, signed in
-+ DNS name, Serve maps HTTPS → `http://127.0.0.1:3000`, Funnel off, and local +
-tailnet `/api/health`. Each failure prints one exact remediation. Exits nonzero
-only for actual setup failures (not a stopped web server, which is a `WARN`).
++ DNS name, Serve maps HTTPS → `http://127.0.0.1:3000`, Funnel off, local +
+tailnet `/api/health`, and the field env key matching the discovered origin.
+Each failure prints one exact remediation. Exits nonzero only for actual setup
+failures (not a stopped web server, a not-yet-restarted Metro, or a missing/stale
+env key — those are `WARN`).
 
 ## Notes
 
 - **Expo/Metro is separate.** `pnpm --filter @rfid/field dev` starts the JS
   bundle/HMR transport; independent of the Tailscale field API transport.
+- **Field app default server URL** lives in `apps/field/.env.local` as
+  `EXPO_PUBLIC_DEFAULT_SERVER_URL` (gitignored; see `apps/field/.env.example`).
+  `pnpm tailscale:setup` writes it; restart Metro to load it. Runtime Settings
+  still override it per-device.
 - **Funnel is intentionally not used** — the field API is private to your tailnet.
 - Dev DB setup (Turso via Vercel Marketplace) is unrelated: `scripts/setup-dev-vercel.sh`.

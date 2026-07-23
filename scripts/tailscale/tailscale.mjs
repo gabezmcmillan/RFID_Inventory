@@ -5,16 +5,25 @@
 //   node scripts/tailscale/tailscale.mjs setup   -> configure `tailscale serve` for localhost:3000
 //   node scripts/tailscale/tailscale.mjs doctor  -> read-only verification (PASS/WARN/FAIL)
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { discoverFieldOrigin, classifyServe, classifyFunnel } from "./parse.mjs";
 import { resolveTailscaleCommand, fellBackFromPathToApp } from "./resolve.mjs";
+import { readEnvKey, upsertEnvKey } from "./envfile.mjs";
 
 const LOCAL_WEB = "http://127.0.0.1:3000";
 const HEALTH_PATH = "/api/health";
 const FETCH_TIMEOUT_MS = 3000;
 const MAC_DOWNLOAD_URL = "https://tailscale.com/download/mac";
+// The Expo env key the field app reads for its default server origin. Must stay
+// in sync with apps/field/src/config/env.ts (kept duplicated here only because
+// this script is plain .mjs and cannot import the TS module).
+const FIELD_ENV_KEY = "EXPO_PUBLIC_DEFAULT_SERVER_URL";
+const FIELD_ENV_FILE = path.join(
+  path.resolve(import.meta.dirname, "../.."),
+  "apps/field/.env.local",
+);
 
 // ---------------------------------------------------------------------------
 // Command resolution: pick ONE `tailscale` binary and use it for every call.
@@ -94,6 +103,23 @@ function line(level, msg) {
 
 function sourceLabel(source) {
   return source === "app" ? "macOS app" : source === "path" ? "PATH" : "unknown";
+}
+
+// Upsert ONLY the field env default-origin key into apps/field/.env.local,
+// preserving comments and other values. Never prints file contents. Ensures
+// the file ends with a newline. Creates the file if absent.
+function upsertFieldEnvOrigin(originUrl) {
+  const prev = existsSync(FIELD_ENV_FILE) ? readFileSync(FIELD_ENV_FILE, "utf8") : "";
+  let next = upsertEnvKey(prev, FIELD_ENV_KEY, originUrl);
+  if (!next.endsWith("\n")) next += "\n";
+  writeFileSync(FIELD_ENV_FILE, next, "utf8");
+}
+
+// Read the field env default-origin key (or null if file/key absent). Used by
+// doctor to compare against the discovered origin. Never prints file contents.
+function readFieldEnvOrigin() {
+  if (!existsSync(FIELD_ENV_FILE)) return null;
+  return readEnvKey(readFileSync(FIELD_ENV_FILE, "utf8"), FIELD_ENV_KEY);
 }
 
 // Resolve the binary, print install/open-vs-sign-in remediation on failure.
@@ -200,6 +226,13 @@ async function setup() {
     line("WARN", "Keep the web app running at http://localhost:3000 (pnpm --filter @rfid/web dev).");
   }
 
+  // Origin discovered + Funnel off + Serve configured: persist the Field API
+  // origin as the field app's Expo env default. Upserts ONLY this key,
+  // preserving comments and other values; never prints file contents.
+  upsertFieldEnvOrigin(origin.origin);
+  line("PASS", `Wrote ${FIELD_ENV_KEY} to apps/field/.env.local.`);
+  line("INFO", "Restart Metro to load the updated Expo env.");
+
   process.stdout.write("\n");
   line("INFO", `Field API URL:  ${origin.origin}`);
   line("INFO", "Keep the web app running at http://localhost:3000.");
@@ -270,6 +303,17 @@ async function doctor() {
     } else {
       line("WARN", `Tailnet health unreachable (${remote.error || remote.status || "no response"}).`);
       line("INFO", "Remediation: confirm Serve is configured and the web app is running, then re-run doctor.");
+    }
+
+    // Field env default-origin key matches the discovered origin? WARN (never
+    // FAIL) when missing/stale — running `pnpm tailscale:setup` fixes it, and a
+    // not-yet-restarted Metro must not fail the doctor.
+    const envOrigin = readFieldEnvOrigin();
+    if (envOrigin === origin.origin) {
+      line("PASS", `apps/field/.env.local ${FIELD_ENV_KEY} matches the discovered origin.`);
+    } else {
+      line("WARN", `apps/field/.env.local ${FIELD_ENV_KEY} is missing or stale.`);
+      line("INFO", "Remediation: `pnpm tailscale:setup`, then restart Metro to load the updated Expo env.");
     }
   }
 
