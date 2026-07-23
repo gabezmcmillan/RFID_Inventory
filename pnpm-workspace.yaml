@@ -3,4 +3,3 @@ packages:
   - "apps/web"
   - "packages/domain"
   - "packages/reader-protocol"
-  - "packages/device-link-protocol"

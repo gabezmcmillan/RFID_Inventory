@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@rfid/domain", "@rfid/device-link-protocol"],
+  transpilePackages: ["@rfid/domain"],
   // `@tursodatabase/database` is a NAPI-RS native addon (a `.node` binding
   // loaded via optional platform deps). Turbopack can't bundle the native
   // loader, so keep it external and `require` it at runtime from node_modules,

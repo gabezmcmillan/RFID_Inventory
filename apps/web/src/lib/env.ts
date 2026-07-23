@@ -60,13 +60,6 @@ const serverSchema = z
     TURSO_DATABASE_URL: z.string().optional(),
     TURSO_AUTH_TOKEN: z.string().optional(),
     LOCAL_DB_PATH: z.string().optional(),
-    // Field device API origin — the SEPARATELY NAMED, typed origin embedded in
-    // the device-link QR and used for field API/sync traffic. It is NEVER
-    // Better Auth's `baseURL` (which stays localhost); it is the private
-    // Tailscale HTTPS origin (or an approved reserved ngrok fallback). Its
-    // Development value is local-only/per-developer and is NOT Vercel-managed.
-    FIELD_DEVICE_API_ORIGIN: z.string().url().optional(),
-    FIELD_DEVICE_API_TRANSPORT: z.enum(["tailscale", "ngrok"]).optional(),
   })
   .superRefine((val, ctx) => {
     if (val.BETTER_AUTH_SECRET && !val.BETTER_AUTH_URL) {
@@ -76,20 +69,6 @@ const serverSchema = z
         message:
           "BETTER_AUTH_URL must be set alongside BETTER_AUTH_SECRET — it is this app's public origin for OAuth callbacks and session cookies.",
       });
-    }
-    // The device API origin must be distinct from the web/SSO origin: it can
-    // never replace Better Auth's canonical localhost base URL.
-    if (val.FIELD_DEVICE_API_ORIGIN && val.BETTER_AUTH_URL) {
-      const deviceOrigin = val.FIELD_DEVICE_API_ORIGIN.replace(/\/+$/, "");
-      const betterOrigin = val.BETTER_AUTH_URL.replace(/\/+$/, "");
-      if (deviceOrigin === betterOrigin) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["FIELD_DEVICE_API_ORIGIN"],
-          message:
-            "FIELD_DEVICE_API_ORIGIN must differ from BETTER_AUTH_URL — the device API origin can never be the web/SSO origin.",
-        });
-      }
     }
     // Mirror the prior `clientId && clientSecret` shape: only when BOTH are
     // present is Entra considered configured, and then the tenant is required.
