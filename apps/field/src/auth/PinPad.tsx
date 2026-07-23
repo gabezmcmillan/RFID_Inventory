@@ -79,8 +79,11 @@ export function PinPad({
 
   return (
     <Animated.View style={{ transform: [{ translateX: shake }] }} className="items-center gap-8">
+      {/* Variable-length PIN: a neutral row that grows as digits are typed
+          (one filled dot per digit), with a single faint dot as a hint when
+          empty — instead of a fixed row of N dots that presumes the length. */}
       <View className="flex-row gap-3.5">
-        {Array.from({ length: maxLength }).map((_, i) => (
+        {Array.from({ length: Math.max(value.length, 1) }).map((_, i) => (
           <View
             key={i}
             className={cn(

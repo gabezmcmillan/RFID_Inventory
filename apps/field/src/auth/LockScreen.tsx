@@ -5,8 +5,12 @@
  * {@link onUnlock} flips the gate to unlocked. Fully offline — no network.
  *
  * The overlay covers the whole screen (no shell header), so it pads itself
- * with the safe-area insets and centers the "RFID Field" wordmark + PIN group
- * (dots in the upper-middle, keypad centered below) like Apple's passcode.
+ * with the safe-area insets. The outer view is full-size (absoluteFill) and
+ * stretches its child; {@link PinEntry} is `flex-1`, so it fills that height
+ * and centers its group (wordmark + title + dots + keypad) as one unit —
+ * like Apple's passcode. There is NO content-sized wrapper between them,
+ * because such a wrapper collapses the `flex-1` chain and the group falls
+ * out of center.
  */
 
 import { StyleSheet, View } from "react-native";
@@ -20,20 +24,18 @@ export function LockScreen({ onUnlock }: { onUnlock: () => void }): React.ReactN
   return (
     <View
       style={[StyleSheet.absoluteFill, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}
-      className="bg-background items-center justify-center"
+      className="bg-background"
     >
-      <View className="w-full max-w-md px-6">
-        <PinEntry
-          slot="device"
-          title="Device PIN"
-          header={
-            <Text className="text-3xl font-extrabold tracking-tight text-brand-navy">
-              RFID Field
-            </Text>
-          }
-          onUnlock={onUnlock}
-        />
-      </View>
+      <PinEntry
+        slot="device"
+        title="Enter device PIN"
+        header={
+          <Text className="text-3xl font-extrabold tracking-tight text-brand-navy">
+            RFID Field
+          </Text>
+        }
+        onUnlock={onUnlock}
+      />
     </View>
   );
 }
