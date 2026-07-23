@@ -18,6 +18,8 @@
     "@rfid/domain": "workspace:*",
     "@shadcn/react": "^0.2.1",
     "@t3-oss/env-nextjs": "^0.13.11",
+    "@tanstack/react-query": "5.101.4",
+    "@tanstack/react-query-devtools": "5.101.4",
     "@tursodatabase/database": "^0.7.1",
     "@tursodatabase/serverless": "^1.3.1",
     "@vercel/blob": "^2.6.1",
