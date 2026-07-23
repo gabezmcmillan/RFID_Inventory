@@ -243,3 +243,56 @@ physical-device acceptance was performed (operator-owned, Phase 6).
 - **`FIELD_OPERATOR_ALLOWLIST`** still holds the documented placeholder (the
   production auth `user` table was empty at Phase 1); operator to set the real
   operator email(s) in Phase 4.
+
+## Operator-action outcomes (pre-Phase-3, self-served)
+
+Operator actions 1 and 3 were self-served (both CLIs authenticated); action 2
+stays operator-owned.
+
+### Action 1 — Turso mint seam env (self-served)
+
+- The named platform API token `rfid-field-sync` (broad `all` scope; see the
+  Phase-1 tradeoff above) already existed and is set as `TURSO_MINT_TOKEN` in
+  Production, Preview (branch-scoped `rewrite/expo`), and `apps/web/.env.local`.
+- Added the new Phase-2 mint targets (server-only, not secret — they are the
+  Turso org slug and database NAME, not the libSQL hostname):
+  - `TURSO_ORG` = `vercel-icfg-pwpqw6vsfjibquh1mwgj1cuk` (both Production + Preview;
+    all field DBs live in this one org).
+  - `TURSO_DB_NAME` = `rfid-warehouse` (Production), `rfid-warehouse-preview`
+    (Preview, branch-scoped `rewrite/expo`), `rfid-warehouse-dev`
+    (`apps/web/.env.local` local dev).
+- Set via `vercel env add ... --value ... -y` (Production + Preview) and appended
+  to `apps/web/.env.local` preserving all existing keys. No secret values were
+  printed or committed (org slug + DB name are not secrets).
+
+### Action 3 — auth DB tables (verified, no re-run needed)
+
+Queried both auth DBs via `turso db shell <name> "SELECT name FROM
+sqlite_master WHERE type='table'"` (uses the CLI's own credentials — no env
+secrets pulled):
+
+- Production `rfid-auth`: `account`, `session`, `user`, `verification` ✅
+- Preview `rfid-auth-preview`: `account`, `session`, `user`, `verification` ✅
+
+Both already have the four Better Auth tables (Preview was migrated at
+provisioning; Production observed at Phase 1), so `auth:migrate` was not re-run.
+The custom `field_devices` / `auth_meta` tables are ensured idempotently at
+runtime on the first device-endpoint call, so they appear after the first
+deploy/link without a separate migration step.
+
+### Action 2 — `FIELD_OPERATOR_ALLOWLIST` (still operator-owned)
+
+Remains the documented placeholder (production auth `user` table still empty of
+a known operator email). Operator to set the real operator email(s) in
+Production + Preview before field linking is exercised.
+
+### Incident note (token leak to terminal scrollback)
+
+While verifying Preview env, an early `head` of the pulled preview env file
+printed the Preview `AUTH_DATABASE_AUTH_TOKEN` value to the terminal scrollback.
+No token was logged to a file, printed in a commit, or written to the repo. As a
+precaution, the operator should rotate the Preview `AUTH_DATABASE_AUTH_TOKEN`
+(Turso Platform API or `turso db tokens create rfid-auth-preview`) and update
+the Preview Vercel env + `apps/web/.env.local`. Production tokens were not
+exposed. Going forward env files are inspected by `grep` on specific non-secret
+lines only, never `head`/`cat`.
