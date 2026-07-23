@@ -16,7 +16,10 @@ import {
   type FlaggedTag,
 } from "@rfid/domain";
 import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Text } from "@/components/ui/text";
 
 import { useDb } from "../db/provider";
 import { useReaderEvents } from "../hooks/useReaderEvents";
@@ -108,70 +111,70 @@ export function SweepScreen(): React.ReactNode {
   const totalUnits = Object.values(counts).reduce((a, b) => a + b, 0);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.summary}>
-        <Text style={styles.summaryNum}>{distinct}</Text>
-        <Text style={styles.summaryLabel}>distinct tags · {totalUnits} units counted</Text>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 6 }}>
+      <View className="mb-2 flex-row items-baseline gap-2.5">
+        <Text className="text-[32px] font-bold text-foreground">{distinct}</Text>
+        <Text className="text-sm text-muted-foreground">distinct tags · {totalUnits} units counted</Text>
       </View>
 
-      <Pressable style={styles.simBtn} onPress={() => readerService.injectScan([randomEpc()])}>
-        <Text style={styles.simBtnText}>Simulate scan</Text>
-      </Pressable>
+      <Button variant="secondary" className="mb-2" onPress={() => readerService.injectScan([randomEpc()])}>
+        <Text>Simulate scan</Text>
+      </Button>
 
-      <Text style={styles.sectionLabel}>Counts by type</Text>
+      <Text className="mb-1 mt-3 text-sm font-semibold text-foreground">Counts by type</Text>
       {Object.keys(counts).length === 0 ? (
-        <Text style={styles.hint}>No tags scanned yet.</Text>
+        <Text className="text-sm italic text-muted-foreground">No tags scanned yet.</Text>
       ) : (
         Object.entries(counts).map(([type, n]) => (
-          <View key={type} style={styles.countRow}>
-            <Text style={styles.countType}>{type}</Text>
-            <Text style={styles.countNum}>{n} units</Text>
+          <View key={type} className="flex-row justify-between py-1">
+            <Text className="text-base font-semibold text-foreground">{type}</Text>
+            <Text className="text-base text-foreground">{n} units</Text>
           </View>
         ))
       )}
 
-      <Text style={styles.sectionLabel}>Unknown ({unknown.length})</Text>
+      <Text className="mb-1 mt-3 text-sm font-semibold text-foreground">Unknown ({unknown.length})</Text>
       {unknown.length === 0 ? (
-        <Text style={styles.hint}>None.</Text>
+        <Text className="text-sm italic text-muted-foreground">None.</Text>
       ) : (
-        unknown.map((e) => <Text key={e} style={styles.mono}>{e}</Text>)
+        unknown.map((e) => <Text key={e} className="font-mono text-xs text-muted-foreground">{e}</Text>)
       )}
 
-      <Text style={styles.sectionLabel}>Flagged ({flagged.length})</Text>
+      <Text className="mb-1 mt-3 text-sm font-semibold text-foreground">Flagged ({flagged.length})</Text>
       {flagged.length === 0 ? (
-        <Text style={styles.hint}>None.</Text>
+        <Text className="text-sm italic text-muted-foreground">None.</Text>
       ) : (
         flagged.map((f) => (
-          <View key={f.epc} style={styles.flagCard}>
-            <Text style={styles.flagText}>⚠ {f.flag}</Text>
-            <Text style={styles.meta}>{f.item_type} · BOL {f.bol_number || "n/a"} · Bldg {f.building || "n/a"}</Text>
-            <Text style={styles.mono}>{f.epc}</Text>
+          <View key={f.epc} className="my-1 rounded-md border border-destructive bg-destructive/10 p-2.5">
+            <Text className="text-[13px] font-semibold text-destructive">⚠ {f.flag}</Text>
+            <Text className="mt-0.5 text-xs text-muted-foreground">{f.item_type} · BOL {f.bol_number || "n/a"} · Bldg {f.building || "n/a"}</Text>
+            <Text className="font-mono text-xs text-muted-foreground">{f.epc}</Text>
           </View>
         ))
       )}
 
-      <View style={styles.actionRow}>
-        <Pressable style={[styles.btn, styles.btnPrimary, busy && styles.btnDisabled]} disabled={busy} onPress={() => void onReconcile()}>
-          <Text style={styles.btnText}>{busy ? "…" : "Reconcile"}</Text>
-        </Pressable>
-        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={newSession}>
-          <Text style={styles.btnText}>New session</Text>
-        </Pressable>
+      <View className="mt-4 flex-row gap-2.5">
+        <Button className="flex-1" disabled={busy} onPress={() => void onReconcile()}>
+          <Text className="font-semibold">{busy ? "…" : "Reconcile"}</Text>
+        </Button>
+        <Button className="flex-1" variant="secondary" onPress={newSession}>
+          <Text className="font-semibold">New session</Text>
+        </Button>
       </View>
 
       {reconcile ? (
-        <View style={styles.reconcileCard}>
-          <Text style={styles.reconcileTitle}>Reconciliation</Text>
-          <Text style={styles.meta}>
+        <View className="mt-3 rounded-lg border border-border bg-card p-3">
+          <Text className="mb-1 text-base font-bold text-foreground">Reconciliation</Text>
+          <Text className="text-xs text-muted-foreground">
             Expected {reconcile.expected} · Found {reconcile.found_count} · Missing {reconcile.missing_count}
           </Text>
           {reconcile.missing.length === 0 ? (
-            <Text style={styles.hint}>Nothing missing.</Text>
+            <Text className="text-sm italic text-muted-foreground">Nothing missing.</Text>
           ) : (
             reconcile.missing.map((m) => (
-              <View key={m.epc} style={styles.missingRow}>
-                <Text style={styles.mono}>{m.epc}</Text>
-                <Text style={styles.meta}>{m.item_type} · BOL {m.bol_number || "n/a"} · Bldg {m.building || "n/a"}</Text>
+              <View key={m.epc} className="border-t border-border py-1.5">
+                <Text className="font-mono text-xs text-muted-foreground">{m.epc}</Text>
+                <Text className="text-xs text-muted-foreground">{m.item_type} · BOL {m.bol_number || "n/a"} · Bldg {m.building || "n/a"}</Text>
               </View>
             ))
           )}
@@ -180,30 +183,3 @@ export function SweepScreen(): React.ReactNode {
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingBottom: 60, gap: 6 },
-  summary: { flexDirection: "row", alignItems: "baseline", gap: 10, marginBottom: 8 },
-  summaryNum: { fontSize: 32, fontWeight: "bold" },
-  summaryLabel: { fontSize: 14, color: "#555" },
-  simBtn: { backgroundColor: "#eee", padding: 12, borderRadius: 8, alignItems: "center", marginBottom: 8 },
-  simBtnText: { color: "#333", fontWeight: "600" },
-  sectionLabel: { fontSize: 14, fontWeight: "600", marginTop: 12, marginBottom: 4, color: "#333" },
-  hint: { color: "#888", fontStyle: "italic" },
-  countRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
-  countType: { fontSize: 16, fontWeight: "600" },
-  countNum: { fontSize: 16 },
-  mono: { fontFamily: "monospace", fontSize: 12, color: "#444" },
-  flagCard: { borderWidth: 1, borderColor: "#c33", borderRadius: 6, padding: 10, backgroundColor: "#fdecea", marginVertical: 4 },
-  flagText: { color: "#c33", fontWeight: "600", fontSize: 13 },
-  meta: { fontSize: 12, color: "#666", marginTop: 2 },
-  actionRow: { flexDirection: "row", gap: 10, marginTop: 16 },
-  btn: { flex: 1, padding: 14, borderRadius: 8, alignItems: "center" },
-  btnPrimary: { backgroundColor: "#0a7" },
-  btnSecondary: { backgroundColor: "#555" },
-  btnDisabled: { backgroundColor: "#9ab" },
-  btnText: { color: "white", fontWeight: "600" },
-  reconcileCard: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 12, backgroundColor: "white", marginTop: 12 },
-  reconcileTitle: { fontSize: 16, fontWeight: "bold", marginBottom: 4 },
-  missingRow: { paddingVertical: 6, borderTopWidth: 1, borderTopColor: "#eee" },
-});
