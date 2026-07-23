@@ -6,7 +6,9 @@
   },
   "scripts": {
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "node --test scripts/tailscale/*.test.mjs && pnpm -r test",
+    "tailscale:setup": "node scripts/tailscale/tailscale.mjs setup",
+    "tailscale:doctor": "node scripts/tailscale/tailscale.mjs doctor"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3", "esbuild"],
