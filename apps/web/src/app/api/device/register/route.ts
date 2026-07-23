@@ -53,6 +53,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const deviceId = randomUUID();
+  const now = new Date().toISOString();
   await insertDevice({
     id: deviceId,
     user_id: session.userId,
@@ -60,9 +61,12 @@ export async function POST(request: Request): Promise<Response> {
     epc_byte: epcByte,
     label,
     active: 1,
-    created_at: new Date().toISOString(),
+    created_at: now,
     revoked_at: null,
     unlinked_at: null,
+    deactivated_at: null,
+    last_seen_at: now,
+    last_sync_at: null,
   });
 
   return json({ deviceId, epcByte, label }, 200);

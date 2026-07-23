@@ -6,10 +6,15 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   __setAuthKyselyForTesting,
   allocateNextEpcByte,
+  deactivateDevice,
   deleteSessionById,
   getActiveDeviceForUser,
   insertDevice,
+  listDevicesWithLinker,
+  reactivateDevice,
+  renameDevice,
   revokeDevice,
+  touchDevice,
   unlinkDevice,
   type FieldDeviceRow,
 } from "@/lib/devices";
@@ -30,6 +35,9 @@ function row(over: Partial<FieldDeviceRow> = {}): FieldDeviceRow {
     created_at: "t",
     revoked_at: null,
     unlinked_at: null,
+    deactivated_at: null,
+    last_seen_at: null,
+    last_sync_at: null,
     ...over,
   };
 }
@@ -116,5 +124,88 @@ describe("field_devices repo (auth DB, in-memory)", () => {
     expect(tables).toContain("field_devices");
     expect(tables).toContain("auth_meta");
     expect(tables.some((t) => t === "tags" || t === "events")).toBe(false);
+  });
+});
+
+describe("field_devices registry lifecycle (admin)", () => {
+  let k: Kysely<unknown>;
+  beforeEach(async () => {
+    k = inMemoryAuthDb();
+    __setAuthKyselyForTesting(k as never, false);
+    // The linker join reads the Better Auth `user` table; create it so the join
+    // has a table to left-join on (rows may still be missing — that's the test).
+    await sql`CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT)`.execute(k);
+  });
+  afterEach(() => {
+    __setAuthKyselyForTesting(null);
+  });
+
+  test("listDevicesWithLinker joins the linker's identity and orders newest-first", async () => {
+    await sql`INSERT INTO user (id, email, name) VALUES ('user-1', 'ops@acme.com', 'Ops')`.execute(k);
+    await insertDevice(row({ id: "old", epc_byte: "01", created_at: "2026-01-01T00:00:00Z" }));
+    await insertDevice(row({ id: "new", epc_byte: "02", created_at: "2026-07-01T00:00:00Z" }));
+    const list = await listDevicesWithLinker();
+    expect(list.map((d) => d.id)).toEqual(["new", "old"]);
+    expect(list[0].linked_by_email).toBe("ops@acme.com");
+    expect(list[0].linked_by_name).toBe("Ops");
+  });
+
+  test("listDevicesWithLinker tolerates a missing user row (linked_by null)", async () => {
+    await insertDevice(row({ id: "d", epc_byte: "03", user_id: "ghost" }));
+    const list = await listDevicesWithLinker();
+    expect(list[0].linked_by_email).toBeNull();
+    expect(list[0].linked_by_name).toBeNull();
+  });
+
+  test("renameDevice updates the label and returns false for an unknown device", async () => {
+    await insertDevice(row({ id: "d", label: "old" }));
+    expect(await renameDevice("d", "Warehouse iPad")).toBe(true);
+    const r = ((await sql`SELECT label FROM field_devices WHERE id='d'`.execute(k))).rows[0] as Record<string, unknown>;
+    expect(r.label).toBe("Warehouse iPad");
+    expect(await renameDevice("nope", "x")).toBe(false);
+  });
+
+  test("deactivateDevice blocks credential refresh (active=0) and records deactivated_at", async () => {
+    await insertDevice(row({ id: "d", session_id: "sess-1" }));
+    expect(await deactivateDevice("d")).toBe(true);
+    expect(await getActiveDeviceForUser("user-1")).toBeNull();
+    const r = ((await sql`SELECT active, deactivated_at, session_id FROM field_devices WHERE id='d'`.execute(k))).rows[0] as Record<string, unknown>;
+    expect(r.active).toBe(0);
+    expect(r.deactivated_at).not.toBeNull();
+    // The session is KEPT (reactivation is a flip, not a re-link).
+    expect(r.session_id).toBe("sess-1");
+    // Idempotent: a second deactivate is a no-op.
+    expect(await deactivateDevice("d")).toBe(false);
+  });
+
+  test("reactivateDevice flips active back on and clears deactivated_at", async () => {
+    await insertDevice(row({ id: "d" }));
+    await deactivateDevice("d");
+    expect(await getActiveDeviceForUser("user-1")).toBeNull();
+    expect(await reactivateDevice("d")).toBe(true);
+    expect((await getActiveDeviceForUser("user-1"))?.id).toBe("d");
+    const r = ((await sql`SELECT active, deactivated_at FROM field_devices WHERE id='d'`.execute(k))).rows[0] as Record<string, unknown>;
+    expect(r.active).toBe(1);
+    expect(r.deactivated_at).toBeNull();
+  });
+
+  test("touchDevice bumps last_seen_at and last_sync_at", async () => {
+    await insertDevice(row({ id: "d" }));
+    await touchDevice("d", { lastSync: true });
+    const r = ((await sql`SELECT last_seen_at, last_sync_at FROM field_devices WHERE id='d'`.execute(k))).rows[0] as Record<string, unknown>;
+    expect(r.last_seen_at).not.toBeNull();
+    expect(r.last_sync_at).not.toBeNull();
+  });
+
+  test("deactivate then reactivate is unambiguous and distinct from revoke", async () => {
+    await insertDevice(row({ id: "d", session_id: "sess-1" }));
+    await deactivateDevice("d");
+    await reactivateDevice("d");
+    // After a full deactivate/reactivate cycle the device is active and the
+    // session is intact (no re-link needed) — unlike revoke, which retires it.
+    const r = ((await sql`SELECT active, session_id, revoked_at FROM field_devices WHERE id='d'`.execute(k))).rows[0] as Record<string, unknown>;
+    expect(r.active).toBe(1);
+    expect(r.session_id).toBe("sess-1");
+    expect(r.revoked_at).toBeNull();
   });
 });

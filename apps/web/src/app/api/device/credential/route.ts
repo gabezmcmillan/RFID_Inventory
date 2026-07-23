@@ -12,7 +12,7 @@
 import { getAuth } from "@/lib/auth";
 import { isAllowed } from "@/lib/allowlist";
 import { env } from "@/lib/env";
-import { getActiveDeviceForUser } from "@/lib/devices";
+import { getActiveDeviceForUser, touchDevice } from "@/lib/devices";
 import { forbidden, json, resolveDeviceSession, unauthorized } from "@/lib/deviceAuth";
 import { mintSyncToken } from "@/lib/tursoMint";
 
@@ -53,6 +53,11 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return json({ error: "Failed to mint a sync token" }, 502);
   }
+
+  // Record that the device is alive and attempting to sync (a proxy for
+  // last-seen/last-sync in the admin registry). Best-effort: a failure here
+  // must not deny an otherwise-valid token.
+  void touchDevice(device.id, { lastSync: true }).catch(() => {});
 
   return json({ token: jwt, expiresAt: SYNC_TOKEN_TTL_SEC, url: env.TURSO_DATABASE_URL }, 200);
 }
