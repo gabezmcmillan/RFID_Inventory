@@ -8,7 +8,7 @@
  *   remote Turso database is migrated out-of-band (plan 010), so this path
  *   applies no migrations.
  * - Otherwise (local dev) -> `drizzle-orm/tursodatabase/database` over a local
- *   file (`process.env.LOCAL_DB_PATH ?? ../../.dev-data/web.db`), with all
+ *   file (`LOCAL_DB_PATH`, default `../../.dev-data/web.db`), with all
  *   checked-in migrations applied via the RN-safe `applyMigrations` bundle
  *   runner exported from `@rfid/domain` (no on-disk read, so it survives
  *   Next.js bundling / `import.meta.url` relocation).
@@ -18,6 +18,9 @@
  * reuses the same open database instead of leaking a new file handle per
  * reload. The web app only inserts `requests` rows (multi-writer discipline);
  * it never mutates `tags`.
+ *
+ * All env reads go through the validated `@/lib/env` module — never raw
+ * `process.env`.
  */
 
 import { mkdirSync } from "node:fs";
@@ -28,17 +31,22 @@ import { applyMigrations, type DomainDb } from "@rfid/domain";
 import { drizzle as drizzleLocal } from "drizzle-orm/tursodatabase/database";
 import { drizzle as drizzleServerless } from "drizzle-orm/tursodatabase-serverless";
 
+import { env } from "@/lib/env";
+
 /** Per-process stash so dev hot-reload reuses one open database. */
 const GLOBAL = globalThis as unknown as { __rfidWebDbPromise?: Promise<DomainDb> };
 
+/** Default local warehouse-domain dev database path. */
+const DEFAULT_LOCAL_DB_PATH = "../../.dev-data/web.db";
+
 /** True when Turso cloud credentials are configured (the production path). */
 function hasTursoCloudConfig(): boolean {
-  return Boolean(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
+  return Boolean(env.TURSO_DATABASE_URL && env.TURSO_AUTH_TOKEN);
 }
 
 /** Build a local-file DomainDb and apply all checked-in migrations. */
 async function openLocalDb(): Promise<DomainDb> {
-  const path = resolve(process.env.LOCAL_DB_PATH ?? "../../.dev-data/web.db");
+  const path = resolve(env.LOCAL_DB_PATH ?? DEFAULT_LOCAL_DB_PATH);
   mkdirSync(dirname(path), { recursive: true });
   const client = await connect(path);
   const db = drizzleLocal({ client });
@@ -48,8 +56,8 @@ async function openLocalDb(): Promise<DomainDb> {
 
 /** Build a serverless DomainDb against the Turso cloud database (no migrations). */
 function openServerlessDb(): DomainDb {
-  const url = process.env.TURSO_DATABASE_URL!;
-  const authToken = process.env.TURSO_AUTH_TOKEN!;
+  const url = env.TURSO_DATABASE_URL!;
+  const authToken = env.TURSO_AUTH_TOKEN!;
   // `drizzle()` returns TursoDatabaseServerlessDatabase, which extends
   // SQLiteAsyncDatabase<'async', any> (the serverless Statement.run() is typed
   // `Promise<any>`). `any` is bidirectionally compatible with

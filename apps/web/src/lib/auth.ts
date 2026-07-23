@@ -21,16 +21,22 @@
  * `AUTH_DATABASE_URL` defaults to a separate local dev file, so the gate keys
  * on the secret. When a live backend IS configured, `BETTER_AUTH_URL` is
  * required (the public origin OAuth callbacks and session cookies are built
- * against) and a missing value fails loudly at boot rather than surfacing as an
- * opaque redirect mismatch later. Per the Better Auth guide, `secret`/`baseURL`
- * are NOT set in the config — Better Auth reads `BETTER_AUTH_SECRET`/
+ * against) — enforced at boot by the validated env schema (`@/lib/env`), so a
+ * missing value fails loudly at boot rather than surfacing as an opaque
+ * redirect mismatch later. Per the Better Auth guide, `secret`/`baseURL` are
+ * NOT set in the config — Better Auth reads `BETTER_AUTH_SECRET`/
  * `BETTER_AUTH_URL` from the environment itself.
+ *
+ * All env reads go through the validated `@/lib/env` module — never raw
+ * `process.env`.
  */
 
 import { resolve } from "node:path";
 
 import { betterAuth } from "better-auth";
 import { LibsqlDialect } from "kysely-libsql";
+
+import { env } from "@/lib/env";
 
 /** Per-process stash so dev hot-reload reuses one Better Auth instance. */
 const GLOBAL = globalThis as unknown as { __rfidWebAuth?: AuthInstance };
@@ -47,13 +53,13 @@ const DEFAULT_LOCAL_AUTH_DB_PATH = "../../.dev-data/auth.db";
  * built-in adapter consumes (it wraps it in its own Kysely instance).
  */
 function buildDialect(): { dialect: LibsqlDialect; url: string } {
-  const url = process.env.AUTH_DATABASE_URL;
+  const url = env.AUTH_DATABASE_URL;
   if (url) {
-    const authToken = process.env.AUTH_DATABASE_AUTH_TOKEN;
+    const authToken = env.AUTH_DATABASE_AUTH_TOKEN;
     return { url, dialect: new LibsqlDialect({ url, authToken }) };
   }
   const localPath = resolve(
-    process.env.LOCAL_AUTH_DB_PATH ?? DEFAULT_LOCAL_AUTH_DB_PATH,
+    env.LOCAL_AUTH_DB_PATH ?? DEFAULT_LOCAL_AUTH_DB_PATH,
   );
   return { url: `file:${localPath}`, dialect: new LibsqlDialect({ url: `file:${localPath}` }) };
 }
@@ -66,34 +72,27 @@ function buildDialect(): { dialect: LibsqlDialect; url: string } {
  * return type is inferred (not annotated) so {@link AuthInstance} captures the
  * concrete generic rather than the widened `Auth<BetterAuthOptions>` — the
  * latter's `$context` is incompatible with the real instance's options shape.
- * Throws loudly at boot on a misconfigured live backend (missing
- * `BETTER_AUTH_URL`, or Microsoft credentials without a `MICROSOFT_TENANT_ID`
- * — Entra's `common` fallback would otherwise accept any Microsoft account,
- * including personal ones).
+ * Conditional requirements (`BETTER_AUTH_URL` with the secret; the Entra tenant
+ * with both Microsoft credentials) are enforced at boot by `@/lib/env`.
  */
 export function createAuth() {
-  const secret = process.env.BETTER_AUTH_SECRET;
+  const secret = env.BETTER_AUTH_SECRET;
   if (!secret) {
     return null;
   }
-  const baseURL = process.env.BETTER_AUTH_URL;
+  const baseURL = env.BETTER_AUTH_URL;
+  // `env` already validated `baseURL` is present + a URL when `secret` is set,
+  // but keep a defensive narrowing so the type is `string` (not `| undefined`).
   if (!baseURL) {
-    throw new Error(
-      "BETTER_AUTH_URL must be set alongside BETTER_AUTH_SECRET — it is this app's public origin for OAuth callbacks and session cookies.",
-    );
+    return null;
   }
-  const microsoftClientId = process.env.MICROSOFT_CLIENT_ID;
-  const microsoftClientSecret = process.env.MICROSOFT_CLIENT_SECRET;
-  const microsoftTenantId = process.env.MICROSOFT_TENANT_ID;
+  const microsoftClientId = env.MICROSOFT_CLIENT_ID;
+  const microsoftClientSecret = env.MICROSOFT_CLIENT_SECRET;
+  const microsoftTenantId = env.MICROSOFT_TENANT_ID;
   const microsoft =
     microsoftClientId && microsoftClientSecret
       ? { clientId: microsoftClientId, clientSecret: microsoftClientSecret, tenantId: microsoftTenantId }
       : undefined;
-  if (microsoft && !microsoft.tenantId) {
-    throw new Error(
-      "MICROSOFT_TENANT_ID is required when Microsoft credentials are configured — without it Entra's `common` endpoint would accept any Microsoft account, including personal ones.",
-    );
-  }
   const { dialect } = buildDialect();
   // `secret` and `baseURL` are deliberately NOT passed here: Better Auth reads
   // them from the `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL` env vars itself (the
@@ -152,7 +151,5 @@ export function isAuthEnabled(): boolean {
 
 /** Whether Microsoft Entra ID SSO is wired (both client id + secret present). */
 export function isMicrosoftEnabled(): boolean {
-  return Boolean(
-    process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET,
-  );
+  return Boolean(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET);
 }
