@@ -5,14 +5,13 @@
  * `countOpenRequests` badge that refreshes on mount and whenever a request is
  * mutated on any screen (see `screens/requests/refresh`). The reader stays
  * idle here. The SyncStatusBanner renders above this screen from the
- * SyncProvider; the reader connection chip here gives a glanceable hardware
- * status.
+ * SyncProvider; the reader-connection dot now lives in the shell header
+ * (see `ReaderStatusDot`), so the body no longer repeats it.
  *
- * The shell header owns the "RFID Field" title; the body leads with the
- * reader-connection chip and the tile grid. The grid is wrapped in a
- * ScrollView so on smaller iPhones the lower tiles stay reachable (a partial
- * tile stays visible so scrolling is obvious); on taller devices the whole
- * grid fits without scrolling.
+ * The shell header owns the "RFID Field" title; the body leads with the tile
+ * grid. The grid is wrapped in a ScrollView so on smaller iPhones the lower
+ * tiles stay reachable (a partial tile stays visible so scrolling is
+ * obvious); on taller devices the whole grid fits without scrolling.
  */
 
 import { countOpenRequests } from "@rfid/domain";
@@ -62,16 +61,11 @@ const MODES: readonly ModeTile[] = [
 
 export default function HomeScreen(): React.ReactNode {
   const db = useDb();
-  const [connected, setConnected] = useState(readerService.connected);
   const [openCount, setOpenCount] = useState(0);
 
   useEffect(() => {
-    const unsub = readerService.subscribe((e) => {
-      if (e.event === "status") setConnected(e.connected);
-    });
     // Home keeps the reader idle between modes.
     readerService.setMode("idle");
-    return unsub;
   }, []);
 
   // Load the open-request badge once and whenever any request mutates.
@@ -85,17 +79,6 @@ export default function HomeScreen(): React.ReactNode {
     <ScrollView
       contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40, gap: 12 }}
     >
-      <View
-        className={`flex-row items-center gap-2 self-start rounded-full px-3 py-1.5 ${
-          connected ? "bg-status-in/15" : "bg-muted"
-        }`}
-      >
-        <View className={`h-2 w-2 rounded-full ${connected ? "bg-status-in" : "bg-muted-foreground"}`} />
-        <Text className={`text-xs font-semibold ${connected ? "text-status-in" : "text-muted-foreground"}`}>
-          {connected ? "Reader connected" : "Reader off"}
-        </Text>
-      </View>
-
       <View className="flex-row flex-wrap gap-3">
         {MODES.map((m) => (
           <Link key={m.href} href={m.href} asChild>
