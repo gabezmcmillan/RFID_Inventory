@@ -23,6 +23,7 @@ import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 
 import { readerService, USE_NATIVE_TRANSPORT_KEY } from "../src/reader/readerService";
+import { fieldEnv } from "../src/config/env";
 import {
   CLOUD_BASE_URL_KEY,
   loadPrinterSettings,
@@ -290,38 +291,49 @@ export default function SettingsScreen(): React.ReactNode {
 
       <View className="mt-2 border-t border-border pt-4 gap-2">
         <Text className="text-sm font-semibold text-foreground">Web server URL</Text>
-        <Text className="text-xs text-muted-foreground">
-          Base the phone exchanges the link code against. On a physical iPhone this cannot be{" "}
-          <Text className="font-mono">localhost</Text> (that is the phone itself) — set it to your
-          Mac's LAN IP on the same Wi-Fi, e.g.{" "}
-          <Text className="font-mono">http://10.1.81.56:3001</Text>. Production must use HTTPS.
-        </Text>
-        <Input
-          value={serverUrl}
-          onChangeText={onServerUrlChange}
-          placeholder={DEFAULT_SERVER_URL}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-        />
-        {serverUrlError !== null ? (
-          <Text className="text-destructive text-xs">{serverUrlError}</Text>
-        ) : serverUrlIsPrivate === true ? (
-          <Text className="text-xs text-muted-foreground">
-            Local/private host — plain HTTP is fine for development.
-          </Text>
-        ) : null}
-        <Button
-          disabled={serverUrlError !== null || serverUrl.trim().length === 0 || testingServer}
-          onPress={() => void testServer()}
-        >
-          {testingServer ? <ActivityIndicator /> : <Text>Test connection</Text>}
-        </Button>
-        {serverTestMsg !== null ? (
-          <Text className={serverTestOk ? "text-primary text-sm mt-1.5" : "text-destructive text-sm mt-1.5"}>
-            {serverTestMsg}
-          </Text>
-        ) : null}
+        {fieldEnv.isProductionBuild ? (
+          <View className="gap-1">
+            <Text className="text-xs text-muted-foreground">
+              Locked to the production server (<Text className="font-mono">{DEFAULT_SERVER_URL}</Text>) for this
+              build. Dev-only LAN/Tailscale editing is unavailable in production.
+            </Text>
+          </View>
+        ) : (
+          <>
+            <Text className="text-xs text-muted-foreground">
+              Base the phone exchanges the link code against. On a physical iPhone this cannot be{" "}
+              <Text className="font-mono">localhost</Text> (that is the phone itself) — set it to your
+              Mac's LAN IP on the same Wi-Fi, e.g.{" "}
+              <Text className="font-mono">http://10.1.81.56:3001</Text>. Production must use HTTPS.
+            </Text>
+            <Input
+              value={serverUrl}
+              onChangeText={onServerUrlChange}
+              placeholder={DEFAULT_SERVER_URL}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+            {serverUrlError !== null ? (
+              <Text className="text-destructive text-xs">{serverUrlError}</Text>
+            ) : serverUrlIsPrivate === true ? (
+              <Text className="text-xs text-muted-foreground">
+                Local/private host — plain HTTP is fine for development.
+              </Text>
+            ) : null}
+            <Button
+              disabled={serverUrlError !== null || serverUrl.trim().length === 0 || testingServer}
+              onPress={() => void testServer()}
+            >
+              {testingServer ? <ActivityIndicator /> : <Text>Test connection</Text>}
+            </Button>
+            {serverTestMsg !== null ? (
+              <Text className={serverTestOk ? "text-primary text-sm mt-1.5" : "text-destructive text-sm mt-1.5"}>
+                {serverTestMsg}
+              </Text>
+            ) : null}
+          </>
+        )}
 
         <Text className="text-sm font-semibold mt-2 text-foreground">Device account</Text>
         {linked ? (

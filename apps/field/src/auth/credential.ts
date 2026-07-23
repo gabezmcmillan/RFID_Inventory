@@ -144,6 +144,12 @@ export function unreachableServerMessage(url: string): string {
 
 /** Load the configured web app base URL (default when unset/empty). */
 export async function getServerUrl(): Promise<string> {
+  // Production builds are locked to the build-time default — a stored dev
+  // override (or a tampered AsyncStorage value) can't redirect a production
+  // bundle to an arbitrary host (plan 010 Phase 4.2).
+  if (fieldEnv.isProductionBuild) {
+    return DEFAULT_SERVER_URL;
+  }
   const v = await AsyncStorage.getItem(SERVER_URL_KEY);
   const url = normalizeServerUrl(v ?? "");
   return url.length > 0 ? url : DEFAULT_SERVER_URL;

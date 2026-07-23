@@ -56,4 +56,11 @@ function resolveDefaultServerUrl(): string {
 export const fieldEnv = {
   /** Default web app origin (simulator fallback or validated env origin). */
   defaultServerUrl: resolveDefaultServerUrl(),
+  /**
+   * `true` for a production (non-dev) bundle. Used to lock the server URL to
+   * the build-time default so a production build can't be redirected to an
+   * arbitrary host via AsyncStorage (plan 010 Phase 4.2). Tailscale/LAN editing
+   * stays dev-only.
+   */
+  isProductionBuild: !__DEV__,
 } as const;
