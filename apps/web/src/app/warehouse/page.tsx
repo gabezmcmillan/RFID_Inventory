@@ -31,8 +31,9 @@ export default async function WarehousePage({
   const db = await getDb();
   const tree = await inventoryTree(db, groupBy, filters);
 
-  const toggle = (label: string, href: string, active: boolean) => (
+  const toggle = (key: string, label: string, href: string, active: boolean) => (
     <a
+      key={key}
       href={href}
       aria-current={active ? "page" : undefined}
       className={cn(buttonVariants({ variant: active ? "default" : "outline", size: "sm" }))}
@@ -48,20 +49,19 @@ export default async function WarehousePage({
         <h1 className="mb-4 text-2xl font-semibold tracking-tight">Warehouse (office view)</h1>
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className="text-sm text-muted-foreground">Group by:</span>
-          {toggle(
-            "BOL",
+          {toggle("bol", "BOL",
             "/warehouse?group=bol" + (building ? `&building=${building}` : ""),
             groupBy === "bol",
           )}
-          {toggle(
-            "Building",
+          {toggle("building", "Building",
             "/warehouse?group=building" + (building ? `&building=${building}` : ""),
             groupBy === "building",
           )}
           <Separator orientation="vertical" className="mx-1 h-6" />
-          {toggle("/warehouse", "All buildings", !building)}
+          {toggle("all", "/warehouse", "All buildings", !building)}
           {BUILDING_OPTIONS.map((b) =>
             toggle(
+              b,
               `Bldg ${b}`,
               `/warehouse?group=${groupBy}&building=${b}`,
               building === b,

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -39,17 +40,19 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
         }
       />
       <DropdownMenuContent align="end" sideOffset={4}>
-        <DropdownMenuLabel className="flex flex-col gap-0.5">
-          <span className="font-semibold text-foreground">{name}</span>
-          <span className="text-xs font-normal text-muted-foreground">{email}</span>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem render={<Link href="/link-device" />}>
-          Link a device
-        </DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" disabled={busy} onClick={signOut}>
-          {busy ? "Signing out…" : "Sign out"}
-        </DropdownMenuItem>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="flex flex-col gap-0.5">
+            <span className="font-semibold text-foreground">{name}</span>
+            <span className="text-xs font-normal text-muted-foreground">{email}</span>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem render={<Link href="/link-device" />}>
+            Link a device
+          </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" disabled={busy} onClick={signOut}>
+            {busy ? "Signing out…" : "Sign out"}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );
