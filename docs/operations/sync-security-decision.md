@@ -488,10 +488,11 @@ will be seeded to the build's `SCHEMA_VERSION` on the first production request
 ### Operator-blocked (need secrets / external accounts)
 
 - Vercel env (Production target): `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL`,
-  `AUTH_DATABASE_*`, `TURSO_DATABASE_*`, `TURSO_MINT_TOKEN`/`TURSO_ORG`/
-  `TURSO_DB_NAME`, `FIELD_OPERATOR_ALLOWLIST` (real emails), Entra
-  `AZURE_AD_*`, `BLOB_READ_WRITE_TOKEN`, `SENTRY_DSN`. Listed in
-  `docs/operations/production-launch.md`.
+  `AUTH_DATABASE_*`, `TURSO_DATABASE_*`, Entra `AZURE_AD_*`, `SENTRY_DSN`.
+  Listed in `docs/operations/production-launch.md`. **(Since resolved in the
+  2026-07-23 cleanup passes: `TURSO_MINT_TOKEN`/`TURSO_ORG`/`TURSO_DB_NAME`
+  set + fixed, `FIELD_OPERATOR_ALLOWLIST` set to the real operator emails,
+  `BLOB_READ_WRITE_TOKEN` added via the `rfid-bol` store.)**
 - Sentry init: add `@sentry/nextjs` (web) + `@sentry/react-native` (field),
   init with redaction (auth headers/cookies, tokens, BOL/OCR content, EPCs,
   request bodies), and confirm one symbolicated redacted Expo error + one Next
