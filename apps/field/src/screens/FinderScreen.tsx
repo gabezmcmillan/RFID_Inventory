@@ -13,7 +13,10 @@ import { findTag, type Tag } from "@rfid/domain";
 import * as Haptics from "expo-haptics";
 import { useEffect, useRef, useState } from "react";
 import { useLocalSearchParams } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
+
+import { Button } from "@/components/ui/button";
+import { Text } from "@/components/ui/text";
 
 import { useDb } from "../db/provider";
 import { useReaderEvents } from "../hooks/useReaderEvents";
@@ -119,38 +122,38 @@ export function FinderScreen(): React.ReactNode {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Find a Tag</Text>
+    <View className="flex-1 gap-3 p-5">
+      <Text className="text-2xl font-bold text-foreground">Find a Tag</Text>
       {tag ? (
         <View>
-          <Text style={styles.boxTitle}>{tag.item_type}{tag.item_name ? ` · ${tag.item_name}` : ""}</Text>
-          <Text style={styles.meta}>Item No. {tag.sku || "—"}</Text>
-          <Text style={styles.mono}>{tag.epc}</Text>
+          <Text className="text-lg font-semibold text-foreground">{tag.item_type}{tag.item_name ? ` · ${tag.item_name}` : ""}</Text>
+          <Text className="text-[13px] text-muted-foreground">Item No. {tag.sku || "—"}</Text>
+          <Text className="font-mono text-xs text-muted-foreground">{tag.epc}</Text>
         </View>
       ) : (
-        <Text style={styles.hint}>{targetEpc ? "Target tag not registered." : "No target EPC."}</Text>
+        <Text className="text-sm italic text-destructive">{targetEpc ? "Target tag not registered." : "No target EPC."}</Text>
       )}
 
-      <View style={styles.barOuter}>
+      <View className="relative min-h-70 flex-1 justify-end overflow-hidden rounded-xl border border-border bg-muted/40">
         <View style={[styles.barFill, { height: `${percent}%` }]} />
-        <View style={styles.barLabel}>
-          <Text style={styles.percentText}>{percent}%</Text>
+        <View className="absolute inset-0 items-center justify-center">
+          <Text className="text-5xl font-bold text-foreground">{percent}%</Text>
         </View>
       </View>
 
       {percent >= ALERT_THRESHOLD_PERCENT ? (
-        <Text style={styles.locked}>● LOCKED</Text>
+        <Text className="text-center text-lg font-bold text-primary">● LOCKED</Text>
       ) : null}
 
       {__DEV__ ? (
-        <View style={styles.devRow}>
-          <Text style={styles.devLabel}>Dev (simulated transport):</Text>
-          <View style={styles.devBtnRow}>
-            <Pressable style={styles.devBtn} onPress={() => simulate(-75)}><Text style={styles.devBtnText}>25%</Text></Pressable>
-            <Pressable style={styles.devBtn} onPress={() => simulate(-60)}><Text style={styles.devBtnText}>50%</Text></Pressable>
-            <Pressable style={styles.devBtn} onPress={() => simulate(-45)}><Text style={styles.devBtnText}>88%</Text></Pressable>
-            <Pressable style={styles.devBtn} onPress={() => simulate(-40)}><Text style={styles.devBtnText}>100%</Text></Pressable>
-            <Pressable style={[styles.devBtn, styles.devBtnRelease]} onPress={simulateRelease}><Text style={styles.devBtnText}>release</Text></Pressable>
+        <View className="mt-2">
+          <Text className="mb-1 text-xs text-muted-foreground">Dev (simulated transport):</Text>
+          <View className="flex-row flex-wrap gap-2">
+            <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => simulate(-75)}><Text className="text-[13px] font-semibold text-foreground">25%</Text></Pressable>
+            <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => simulate(-60)}><Text className="text-[13px] font-semibold text-foreground">50%</Text></Pressable>
+            <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => simulate(-45)}><Text className="text-[13px] font-semibold text-foreground">88%</Text></Pressable>
+            <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => simulate(-40)}><Text className="text-[13px] font-semibold text-foreground">100%</Text></Pressable>
+            <Button variant="destructive" size="sm" onPress={simulateRelease}><Text>release</Text></Button>
           </View>
         </View>
       ) : null}
@@ -158,22 +161,8 @@ export function FinderScreen(): React.ReactNode {
   );
 }
 
+// The proximity bar fill height is a computed numeric style (percent of signal);
+// keep it as a StyleSheet entry rather than recomputing a className each event.
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, gap: 12 },
-  title: { fontSize: 24, fontWeight: "bold" },
-  boxTitle: { fontSize: 18, fontWeight: "600" },
-  meta: { fontSize: 13, color: "#666" },
-  mono: { fontFamily: "monospace", fontSize: 12, color: "#444" },
-  hint: { color: "#c33", fontStyle: "italic" },
-  barOuter: { flex: 1, minHeight: 280, borderWidth: 1, borderColor: "#ccc", borderRadius: 12, backgroundColor: "#f2f2f2", justifyContent: "flex-end", overflow: "hidden", position: "relative" },
   barFill: { backgroundColor: "#0a7", width: "100%" },
-  barLabel: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" },
-  percentText: { fontSize: 48, fontWeight: "bold", color: "#222" },
-  locked: { color: "#0a7", fontWeight: "bold", fontSize: 18, textAlign: "center" },
-  devRow: { marginTop: 8 },
-  devLabel: { fontSize: 12, color: "#888", marginBottom: 4 },
-  devBtnRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  devBtn: { backgroundColor: "#eee", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6 },
-  devBtnRelease: { backgroundColor: "#c33" },
-  devBtnText: { color: "#333", fontWeight: "600", fontSize: 13 },
 });
