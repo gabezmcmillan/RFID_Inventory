@@ -139,12 +139,13 @@ describe("importer", () => {
     expect(report.tables.find((t) => t.table === "tags")?.imported).toBe(1);
     expect(report.epcSerial).toBe(42);
 
-    // Spot-check the tag round-trips with its id preserved.
+    // Spot-check the tag round-trips with its id preserved (legacy integer id
+    // is stored as text under the plan-010 text-ID schema).
     const target = await openTursoDb(targetPath);
-    const tag = await target.get<{ id: number; epc: string; status: string; remaining: number; bol_doc_id: number | null }>(
+    const tag = await target.get<{ id: string; epc: string; status: string; remaining: number; bol_doc_id: string | null }>(
       sql`SELECT id, epc, status, remaining, bol_doc_id FROM tags WHERE epc=${"42473031" + "000000000000000A"}`,
     );
-    expect(tag?.id).toBe(7);
+    expect(tag?.id).toBe("7");
     expect(tag?.status).toBe("Partial");
     expect(tag?.remaining).toBe(3);
     expect(tag?.bol_doc_id).toBeNull(); // legacy had no bol_doc_id column
@@ -158,10 +159,10 @@ describe("importer", () => {
     expect(req?.order_ref).toBe("ORD-1");
 
     // bol_docs: storage_url present and blank.
-    const doc = await target.get<{ id: number; storage_url: string; pages: number }>(
+    const doc = await target.get<{ id: string; storage_url: string; pages: number }>(
       sql`SELECT id, storage_url, pages FROM bol_docs WHERE id=${3}`,
     );
-    expect(doc?.id).toBe(3);
+    expect(doc?.id).toBe("3");
     expect(doc?.storage_url).toBe("");
     expect(doc?.pages).toBe(2);
 

@@ -25,11 +25,18 @@
 
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-/** `tags` — one RFID box. `epc` is globally unique; `bol_doc_id` is nullable. */
+/**
+ * `tags` — one RFID box. `epc` is globally unique; `bol_doc_id` is nullable.
+ *
+ * `id` and `bol_doc_id` are global text IDs (UUIDv4 strings, plan 010 Phase 2):
+ * field replicas mint rows offline and reconcile via Turso Sync, so an
+ * autoincrement integer keyed to one replica would collide on a second
+ * replica's insert. `bol_doc_id` mirrors `bol_docs.id` (also text).
+ */
 export const tags = sqliteTable(
   "tags",
   {
-    id: integer().primaryKey({ autoIncrement: true }),
+    id: text().primaryKey(),
     epc: text().notNull().unique(),
     item_type: text().notNull(),
     item_name: text().notNull().default(""),
@@ -50,7 +57,7 @@ export const tags = sqliteTable(
     flagged_at: text().notNull().default(""),
     created_at: text().notNull(),
     updated_at: text().notNull(),
-    bol_doc_id: integer(),
+    bol_doc_id: text(),
   },
   (t) => [
     index("idx_tags_group").on(t.item_type, t.bol_number, t.building),
@@ -58,11 +65,14 @@ export const tags = sqliteTable(
   ],
 );
 
-/** `events` — append-only audit log; every column after `action` is nullable. */
+/**
+ * `events` — append-only audit log; every column after `action` is nullable.
+ * `id` is a global text ID (UUIDv4) so replicas never collide on the audit log.
+ */
 export const events = sqliteTable(
   "events",
   {
-    id: integer().primaryKey({ autoIncrement: true }),
+    id: text().primaryKey(),
     ts: text().notNull(),
     action: text().notNull(),
     epc: text(),
@@ -83,10 +93,11 @@ export const vendors = sqliteTable("vendors", {
 /**
  * `bol_docs` — a scanned/uploaded bill-of-lading document. `line_items` is a
  * JSON-encoded `BolLineItem[]`; `auto_named` is 0/1 (kept as an integer to
- * preserve the DDL); `storage_url` is the blob-storage location.
+ * preserve the DDL); `storage_url` is the blob-storage location. `id` is a
+ * global text ID (UUIDv4) so replicas never collide on document inserts.
  */
 export const bolDocs = sqliteTable("bol_docs", {
-  id: integer().primaryKey({ autoIncrement: true }),
+  id: text().primaryKey(),
   bol_number: text().notNull(),
   filename: text().notNull(),
   source: text().notNull().default("scan"),
@@ -100,11 +111,14 @@ export const bolDocs = sqliteTable("bol_docs", {
   storage_url: text().notNull().default(""),
 });
 
-/** `notes` — timestamped free-text notes attached to a shipment group. */
+/**
+ * `notes` — timestamped free-text notes attached to a shipment group. `id` is a
+ * global text ID (UUIDv4) so replicas never collide on note inserts.
+ */
 export const notes = sqliteTable(
   "notes",
   {
-    id: integer().primaryKey({ autoIncrement: true }),
+    id: text().primaryKey(),
     ts: text().notNull(),
     item_type: text().notNull(),
     bol_number: text().notNull().default(""),

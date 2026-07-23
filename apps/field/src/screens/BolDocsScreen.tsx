@@ -30,7 +30,7 @@ import { PinPrompt } from "./adminPin";
 export function BolDocsScreen(): React.ReactNode {
   const db = useDb();
   const params = useLocalSearchParams<{ docId?: string }>();
-  const docId = params.docId ? Number(params.docId) : NaN;
+  const docId = params.docId ?? "";
 
   const [docs, setDocs] = useState<BolDocWithBoxes[]>([]);
   const [selected, setSelected] = useState<BolDoc | null>(null);
@@ -39,7 +39,7 @@ export function BolDocsScreen(): React.ReactNode {
     setDocs(await listBolDocs(db, 0));
   };
 
-  const refreshDetail = async (id: number): Promise<void> => {
+  const refreshDetail = async (id: string): Promise<void> => {
     setSelected(await getBolDoc(db, id));
   };
 
@@ -48,7 +48,7 @@ export function BolDocsScreen(): React.ReactNode {
   }, [db]);
 
   useEffect(() => {
-    if (Number.isFinite(docId)) {
+    if (docId) {
       void refreshDetail(docId);
     } else {
       setSelected(null);

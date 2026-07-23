@@ -67,13 +67,14 @@ export type CheckInPrintedResult =
 export const NO_SHIPMENT_ARMED = "No shipment armed for check-in.";
 
 /**
- * Coerce a `bol_doc_id` field value to a positive int, or `null` (intake.py
- * `_as_doc_id`). Blank/invalid/non-positive input maps to `null`.
+ * Coerce a `bol_doc_id` field value to a non-empty string, or `null`. The id is
+ * a global text ID (UUIDv4) since plan 010 Phase 2; blank/invalid input maps to
+ * `null` so the tag is filed without a linked document.
  */
-function asDocId(value: unknown): number | null {
+function asDocId(value: unknown): string | null {
   if (value === null || value === undefined) return null;
-  const n = Number.parseInt(String(value).trim(), 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  const s = String(value).trim();
+  return s.length > 0 ? s : null;
 }
 
 /** Format a Date as `MM/DD/YYYY` (intake.py `now.strftime("%m/%d/%Y")`). */

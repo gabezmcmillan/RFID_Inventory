@@ -3,10 +3,11 @@
  * (db.py:1117-1151).
  */
 
-import { and, desc, inArray, like } from "drizzle-orm";
+import { and, desc, inArray, like, sql } from "drizzle-orm";
 
 import { EVENT_FILTERS } from "../constants";
 import type { DomainDb } from "../db";
+import { newId } from "../id";
 import { events } from "../schema";
 import type { EventRow } from "../types";
 import { now } from "./util";
@@ -23,6 +24,7 @@ export async function logEvent(
   detail = "",
 ): Promise<void> {
   await db.insert(events).values({
+    id: newId(),
     ts: now(),
     action,
     epc,
@@ -69,7 +71,9 @@ export async function listEvents(
     })
     .from(events)
     .where(where)
-    .orderBy(desc(events.id))
+    // Newest-first by timestamp, then by the implicit monotonic `rowid` as a
+    // tiebreaker for same-second inserts (the text UUID id is not monotonic).
+    .orderBy(desc(events.ts), desc(sql`rowid`))
     .limit(cap);
 
   return rows.map((r) => ({

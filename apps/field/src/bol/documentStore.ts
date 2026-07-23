@@ -236,7 +236,7 @@ export async function captureBolDocument(db: DomainDb, deps: CaptureDeps): Promi
  * scan docs (filename `…_p1.jpg`) support add-page; returns `null` otherwise
  * or if the operator canceled.
  */
-export async function addPageToBolDocument(db: DomainDb, docId: number, deps: CaptureDeps): Promise<BolDoc | null> {
+export async function addPageToBolDocument(db: DomainDb, docId: string, deps: CaptureDeps): Promise<BolDoc | null> {
   const doc = await getBolDoc(db, docId);
   if (!doc) return null;
   const base = scanBaseFromFilename(doc.filename);

@@ -9,6 +9,7 @@ import { desc, eq, sql } from "drizzle-orm";
 
 import type { DomainDb } from "../db";
 import { withTransaction } from "../db";
+import { newId } from "../id";
 import { bolDocs, tags } from "../schema";
 import type {
   BolDoc,
@@ -67,9 +68,11 @@ export async function createBolDoc(
   lineItems: BolLineItem[] | null = null,
 ): Promise<BolDoc> {
   const ts = now();
+  const id = newId();
   const inserted = await db
     .insert(bolDocs)
     .values({
+      id,
       bol_number: bolNumber,
       filename,
       source,
@@ -94,7 +97,7 @@ export async function createBolDoc(
 }
 
 /** Fetch one BOL doc, or null (db.py:534-538). */
-export async function getBolDoc(db: DomainDb, docId: number): Promise<BolDoc | null> {
+export async function getBolDoc(db: DomainDb, docId: string): Promise<BolDoc | null> {
   const rows = await db.select().from(bolDocs).where(eq(bolDocs.id, docId));
   return rows[0] ? bolDocDict(rows[0]) : null;
 }
@@ -119,13 +122,15 @@ export async function listBolDocs(db: DomainDb, limit = 15): Promise<BolDocWithB
       boxes,
     })
     .from(bolDocs)
-    .orderBy(desc(bolDocs.id))
+    // Newest-first by created time, then by the implicit monotonic `rowid` as a
+    // tiebreaker (the text UUID id is not monotonic).
+    .orderBy(desc(bolDocs.created_at), desc(sql`rowid`))
     .limit(limit ?? 0);
   return rows.map((r) => ({ ...bolDocDict(r), boxes: r.boxes }));
 }
 
 /** Admin: delete a BOL document row; boxes keep their BOL number (db.py:562-594). */
-export async function deleteBolDoc(db: DomainDb, docId: number): Promise<DeleteBolDocResult> {
+export async function deleteBolDoc(db: DomainDb, docId: string): Promise<DeleteBolDocResult> {
   const rows = await db.select().from(bolDocs).where(eq(bolDocs.id, docId));
   const row = rows[0];
   if (!row) return { ok: false, message: `BOL document ${docId} not found.`, unlinked: 0, id: docId };
@@ -160,7 +165,7 @@ export async function deleteBolDoc(db: DomainDb, docId: number): Promise<DeleteB
 /** Set a document's BOL number; tags filed under it follow (db.py:596-623). */
 export async function renameBolDoc(
   db: DomainDb,
-  docId: number,
+  docId: string,
   newNumber: string,
 ): Promise<RenameBolDocResult> {
   const clean = (newNumber ?? "").toString().trim();
@@ -200,7 +205,7 @@ export async function renameBolDoc(
 }
 
 /** Update the stored page count after an Add-page rescan (db.py:625-630). */
-export async function setBolDocPages(db: DomainDb, docId: number, pages: number): Promise<void> {
+export async function setBolDocPages(db: DomainDb, docId: string, pages: number): Promise<void> {
   await db.update(bolDocs).set({ pages }).where(eq(bolDocs.id, docId));
 }
 
@@ -213,7 +218,7 @@ export async function setBolDocPages(db: DomainDb, docId: number, pages: number)
  */
 export async function applyBolExtraction(
   db: DomainDb,
-  docId: number,
+  docId: string,
   bolNumber = "",
   vendor = "",
   poNumber = "",

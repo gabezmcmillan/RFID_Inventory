@@ -22,7 +22,7 @@ export interface Tag {
   item_name: string;
   bol_number: string;
   po_number: string;
-  bol_doc_id: number | null;
+  bol_doc_id: string | null;
   building: string;
   sector: string;
   vendor: string;
@@ -41,7 +41,7 @@ export interface Tag {
 // -- events ------------------------------------------------------------------
 /** Public event row (Python `list_events` coalesces nullable columns to ""). */
 export interface EventRow {
-  id: number;
+  id: string;
   ts: string;
   action: string;
   epc: string;
@@ -62,7 +62,7 @@ export interface BolLineItem {
 
 /** Public BOL doc dict (Python `_bol_doc_dict`) plus the new `storage_url`. */
 export interface BolDoc {
-  id: number;
+  id: string;
   bol_number: string;
   filename: string;
   source: string;
@@ -104,7 +104,7 @@ export interface ReceiveShipmentResult {
   item_name: string;
   bol_number: string;
   po_number: string;
-  bol_doc_id: number | null;
+  bol_doc_id: string | null;
   building: string;
   sector: string;
   vendor: string;
@@ -184,7 +184,7 @@ export interface InventoryGroup {
   boxes: number;
   flagged: number;
   received_at: string;
-  bol_doc_id: number | null;
+  bol_doc_id: string | null;
   note_count: number;
   qty: number;
   total: number;
@@ -261,7 +261,7 @@ export interface DeleteBolDocResult {
   unlinked: number;
   /** Filename the caller should delete from storage (no os.remove here). */
   filename?: string;
-  id: number;
+  id: string;
 }
 
 export interface RenameBolDocResult {

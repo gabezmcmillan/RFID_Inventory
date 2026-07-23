@@ -17,6 +17,9 @@ export { applyMigrations } from "./applyMigrations";
 export { MIGRATIONS } from "./migrations";
 export type { MigrationEntry } from "./migrations";
 
+// RN-safe global text-ID helper (UUIDv4) for collision-free field-created rows
+export { newId } from "./id";
+
 // Schema (source of truth) — tables + the schema bundle
 export {
   bolDocs,

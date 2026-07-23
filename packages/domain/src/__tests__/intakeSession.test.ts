@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { IntakeSession, listEvents, NO_SHIPMENT_ARMED, receiveShipment, type PrintDeps } from "../index";
+import { IntakeSession, createBolDoc, listEvents, NO_SHIPMENT_ARMED, receiveShipment, type PrintDeps } from "../index";
 import type { ItemFields } from "../index";
 import { openTestDb } from "../testing/openTestDb";
 
@@ -69,16 +69,17 @@ describe("IntakeSession", () => {
     expect(res.tag?.bol_number).toBe("BOL1"); // unchanged
   });
 
-  test("bol_doc_id is coerced to a positive int or null", async () => {
+  test("bol_doc_id is stored as a text id or null", async () => {
     const db = await openTestDb();
+    const doc = await createBolDoc(db, "B1", "b1.pdf");
     const session = new IntakeSession();
-    session.arm("TSC", { building_number: "6", bol_number: "B1", bol_doc_id: "12" });
+    session.arm("TSC", { building_number: "6", bol_number: "B1", bol_doc_id: doc.id });
     const res = await session.checkInScanned(db, "DDDD" + "0".repeat(20));
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.bol_doc_id).toBe(12);
+    expect(res.bol_doc_id).toBe(doc.id);
 
-    session.arm("TSC", { building_number: "6", bol_number: "B2", bol_doc_id: "not-a-number" });
+    session.arm("TSC", { building_number: "6", bol_number: "B2", bol_doc_id: "" });
     const res2 = await session.checkInScanned(db, "EEEE" + "0".repeat(20));
     expect(res2.ok).toBe(true);
     if (!res2.ok) return;

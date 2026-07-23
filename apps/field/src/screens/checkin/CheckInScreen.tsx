@@ -97,7 +97,7 @@ export function CheckInScreen(): React.ReactNode {
   const [printing, setPrinting] = useState(false);
 
   // BOL document step (plan 007).
-  const [bolDocId, setBolDocId] = useState<number | null>(null);
+  const [bolDocId, setBolDocId] = useState<string | null>(null);
   const [bolDocFilename, setBolDocFilename] = useState("");
   const [lineItems, setLineItems] = useState<BolLineItem[]>([]);
   const [recentDocs, setRecentDocs] = useState<BolDoc[]>([]);

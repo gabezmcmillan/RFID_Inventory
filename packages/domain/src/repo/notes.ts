@@ -6,10 +6,11 @@
  * recorded with a blank value.
  */
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
 import type { DomainDb } from "../db";
 import { withTransaction } from "../db";
+import { newId } from "../id";
 import { notes } from "../schema";
 import type { AddNoteResult, DeleteNoteResult, Note } from "../types";
 import { logEvent } from "./events";
@@ -31,13 +32,13 @@ export async function addNote(
   const cleanBuilding = (building ?? "").toString().trim();
   const ts = now();
 
-  let noteId = 0;
+  let noteId = "";
   await withTransaction(db, async () => {
     const inserted = await db
       .insert(notes)
-      .values({ ts, item_type: cleanType, bol_number: cleanBol, building: cleanBuilding, text: cleanText })
+      .values({ id: newId(), ts, item_type: cleanType, bol_number: cleanBol, building: cleanBuilding, text: cleanText })
       .returning({ id: notes.id });
-    noteId = inserted[0]?.id ?? 0;
+    noteId = inserted[0]?.id ?? "";
     const detail = cleanText.length <= 200 ? cleanText : cleanText.slice(0, 197) + "...";
     await logEvent(db, "NOTE", "", cleanType, cleanBol, cleanBuilding, "", detail);
   });
@@ -56,11 +57,17 @@ export async function listNotes(
   const conds = [eq(notes.item_type, itemType)];
   if (bolNumber !== undefined && bolNumber !== null) conds.push(eq(notes.bol_number, bolNumber));
   if (building !== undefined && building !== null) conds.push(eq(notes.building, building));
-  return db.select().from(notes).where(and(...conds)).orderBy(asc(notes.id));
+  return db
+    .select()
+    .from(notes)
+    .where(and(...conds))
+    // Oldest-first by timestamp, then by the implicit monotonic `rowid` as a
+    // tiebreaker (the text UUID id is not monotonic).
+    .orderBy(asc(notes.ts), asc(sql`rowid`));
 }
 
 /** Admin: remove a note and log a `NOTE_DEL` event (db.py:731-742). */
-export async function deleteNote(db: DomainDb, noteId: number): Promise<DeleteNoteResult> {
+export async function deleteNote(db: DomainDb, noteId: string): Promise<DeleteNoteResult> {
   const rows = await db.select().from(notes).where(eq(notes.id, noteId));
   const row = rows[0];
   if (!row) return { ok: false, message: `Note ${noteId} not found.` };

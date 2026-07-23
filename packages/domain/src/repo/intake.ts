@@ -14,6 +14,7 @@ import {
 } from "../constants";
 import type { DomainDb } from "../db";
 import { withTransaction } from "../db";
+import { newId } from "../id";
 import { tags } from "../schema";
 import type { AmendCheckinResult, ReceiveShipmentResult, Tag, TagRow } from "../types";
 import { logEvent } from "./events";
@@ -91,7 +92,7 @@ export async function receiveShipment(
   bolNumber: string,
   vendor: string,
   itemFields: ItemFields = {},
-  bolDocId: number | null = null,
+  bolDocId: string | null = null,
   poNumber = "",
   sector = "",
 ): Promise<ReceiveShipmentResult> {
@@ -120,6 +121,7 @@ export async function receiveShipment(
         continue;
       }
       await db.insert(tags).values({
+        id: newId(),
         epc,
         item_type: itemType,
         item_name: itemName,

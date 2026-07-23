@@ -169,7 +169,7 @@ interface TreeRow {
   boxes: number;
   flagged: number | null;
   first_received: string | null;
-  doc_id: number | null;
+  doc_id: string | null;
 }
 
 interface NoteCountRow {
