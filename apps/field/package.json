@@ -7,6 +7,7 @@
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-ml-kit/text-recognition": "^2.0.0",
     "@rfid/domain": "workspace:*",
+    "@rfid/device-link-protocol": "workspace:*",
     "@rfid/reader-protocol": "workspace:*",
     "@rn-primitives/accordion": "^1.5.2",
     "@rn-primitives/alert-dialog": "^1.5.2",
@@ -64,15 +65,17 @@
     "@types/react": "~19.2.2",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^3.4.19",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^2.0.0"
   },
   "scripts": {
     "start": "expo start",
-    "dev": "expo run:ios --device",
+    "dev": "expo start --dev-client",
+    "ios:device": "expo run:ios --device",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"no tests yet\" && exit 0"
+    "test": "vitest run"
   }
 }
