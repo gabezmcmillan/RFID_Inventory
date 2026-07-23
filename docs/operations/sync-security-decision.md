@@ -180,3 +180,66 @@ SPIKE_TTL="1m" \
   node scripts/turso/spike-credentials.mjs
 # exits 0 on full pass; destroys the disposable DB
 ```
+
+## Phase 2 outcomes — collision-safe IDs, local-only device state, credential control
+
+Phase 2 is implemented and its verify gate is green (evidence below). No
+physical-device acceptance was performed (operator-owned, Phase 6).
+
+### What landed (commits `e3c63e9`, `b2f083f`, `61ff1fb`)
+
+- **Collision-safe global text IDs.** Field-created integer PKs are now a
+  RN-safe UUIDv4 helper (`packages/domain/src/id.ts`, `newId`): `tags.id`,
+  `events.id`, `bol_docs.id`, `notes.id`, and `tags.bol_doc_id`. `requests.id`
+  stays integer (web is its sole inserter). A forward migration rebuilds the
+  four tables with text PKs and preserves existing rows (legacy integer id →
+  text). `listEvents`/`listNotes`/`listBolDocs` now order by timestamp + the
+  implicit monotonic `rowid` (UUID ids are not monotonic).
+- **Local-only device state.** `device_id` and `epc_serial` moved out of the
+  synced domain DB into a tiny separate local-only Turso RN database
+  (`apps/field/src/db/deviceDb.ts`, `device.db`, no sync URL). Serials are
+  reserved atomically (`BEGIN IMMEDIATE` + `UPDATE … + n`); a crash after
+  reservation wastes serials but never reuses them. `allocateEpcs` takes an
+  injected `EpcSerialAllocator`; `IntakeSession` takes it at construction.
+- **Credential control.** `field_devices` + `auth_meta` tables live in the
+  SEPARATE auth DB (Kysely over the shared libSQL dialect), never the synced
+  warehouse DB. A monotonic, never-reused 2-hex EPC device byte is assigned per
+  link. Endpoints `POST /api/device/register`, `/credential`, `/unlink` require
+  the Better Auth bearer + the `FIELD_OPERATOR_ALLOWLIST` + an active device; a
+  lost device is revoked via the `revokeDeviceAction` server action or the
+  `scripts/ops/revoke-device.mjs` CLI. No role platform was added; revoked EPC
+  bytes are never reused.
+
+### Verify gate (all exit 0)
+
+- `pnpm --filter @rfid/domain test` → **95 passed** (UUID uniqueness, two-replica
+  non-colliding inserts, text `bol_doc_id` linkage, migration row preservation,
+  atomic serial reservation, crash-skip-never-reuse, two-device non-collision).
+- `pnpm --filter @rfid/web test` → **28 passed** (allowlist denial, EPC byte
+  allocation/exhaustion, mint request building, repo unlink/revoke/never-reuse +
+  separate auth schema, endpoint gating incl. refresh denial after
+  unlink/revoke, mint-not-configured 503).
+- `pnpm --filter @rfid/field test` → exit 0 (still the placeholder echo; field
+  has no RN test runner — runtime behavior is Phase 6 physical acceptance).
+- `pnpm -r typecheck` → all packages Done.
+
+### Notes / judgment calls
+
+- **QR replay:** the one-time token is single-use by Better Auth's
+  `oneTimeToken` plugin (deleted on verify); the register endpoint additionally
+  requires a valid bearer, so a replayed/invalid bearer is rejected with 401. A
+  full end-to-end OTT-replay integration test against a live Better Auth instance
+  was not added because the web is SSO-only (no test user creation without
+  Entra); the single-use property is enforced by the plugin and asserted at the
+  bearer gate.
+- **`revokeSession` by id:** Better Auth's `revokeSession` API takes the session
+  *token* (which we deliberately do not store). Unlink/revoke instead delete the
+  `session` row by id directly (the bearer then dies immediately); the CLI uses
+  the same raw-SQL approach.
+- **Turso mint targets:** the Platform API identifies a DB by org + database
+  *name* (not the libSQL hostname, which doesn't split cleanly), so `TURSO_ORG`
+  + `TURSO_DB_NAME` are explicit server-only env vars (operator to set in
+  Phase 4).
+- **`FIELD_OPERATOR_ALLOWLIST`** still holds the documented placeholder (the
+  production auth `user` table was empty at Phase 1); operator to set the real
+  operator email(s) in Phase 4.
