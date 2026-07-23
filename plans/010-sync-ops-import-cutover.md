@@ -1,227 +1,400 @@
-# Plan 010: Turso sync wiring, ops (EAS/Sentry/updates), data import + cutover
+# Plan 010: Launch secure field sync and production apps
 
-> **Executor instructions**: Follow this plan step by step. Run every
-> verification command and confirm the expected result before moving to the
-> next step. If anything in the "STOP conditions" section occurs, stop and
-> report — do not improvise. Several steps here need operator-held
-> credentials (Turso account, Apple developer account, Entra tenant, the
-> production `inventory.db`); the plan marks them — implement everything
-> around them and report what remains. When done, update the status row in
-> `plans/README.md`.
+> **Executor instructions**: Follow the phases in order. Run each verification
+> before continuing. If a STOP condition occurs, stop and report; do not expand
+> this plan around the failure.
 >
-> **Drift check (run first)**: `git diff --stat 79443fb..HEAD -- apps/field apps/web packages/domain plans`
-> Plans 001–009 must be DONE in `plans/README.md` before starting; if not,
-> STOP.
+> **Drift check (run first)**:
+> `git diff --stat d73717b..HEAD -- apps/field apps/web packages/domain scripts docs .github package.json pnpm-lock.yaml`
+> Re-read the current-state locations below if any source path changed.
+>
+> **Fixed launch decisions**:
+> - Production starts from the existing, migrated, empty Turso warehouse
+>   database. There is no legacy data to import, reconcile, or dual-write.
+> - Reuse the existing `rfid-inventory-web` Vercel project and its separate
+>   Production/Preview warehouse and auth databases. Do not create replacements
+>   or convert their direct encrypted env vars to Marketplace resources.
+> - A static broad Turso token in the Expo app is prohibited.
 
 ## Status
 
 - **Priority**: P1
-- **Effort**: M (code) + operator time (accounts, hardware validation)
-- **Risk**: HIGH (production data migration and go-live)
-- **Depends on**: plans 001–009 (all)
-- **Category**: migration
-- **Planned at**: commit `79443fb`, 2026-07-22
+- **Effort if the direct credential gate passes**: M — 7–12 engineering days
+  plus one warehouse acceptance day
+- **If the gate fails**: STOP and write a separate server-mediated-sync plan;
+  this plan has no fallback implementation estimate
+- **External elapsed time**: Apple signing/TestFlight review and TSL MFi/App
+  Store approval can add days or weeks; that is not engineering effort
+- **Risk**: HIGH at the credential and two-replica gates; MED after both pass
+- **Depends on**:
+  - Plan 009 web/auth behavior complete enough for production linking
+  - Plan 011 physical-iPhone Tailscale check only for local phone-to-Mac testing;
+    production never uses Tailscale
+- **Category**: security, migration, tests, operations
+- **Planned at**: commit `d73717b`, 2026-07-23
+- **Status**: TODO
 
 ## Why this matters
 
-Everything so far runs against local database files. This plan connects the
-pieces: the field app syncs its local database to Turso Cloud (replacing the
-entire custom sync layer — `apps/warehouse/sync.py`, `packages/contract`,
-and the mirror logic in `apps/cloud/db.py`), BOL images upload to blob
-storage, the apps get release/observability plumbing, and production data
-moves over in a rehearsed, reversible cutover.
+The replacement apps exist, but the field database is local-only, `syncNow` is
+a no-op, mobile/web test scripts are placeholders, and there is no EAS/Sentry
+production setup. The shortest safe launch path is to prove short-lived mobile
+credentials, remove replica ID collisions, add a small sync coordinator, verify
+the infrastructure already provisioned, and test one real warehouse workflow.
 
 ## Current state
 
-- Field app opens its DB **local-only** (`apps/field/src/db/provider.tsx`,
-  plan 004). `@tursodatabase/sync-react-native` supports adding
-  `url` + `authToken` to `connect()` for bidirectional sync with explicit
-  `push()` / `pull()`; offline writes queue in the local file.
-- Web app reads env `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`
-  (`apps/web/src/lib/db.ts`, plan 009).
-- Importer CLI exists (`packages/domain/src/importer/cli.ts`, plan 002).
-- The Python system is live: warehouse exe syncing to
-  `apps/cloud/` on Vercel every 30 s (`apps/warehouse/sync.py:10-28`).
-- Request handling in the field app calls a no-op "sync now" hook
-  (plan 008); plan 005's QR URLs use the settings `cloud_base_url`.
-- BOL docs carry `storage_url` (empty so far).
+These facts were verified at `d73717b`.
 
-Sync-cadence spec being replaced (`apps/warehouse/sync.py`): every 30 s,
-back off to max 300 s on failure, manual "sync now", offline is routine and
-must never block local work. Reproduce the *cadence*, not the protocol.
+- `apps/web/README.md:23-34` says Production and Preview already have separate
+  warehouse/auth Turso databases; only Development uses Marketplace-managed
+  `rfid-warehouse-dev`/`rfid-auth-dev`. Lines 67-72 name linked project
+  `rfid-inventory-web` under team `brasfieldgorrie`.
+- Commit `9d5dbe9` and `scripts/setup-dev-vercel.sh:1-15,93-100` confirm the
+  Marketplace script is Development-only and reuses resources.
+- Phase 1 verifies the deployment contract: `main` → Production,
+  `rewrite/expo` → Preview; each target has direct encrypted warehouse/auth env
+  pairs, different hosts, current migration journals, and empty Production
+  business tables. Secret values are correctly absent from Git.
+- `apps/field/src/db/provider.tsx:37-45` opens only
+  `new Database({ path: getDbPath("inventory.db") })`, applies local migrations,
+  and stores `device_id` in the domain database.
+- `apps/field/src/sync/syncNow.ts:7-13` is a no-op. Installed
+  `@tursodatabase/sync-react-native@0.7.1` accepts
+  `url`, `authToken: string | (() => Promise<string>)`, and
+  `bootstrapIfEmpty` (`node_modules/.../src/types.ts:279-316`); its `Database`
+  exposes `push()`, `pull()`, `stats()`, and `checkpoint()`.
+- `apps/field/src/auth/credential.ts:210-256` already exchanges the Better Auth
+  QR token and stores its bearer in Secure Store; lines 281-286 unlink only
+  locally. `apps/web/src/lib/auth.ts` keeps Better Auth separate and enables
+  `oneTimeToken`/`bearer`.
+- `packages/domain/src/schema.ts:28-75,88-114` gives field-created tags, events,
+  BOL docs, and notes auto-increment integer IDs. Two offline replicas can
+  collide; lines 140-147 put device ID/EPC serial in synced `local_meta`.
+  Requests may keep integer IDs because only web inserts them. Turso Sync is
+  explicit push/pull and last-push-wins for concurrent same-row edits.
+- `apps/web/src/app/tag/[epc]/page.tsx:17-20,59-62` already promises a public
+  BOL link when `storage_url` exists, requiring a minimal upload path.
+- `apps/field/app.json` has the TSL External Accessory protocol and camera
+  permission but no EAS project/runtime config or `eas.json`. Field/web tests
+  are placeholders; no Sentry setup or tracked CI exists.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Typecheck/tests | `pnpm -r typecheck && pnpm -r test` | exit 0 |
-| Turso CLI (operator) | `turso db create rfid-inventory && turso db show rfid-inventory --url && turso db tokens create rfid-inventory` | url + token |
-| Import (operator, rehearsal) | `pnpm --filter @rfid/domain exec tsx src/importer/cli.ts --from <copy-of-inventory.db> --to <local.db>` | counts match |
-| Web deploy (operator) | `vercel deploy` from `apps/web` | build passes |
-| Field build (operator) | `eas build -p ios --profile production` | build succeeds |
+Run from the repository root. Never print or commit secret values.
+
+| Purpose | Command | Expected |
+|---|---|---|
+| Baseline | `git status --short && pnpm -r typecheck && pnpm test` | only intended plan changes; exit 0 |
+| Vercel project | `vercel project inspect rfid-inventory-web` | correct team/project; Production branch `main` |
+| Env names | `vercel env ls production && vercel env ls preview` | required names present at the correct targets; values hidden |
+| Domain migration | `TURSO_DATABASE_URL="<url>" TURSO_AUTH_TOKEN="<token>" pnpm --filter @rfid/domain exec drizzle-kit migrate --config drizzle.dev.config.ts` | exit 0; no pending warehouse migration |
+| Auth migration | `BETTER_AUTH_SECRET="<shell-only>" AUTH_DATABASE_URL="<url>" AUTH_DATABASE_AUTH_TOKEN="<token>" pnpm --filter @rfid/web auth:migrate` | exit 0; auth DB only |
+| App checks | `pnpm -r typecheck && pnpm test && pnpm --filter @rfid/web lint && pnpm --filter @rfid/web build` | exit 0; no placeholder tests |
+| Field config | `pnpm --filter @rfid/field exec expo config --type introspect` | expected iOS plugins/protocols/permissions |
+| Field export | `pnpm --filter @rfid/field exec expo export --platform ios --output-dir /tmp/rfid-field-export` | exit 0 |
+| TestFlight | `pnpm --filter @rfid/field exec eas build --platform ios --profile production --auto-submit` | signed build reaches TestFlight |
+| Final diff | `git diff --check && git status --short` | exit 0; only intended files |
+
+## Suggested executor toolkit
+
+- Use `better-auth-best-practices` for the credential/unlink endpoints.
+- Use `vercel-react-best-practices` for web/React changes.
+- Official docs: [Turso Sync](https://docs.turso.tech/sync/usage),
+  [permissions](https://docs.turso.tech/sdk/authorization/fine-grained-permissions),
+  [token API](https://docs.turso.tech/api-reference/databases/create-token),
+  [Platform scopes](https://docs.turso.tech/api-reference/authentication),
+  [Expo runtime](https://docs.expo.dev/eas-update/runtime-versions), and
+  [Sentry Expo](https://docs.sentry.io/platforms/react-native/guides/expo/) /
+  [Next](https://docs.sentry.io/platforms/javascript/guides/nextjs/).
 
 ## Scope
 
 **In scope**:
-- `apps/field/src/sync/**` (sync service), db provider changes, settings
-  (sync URL/token via `expo-secure-store`), device-id first-run screen
-- `apps/field` ops config: `eas.json`, Sentry (`@sentry/react-native`),
-  `expo-updates`
-- `apps/web`: `/api/bol-upload` route (blob storage) + Sentry
-- `packages/domain`: no new table — `bol_docs.storage_url` (empty vs set)
-  is the upload-state marker; add a `pendingBolUploads(db)` query only
-- `plans/CUTOVER.md` (the runbook — this plan writes it)
+
+- `packages/domain/**`: globally unique field-created IDs and migrations/tests
+- `apps/field/**`: local device metadata, credential refresh, sync coordinator,
+  status UI, BOL upload queue, Sentry, EAS, focused tests
+- `apps/web/**`: minimal field-device credential/revoke API, allowlist, Blob
+  upload token route, generic health errors, Sentry, focused tests
+- `scripts/**` and `.github/workflows/ci.yml`: one DB check and one basic CI
+- `docs/operations/{production-launch,warehouse-acceptance}.md`: two concise
+  launch/rollback and one-day hardware checklists
+- final post-launch mechanical archive paths in Phase 7
 
 **Out of scope**:
-- Deleting `apps/warehouse/`, `apps/cloud/`, `packages/contract/` — that
-  happens in a follow-up commit **after** the runbook's success criteria
-  hold for two weeks. This plan only writes the runbook step for it.
-- Android.
+
+- Creating/replacing Production or Preview Turso databases or changing their
+  direct encrypted env ownership to Marketplace management
+- Importers, legacy data migration, row reconciliation, or dual-write
+- Broad RBAC/admin UI, generalized operation ledgers/conflict platforms,
+  custom JWT crypto, or implementing server-mediated sync in this plan
+- Extensive telemetry/evidence/drills or Mistral fallback
+- Required Preview/Staging EAS profiles, multiple OTA channels, or Android;
+  archiving Python before successful launch observation
 
 ## Git workflow
 
-- Branch: `advisor/010-sync-ops-cutover`
-- Commit per step; do NOT push or open a PR unless the operator instructed it.
+- Work from `rewrite/expo`; preserve unrelated changes.
+- Use one reviewable commit per phase: `test(sync): prove short-lived Turso
+  credentials`; `feat(sync): make field replicas collision-safe`;
+  `feat(field): wire authenticated local-first sync`; `feat(ops): add production
+  essentials`; `feat(field): configure TestFlight release`; `docs(ops): record
+  warehouse launch acceptance`; then the post-launch-only
+  `chore(legacy): archive Python reference apps`.
+- Do not commit secrets. Do not push/open/merge a PR without operator direction.
 
-## Steps
+## Phases
 
-### Step 1: Sync service in the field app
+### Phase 1: Verify existing resources and prove mobile credentials (1–2 days)
 
-`apps/field/src/sync/syncService.ts`:
+1. Run the drift/baseline commands.
+2. Run Vercel project/env-name checks. Confirm `main` is Production,
+   `rewrite/expo` has a Preview deployment, all four DB env names exist in each
+   target, warehouse/auth hosts differ, and Development alone is Marketplace-
+   managed. Reuse everything; do not provision or convert resources.
+3. With securely supplied Production/Preview credentials, list table names and
+   migration journals through the existing app drivers. Confirm warehouse/auth
+   schemas are current and separate. Confirm Production business tables
+   (`tags`, `events`, `vendors`, `bol_docs`, `notes`, `requests`) are empty.
+4. On the existing Preview warehouse, using uniquely prefixed synthetic rows
+   removed afterward by server-side Preview credentials, time-box a spike:
+   - Vercel server holds a group-scoped Platform API token with only
+     `db:mint-token`;
+   - mint a warehouse-scoped token expiring in 5–15 minutes;
+   - request only `all:data_read`, field-required add/update actions, no
+     `data_delete`, no schema actions, and no auth DB access;
+   - prove denied request insertion/schema mutation/other-database access;
+   - prove the installed RN async `authToken` callback refreshes without
+     reopening the database;
+   - prove an empty replica bootstraps the server schema without mobile schema
+     permission.
+5. Record the sanitized outcome and exact accepted permissions/TTL in the
+   security section of `docs/operations/production-launch.md`.
 
-- DB provider change: when settings contain `tursoUrl` + `tursoToken`,
-  `connect({path, url, authToken})`; otherwise local-only as today. First
-  connect with empty local file bootstraps from remote; keep
-  `bootstrapIfEmpty: false` semantics so the app still opens with no
-  network.
-- `syncNow()`: `push()` then `pull()`, serialized (never concurrent),
-  results recorded as `{lastSyncAt, lastError, online}` in a status store
-  surfaced by the home-screen pill (mirrors the PC app's sync pill,
-  `sync.py:85-90`).
-- Cadence: run after every domain write (hook the repos' completion in the
-  provider — a simple `onWrite` callback), on a 30 s foreground interval, on
-  reconnect (`@react-native-community/netinfo`), and on app foreground.
-  Failure backoff doubling to 300 s max (sync.py:122-123). Offline: writes
-  proceed locally; the pill shows "N changes pending" is NOT reproducible
-  (no watermark concept) — show "offline, will sync" instead.
-- Replace plan 008's no-op sync-now hook with `syncNow`.
-- First-run screen: if `local_meta.device_id` is `"01"`-default and
-  `tursoUrl` is set, require the operator to pick a device id (01–FF,
-  uniqueness is an operator responsibility documented on the screen) before
-  minting any EPCs.
+**Verify**: dedicated spike test exits 0 and the runbook says
+`DIRECT_SYNC_PASS`. If the current Platform API cannot mint/enforce the required
+fine-grained token, write `DIRECT_SYNC_UNSUPPORTED`, STOP, and request a separate
+server-mediated-sync plan. Do not ship a full-access/static mobile token.
 
-**Verify**: `pnpm -r typecheck` → exit 0; vitest for the backoff calculator
-and the pendingBolUploads query; with two local simulator installs pointed
-at one operator-provided Turso DB (operator step): check-in on device A
-appears in device B's warehouse after both sync.
+### Phase 2: Make IDs and device linking collision-safe
 
-### Step 2: BOL image upload queue
+1. Change only field-created integer primary keys to one RN-safe global text-ID
+   helper: `tags.id`, `events.id`, `bol_docs.id`, `notes.id`, and
+   `tags.bol_doc_id`. Keep `requests.id` integer because web is its sole inserter.
+2. Generate a forward migration and update repositories/types. Test fresh
+   schema, existing-row preservation, foreign keys, and two-replica inserts.
+3. Move `device_id` and `epc_serial` from the synced domain DB to a tiny separate
+   local-only device database. Reserve each serial atomically before printing;
+   crashes may skip but never reuse a serial.
+4. Add only the auth state needed for credential control:
+   - server env allowlist of field-operator emails;
+   - minimal `field_devices` record in the auth DB (device UUID, user/session
+     reference, permanently assigned two-hex EPC byte, active/revoked time);
+   - QR link/register and credential endpoints require the existing Better Auth
+     bearer plus allowlist and active device;
+   - unlink marks the device inactive, revokes that session, then clears local
+     Secure Store; add one operator CLI/action to revoke a lost device.
+5. Do not add a role platform. Never reuse a revoked EPC device byte.
 
-- `apps/web/src/app/api/bol-upload/route.ts`: authenticated (session or a
-  device bearer token env `DEVICE_UPLOAD_TOKEN`), accepts
-  `{docId, filename, base64}` capped at 20 MB (sync.py:49), stores to Vercel
-  Blob (`@vercel/blob`), writes the blob URL into that doc row's
-  `storage_url`.
-- Field app `apps/field/src/sync/bolUploadQueue.ts`: after each sync, for
-  rows from `pendingBolUploads` (has local file, empty `storage_url`), POST
-  to the web app's route; failures retry next cycle (self-healing like
-  sync.py:19-24). Web `/tag/[epc]` + `/bol` links and the field docs screen
-  cloud icon light up via `storage_url` (already rendered, plans 007/009).
+**Verify**:
+`pnpm --filter @rfid/domain test && pnpm --filter @rfid/web test && pnpm
+--filter @rfid/field test && pnpm -r typecheck` → exit 0. Tests cover UUID
+collisions, migration/FKs, atomic serial reservation, allowlist denial, QR
+replay, refresh denial after unlink/revoke, and separate auth/warehouse schemas.
 
-**Verify**: typecheck; web route unit-testable part (validation) has a test;
-end-to-end exercised in the runbook.
+### Phase 3: Wire the small local-first coordinator and BOL queue
 
-### Step 3: Ops plumbing
+1. Keep the raw Turso RN `Database` beside the Drizzle adapter. In production,
+   bootstrap/pull the already-migrated remote schema; never push mobile DDL.
+2. Implement one serialized cycle: `push()` then `pull()`. Trigger after startup
+   readiness, manual **Sync now**, network reconnect, and app foreground.
+3. Retry transient failures with a short bounded exponential schedule; refresh
+   once on 401, then show re-link/revoked instead of looping.
+4. Show only `syncing`, `synced + last time`, `offline/changes waiting`,
+   `retrying`, and `re-link/upgrade required`. Compare the server schema version
+   before writes; preserve local data and block writes when incompatible.
+5. Document Turso's last-push-wins limitation. Preserve current writer
+   discipline: web inserts requests; field updates them. Require a fresh pull
+   before request fulfillment/destructive admin actions and operationally avoid
+   two devices editing the same tag/request at once. Do not add an operation
+   ledger unless the required two-replica test shows silent corruption beyond
+   the known last-push-wins outcome; if it does, STOP and re-plan that conflict.
+6. Because `/tag/[epc]` already displays `storage_url`, add a minimal persistent
+   BOL upload queue using an authenticated, short-lived Vercel Blob client-upload
+   grant. Key uploads by BOL doc ID/content hash, retry after reconnect, and set
+   `storage_url` only after success. Disable Mistral fallback in Production.
 
-- `eas.json` with `development` / `preview` / `production` profiles;
-  app config: bundle id (operator decides, placeholder
-  `com.brasfieldgorrie.rfidinventory`), `expo-updates` enabled for OTA on
-  the production channel, build number auto-increment.
-- Sentry in both apps (`@sentry/react-native`, `@sentry/nextjs`), DSNs via
-  env, wrapped error boundaries; no PII beyond device id.
-- Document (in `plans/CUTOVER.md`, step 4) the Apple requirements: Apple
-  Developer account, and TSL's **PPID** requirement for App Store submission
-  of External Accessory apps (`asciiprotocol.com` states Apple submissions
-  need TSL's PPID) — request it from TSL support early; TestFlight internal
-  testing does not block on it.
+**Verify**:
+focused field/web tests pass for serialized cycles, triggers, bounded retry,
+expired/revoked auth, offline write + force-close + restart + reconnect, schema
+block, idempotent BOL retry, and redacted upload errors. A disposable two-replica
+test proves unique inserts converge in both push orders and records the expected
+same-row last-push-wins result.
 
-**Verify**: `pnpm -r typecheck && pnpm -r test` → exit 0;
-`pnpm --filter @rfid/field exec expo export --platform ios` → exit 0.
+### Phase 4: Finish production web, Sentry, and one rollback runbook
 
-### Step 4: Cutover runbook (`plans/CUTOVER.md`)
+1. Verify/reuse the current Production/Preview env pairs and migrations. Add
+   only missing Better Auth URL/secret, Entra tenant/client values, field
+   allowlist/Turso mint settings, Blob, and Sentry vars at the correct target.
+   Do not copy Development values or expose a secret as `EXPO_PUBLIC_*`.
+2. Set the production field default to the production HTTPS domain and prevent
+   arbitrary server URL editing in production builds. Tailscale stays dev-only.
+3. Verify the exact Entra production callback and sign-in/sign-out. Make
+   `/api/health` return generic status without raw exception text.
+4. Add basic `@sentry/react-native` and `@sentry/nextjs` crash/error reporting
+   with source maps. Redact auth headers/cookies, tokens, BOL/OCR content, EPCs,
+   and request bodies; no replay is required.
+5. Write only two concise operational docs:
+   - `production-launch.md`: resource/env names, migration verification,
+     Turso backup/PITR availability, device/token revoke, main deploy checklist,
+     and rollback to the previous Vercel/TestFlight build;
+   - `warehouse-acceptance.md`: Phase 6 checklist.
+6. Add one minimal CI workflow: install, typecheck, tests, web lint/build, and
+   field export. Preview must use Preview DBs; Production remains `main` only.
 
-Write the runbook with these phases, each with explicit success criteria:
+**Verify**:
+Production DB verification reports current separate schemas and zero business
+rows; Preview points to different hosts; web build/field export pass; production
+Entra works; health hides injected errors; one symbolicated redacted Expo error
+and one Next error arrive in Sentry; rollback checklist names the previous
+deploy/build and PITR contact/availability.
 
-1. **Provision** (operator): Turso DB + tokens; Vercel project for
-   `apps/web` with env (Turso, Auth/Entra, Blob, Sentry, DEVICE_UPLOAD_TOKEN);
-   EAS project; Sentry projects.
-2. **Hardware validation** (operator, phone + sled + printer on warehouse
-   wifi): pair Indium in SPP mode → `listAccessories` shows it (record the
-   actual protocol string); trigger pull in check-in reads a tag; finder
-   percent responds; print+encode one label → EPC reads back; VisionKit
-   captures a real BOL and Mistral extraction prefills correctly.
-3. **Rehearsal import**: copy production `inventory.db` → importer → point a
-   TestFlight build + a preview web deploy at a **staging** Turso DB →
-   verify counts (script: tags, events, per-type units vs the PC app's
-   warehouse view) → run one full day in shadow mode (PC app remains
-   authoritative; phone check-ins into staging only).
-4. **Go-live** (a quiet morning): stop the warehouse exe (close the app);
-   final import into the **production** Turso DB; verify counts; operator
-   switches to the phone; jobsite users get the new web URL; old
-   `rfid-inventory-sync` Vercel project set to redirect or a "moved" page.
-   QR caveat: labels printed by the PC app carry the old domain — keep
-   `/tag/{epc}` working by pointing the old domain at the new web app
-   (domain alias), and confirm the new app's `cloud_base_url` setting is the
-   new domain before printing.
-5. **Rollback**: while the exe and `inventory.db` are untouched, rollback =
-   reopen the exe and set the phone aside; any check-ins made on the phone
-   in the gap must be re-entered (export them first via the events screen).
-   Point of no return: first PC-app write after go-live data would diverge —
-   the runbook forbids reopening the exe after go-live except as rollback.
-6. **Retire** (after 2 weeks green): archive branch, delete
-   `apps/warehouse/`, `apps/cloud/`, `packages/contract/`, update README.
+### Phase 5: Build and test the TestFlight release
 
-**Verify**: `plans/CUTOVER.md` exists and covers all six phases with
-success criteria (checklist form); `pnpm -r test` still green.
+1. Add only `development` and `production` EAS profiles. Configure Apple
+   signing, EAS project/update URL, production env, and
+   `runtimeVersion: { policy: "appVersion" }`.
+2. OTA guardrails: native module/permission, credential model, or incompatible
+   schema changes require a new binary/app version; test compatible JS updates
+   before production and keep the last known-good update/build.
+3. Introspect generated iOS config: TSL protocol, camera, document scanner,
+   ML Kit, Turso RN, TCP socket, Secure Store, Sentry, and updates are present.
+4. TSL MFi/PPID and App Store approval are external dependencies. Submit the
+   final bundle/app details early; do not replace the raw EA implementation
+   unless hardware testing proves it necessary.
+5. Replace field/web placeholder tests and run the full command set.
+
+**Verify**:
+config introspection, field export, all tests/typechecks, web lint/build, and CI
+pass; a signed Production profile build installs from TestFlight; source maps
+resolve; no Turso/Better Auth/Entra/Blob/Sentry-auth secret is in the bundle.
+
+### Phase 6: Accept in the warehouse, merge `main`, and launch
+
+Use one real iPhone, TSL/Vulcan Indium sled, Zebra ZD621R, labels/tags, and a
+non-sensitive BOL during one scheduled warehouse day. Use a second phone for one
+physical conflict test if available; otherwise the automated two-replica gate
+remains required.
+
+1. Test clean TestFlight install/upgrade, Entra sign-in, QR link/replay denial,
+   unlink/relink, and lost-device revoke.
+2. Test sled connect/reconnect, check-in/out, sweep, find, printer status,
+   print/encode/read-back, BOL scan/on-device OCR/upload/web link.
+3. Test airplane mode writes, force-close/reopen offline, reconnect, manual sync,
+   and web convergence. If two phones are available, concurrently create
+   different tags and perform one controlled same-record last-push-wins test.
+4. Complete `warehouse-acceptance.md`. Any safety/data-loss/hardware blocker is
+   NO-GO.
+5. Main merge checklist: approved Phase 1 decision, migrations current,
+   Production env/domain/Entra/Sentry/backup green, CI green, accepted commit and
+   TestFlight build recorded, previous deployment/build rollback identified.
+6. Merge the reviewed `rewrite/expo` PR to `main`; verify Vercel Production
+   deploys that commit. Install the accepted TestFlight build.
+7. Create only a few labeled smoke inventory records through the new field app;
+   sync, view on web, fulfill one request, print/read one tag, and open one BOL.
+   There is no import or legacy reconciliation.
+8. If launch fails, stop the new app, revoke field devices, and return to the
+   previous Vercel/TestFlight build. Preserve local unsynced data for diagnosis;
+   use Turso PITR only through the runbook.
+
+**Verify**:
+warehouse checklist is fully PASS, `main` commit equals the Production deploy,
+smoke workflow passes, Sentry has no unresolved launch error, and one normal
+warehouse shift completes successfully. Observe for two business days before
+Phase 7.
+
+### Phase 7: Archive Python references after the launch window
+
+In a separate mechanical commit after Phase 6 observation:
+
+1. `git mv apps/warehouse archive/legacy-python/apps/warehouse`
+2. `git mv apps/cloud archive/legacy-python/apps/cloud`
+3. `git mv packages/contract archive/legacy-python/packages/contract`
+4. Update root Python workspace/lockfile, README, and active path references.
+   Do not refactor archived code.
+
+**Verify**:
+`pnpm test && pnpm -r typecheck && pnpm --filter @rfid/web build` → exit 0;
+search shows no active build/test/deploy/import dependency on old paths; diff
+shows mechanical moves in the separate archive commit.
 
 ## Test plan
 
-- Unit: backoff calculator, pendingBolUploads, upload-route validation.
-- The real test is the runbook's phases 2–3; they are operator-executed and
-  the executor's deliverable is the code + runbook that make them mechanical.
+- **Domain**: fresh migration, existing-row migration, global-ID/FK integrity,
+  local atomic EPC serial, two-replica insert convergence.
+- **Auth**: allowlist, bearer required, QR replay, active/revoked device,
+  short-lived refresh, unlink/lost-device revoke, no auth DB access.
+- **Sync**: serialized push/pull, four triggers, bounded retry, 401 refresh,
+  offline restart/reconnect, schema mismatch, known same-row last-push-wins.
+- **BOL/web**: authenticated idempotent upload/retry, `storage_url` link,
+  generic health errors, Sentry redaction.
+- **Manual**: one warehouse day covering iPhone, sled, printer, camera/OCR,
+  offline/reconnect, QR auth, TestFlight; second phone only if available.
 
 ## Done criteria
 
-Machine-checkable. ALL must hold:
+ALL must hold:
 
-- [ ] `pnpm -r typecheck && pnpm -r test` exit 0
-- [ ] `grep -rn "push()\|pull()" apps/field/src/sync/syncService.ts` ≥ 2
-- [ ] `grep -rn "expo-secure-store" apps/field/src` ≥ 1 (token not in AsyncStorage)
-- [ ] `plans/CUTOVER.md` exists with the six phases
-- [ ] `eas.json` with three profiles; Sentry init in both apps
-- [ ] No file under `apps/warehouse/`, `apps/cloud/`, `packages/contract/` modified
-- [ ] `plans/README.md` status row updated (and rows 001–009 verified DONE)
+- [ ] Phase 1 records `DIRECT_SYNC_PASS`; otherwise this plan stopped
+- [ ] no static/broad/write-capable Turso token or other server secret is in
+      field source, public env, bundle, QR, logs, or Git
+- [ ] existing `rfid-inventory-web` Production/Preview resources were reused;
+      no duplicate DBs or Marketplace conversion was created
+- [ ] Production warehouse/auth schemas are separate/current and business rows
+      were zero before smoke launch
+- [ ] field-created rows use global IDs; device ID/EPC serial are local-only
+- [ ] two-replica insert/offline/reconnect tests pass and last-push-wins limits
+      are documented/accepted
+- [ ] unlink/lost-device revoke blocks credential refresh
+- [ ] BOL upload makes the current public tag-page link work
+- [ ] field/web have real focused tests; full tests/typecheck/lint/build/export
+      and minimal CI pass
+- [ ] Production domain/Entra/health/Sentry/PITR/rollback checks pass
+- [ ] development + production EAS profiles and TestFlight hardware acceptance
+      pass; required TSL/Apple approvals are available
+- [ ] reviewed `rewrite/expo` merges to `main`; that commit deploys Production;
+      empty-launch smoke workflow and observation window pass
+- [ ] Python archive happens only afterward in its own mechanical commit
+- [ ] Plan 010 row in `plans/README.md` is DONE only after all criteria pass
 
 ## STOP conditions
 
-Stop and report back (do not improvise) if:
+- Direct fine-grained, short-lived Turso token mint/enforcement or RN refresh is
+  unsupported; record the result and re-plan server-mediated sync separately.
+- The mobile path needs a full-access/static token, schema permission,
+  control-plane token, auth DB access, or custom JWT signing.
+- Production/Preview DB pairs are missing, shared, stale, non-empty before smoke,
+  or point at Development; verify before considering any replacement.
+- Two-replica unique inserts still collide or lose rows after global IDs.
+- The known same-row last-push-wins behavior is unacceptable to operations or
+  produces corruption beyond the constrained workflow.
+- Schema mismatch would require discarding unsynced local data.
+- A secret appears in Git, logs, Sentry, or the mobile bundle; revoke it first.
+- Real sled/printer/BOL/offline/TestFlight acceptance or required Apple/TSL
+  approval is unavailable.
+- A verification fails twice after one evidence-based fix, or source drift
+  invalidates a load-bearing current-state claim.
+- Anyone requests import, legacy reconciliation, dual-write, or pre-launch
+  Python archiving.
 
-- Turso sync misbehaves in the two-device test (lost writes, conflict
-  weirdness on the `requests` table) — this triggers the recorded escape
-  hatch (`plans/README.md`: port the old HTTP exchange to TS) as a *decision
-  for the operator*, not something to build unprompted.
-- `@tursodatabase/sync-react-native`'s connect/push/pull API differs from
-  what plan 004 wrapped — report the actual API.
-- Any runbook phase can't be made mechanical (e.g. counts can't be verified
-  scriptably) — fix the tooling, don't hand-wave the criterion.
-- You are tempted to delete the Python apps now. Don't — phase 6 only.
+## Post-launch / deferred
+- If needed: server-mediated sync, broader RBAC/row authorization, or a general operation ledger/conflict resolution.
+- Optional: richer telemetry/alerts, EAS channels, server-side Mistral OCR, and recurring backup/rotation drills.
 
 ## Maintenance notes
-
-- The sync pill + Sentry are the two feedback channels for field problems;
-  a reviewer should confirm sync failures are visible (pill) and reported
-  (Sentry breadcrumb) but never block writes.
-- Device-id assignment is manual (01–FF); if the fleet ever exceeds a
-  handful of phones, build central assignment then.
-- After phase 6, `plans/` should be archived with a final reconcile pass —
-  the rewrite is complete and future work starts from a fresh audit.
+- Apply warehouse schema changes server-side before compatible clients pull;
+  incompatible schema/native changes require a new app version.
+- Keep token TTL/permissions, permission tests, and the runbook aligned.
+- Re-run two-replica and hardware acceptance for sync-client/native upgrades.
+- Keep archived Python as historical reference only; never restore an active dependency.
