@@ -1,6 +1,7 @@
 import { buildings, stockRows } from "@rfid/domain";
 
 import { Header } from "@/components/Header";
+import { PageHeader } from "@/components/PageHeader";
 import { getDb } from "@/lib/db";
 import { getUser } from "@/lib/session";
 import { Cart } from "./cart/Cart";
@@ -15,8 +16,11 @@ export default async function Home() {
   return (
     <>
       <Header active="stock" />
-      <main className="mx-auto w-full max-w-5xl px-5 pb-16">
-        <h1 className="mb-4 text-2xl font-semibold tracking-tight">Stock &amp; requests</h1>
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16 pt-8">
+        <PageHeader
+          title="Stock &amp; requests"
+          description="Browse what's on hand and build a request to pull stock to a jobsite."
+        />
         <Cart stock={stock} buildings={buildingList} user={user} />
       </main>
     </>

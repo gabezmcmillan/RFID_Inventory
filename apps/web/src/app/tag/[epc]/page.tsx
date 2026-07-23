@@ -2,9 +2,10 @@ import { findTag, getBolDoc } from "@rfid/domain";
 import { notFound } from "next/navigation";
 
 import { Header } from "@/components/Header";
+import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -49,18 +50,16 @@ export default async function TagPage({ params }: { params: Promise<{ epc: strin
   return (
     <>
       <Header />
-      <main className="mx-auto w-full max-w-5xl px-5 pb-16">
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16 pt-8">
+        <PageHeader title={`Box ${tag.epc}`} description="Scanned from a printed label." />
         <Card className="max-w-xl">
-          <CardHeader>
-            <CardTitle>Box {tag.epc}</CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
             <Table>
               <TableBody>
                 {rows.map((r) => (
                   <TableRow key={r.label}>
-                    <TableCell className="w-36 text-muted-foreground">{r.label}</TableCell>
-                    <TableCell>{r.value}</TableCell>
+                    <TableCell className="w-40 text-muted-foreground">{r.label}</TableCell>
+                    <TableCell className="font-medium">{r.value}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

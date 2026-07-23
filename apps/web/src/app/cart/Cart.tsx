@@ -22,6 +22,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { EmptyState } from "@/components/PageHeader";
 import { submitCart, type CartSubmission } from "./actions";
 
 /** One editable cart line (a stock selection with quantity + delivery building). */
@@ -110,7 +111,10 @@ export function Cart({
       <section>
         <h2 className="mb-3 text-lg font-semibold">Stock on hand</h2>
         {stock.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No stock available right now.</p>
+          <EmptyState
+            title="No stock available right now"
+            description="Check back after the next receiving run, or filter by building on the Warehouse page."
+          />
         ) : (
           <ul className="flex flex-col gap-3">
             {stock.map((row) =>

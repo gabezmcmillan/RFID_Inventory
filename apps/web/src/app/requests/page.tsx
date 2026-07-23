@@ -1,6 +1,7 @@
 import { listOrders, type Order } from "@rfid/domain";
 
 import { Header } from "@/components/Header";
+import { EmptyState, PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -78,14 +79,17 @@ export default async function RequestsPage({
   return (
     <>
       <Header active="requests" />
-      <main className="mx-auto w-full max-w-5xl px-5 pb-16">
-        <h1 className="mb-4 text-2xl font-semibold tracking-tight">Requests</h1>
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16 pt-8">
+        <PageHeader title="Requests" description="Stock pulls grouped by order, open orders first." />
         <FocusRefresh />
         {ok ? (
           <p className="mb-4 font-semibold text-status-in">Order {ok} submitted.</p>
         ) : null}
         {orders.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No requests yet.</p>
+          <EmptyState
+            title="No requests yet"
+            description="Build a cart on the Stock page to submit your first request."
+          />
         ) : (
           <div className="flex flex-col gap-3">
             {orders.map((o) => (

@@ -1,6 +1,7 @@
 import { BUILDING_OPTIONS, inventoryTree, type InventoryType } from "@rfid/domain";
 
 import { Header } from "@/components/Header";
+import { EmptyState, PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,19 @@ import { getDb } from "@/lib/db";
 import { inventoryStatusBadge } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
+/** A filter toggle: a link styled as a small button, active state filled. */
+function ToggleLink({ href, label, active }: { href: string; label: string; active: boolean }) {
+  return (
+    <a
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(buttonVariants({ variant: active ? "default" : "outline", size: "sm" }))}
+    >
+      {label}
+    </a>
+  );
+}
+
 /** Office warehouse view: read-only reuse of the domain `inventoryTree`, with the
  * same group-by toggle + building filter as the field app's warehouse screen.
  * Toggles are links with query params (server re-renders); no client fetching. */
@@ -31,45 +45,38 @@ export default async function WarehousePage({
   const db = await getDb();
   const tree = await inventoryTree(db, groupBy, filters);
 
-  const toggle = (key: string, label: string, href: string, active: boolean) => (
-    <a
-      key={key}
-      href={href}
-      aria-current={active ? "page" : undefined}
-      className={cn(buttonVariants({ variant: active ? "default" : "outline", size: "sm" }))}
-    >
-      {label}
-    </a>
-  );
+  const buildingQ = building ? `&building=${building}` : "";
 
   return (
     <>
       <Header active="warehouse" />
-      <main className="mx-auto w-full max-w-5xl px-5 pb-16">
-        <h1 className="mb-4 text-2xl font-semibold tracking-tight">Warehouse (office view)</h1>
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted-foreground">Group by:</span>
-          {toggle("bol", "BOL",
-            "/warehouse?group=bol" + (building ? `&building=${building}` : ""),
-            groupBy === "bol",
-          )}
-          {toggle("building", "Building",
-            "/warehouse?group=building" + (building ? `&building=${building}` : ""),
-            groupBy === "building",
-          )}
-          <Separator orientation="vertical" className="mx-1 h-6" />
-          {toggle("all", "All buildings", "/warehouse", !building)}
-          {BUILDING_OPTIONS.map((b) =>
-            toggle(
-              b,
-              `Bldg ${b}`,
-              `/warehouse?group=${groupBy}&building=${b}`,
-              building === b,
-            ),
-          )}
-        </div>
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16 pt-8">
+        <PageHeader
+          title="Warehouse (office view)"
+          description="Read-only inventory grouped by BOL or building."
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">Group by:</span>
+            <ToggleLink href={`/warehouse?group=bol${buildingQ}`} label="BOL" active={groupBy === "bol"} />
+            <ToggleLink
+              href={`/warehouse?group=building${buildingQ}`}
+              label="Building"
+              active={groupBy === "building"}
+            />
+            <Separator orientation="vertical" className="mx-1 h-6" />
+            <ToggleLink href="/warehouse" label="All buildings" active={!building} />
+            {BUILDING_OPTIONS.map((b) => (
+              <ToggleLink
+                key={b}
+                href={`/warehouse?group=${groupBy}&building=${b}`}
+                label={`Bldg ${b}`}
+                active={building === b}
+              />
+            ))}
+          </div>
+        </PageHeader>
         {tree.types.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No boxes match.</p>
+          <EmptyState title="No boxes match" description="Try a different building or grouping." />
         ) : (
           <ul className="flex flex-col gap-3">
             {tree.types.map((t: InventoryType) => (

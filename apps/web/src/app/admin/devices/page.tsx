@@ -8,6 +8,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Header } from "@/components/Header";
+import { EmptyState, PageHeader } from "@/components/PageHeader";
 import { listDevicesWithLinker } from "@/lib/devices";
 
 import { DevicesTable } from "./DevicesTable";
@@ -17,14 +18,16 @@ export default async function AdminDevicesPage(): Promise<React.ReactNode> {
   return (
     <>
       <Header active="devices" />
-      <main className="mx-auto w-full max-w-5xl px-5 pb-16">
-        <h1 className="mb-4 text-2xl font-semibold tracking-tight">Field devices</h1>
-        <p className="mb-4 text-sm text-muted-foreground">
-          The person who links a device via QR is setting it up — they are not necessarily the person
-          using it day-to-day. &ldquo;Linked by&rdquo; names that operator, not an owner.
-        </p>
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16 pt-8">
+        <PageHeader
+          title="Field devices"
+          description="The person who links a device via QR is setting it up — they are not necessarily the person using it day-to-day. “Linked by” names that operator, not an owner."
+        />
         {devices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No devices linked yet.</p>
+          <EmptyState
+            title="No devices linked yet"
+            description="Link a field device from your user menu to see it here."
+          />
         ) : (
           <Card>
             <CardHeader className="border-b border-border">

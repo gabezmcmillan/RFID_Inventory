@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { Header } from "@/components/Header";
+import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { isAuthEnabled } from "@/lib/auth";
@@ -30,29 +32,35 @@ import { LinkDeviceClient } from "./LinkDeviceClient";
 export default async function LinkDevicePage() {
   if (!isAuthEnabled()) {
     return (
-      <Card className="mx-auto mt-10 max-w-md">
-        <CardHeader>
-          <CardTitle>Link a device</CardTitle>
-          <CardDescription>Device linking needs a configured auth backend.</CardDescription>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          {isDevBypassActive() ? (
-            <p>
-              The dev bypass is active, so there is no live auth backend to mint a one-time code.
-              Set <code className="font-mono">BETTER_AUTH_SECRET</code> (and Entra ID credentials)
-              to sign in and link a device.
-            </p>
-          ) : (
-            <p>
-              Set <code className="font-mono">BETTER_AUTH_SECRET</code> and{" "}
-              <code className="font-mono">BETTER_AUTH_URL</code> to enable device linking.
-            </p>
-          )}
-          <Button variant="outline" render={<Link href="/" />} className="mt-4">
-            Back home
-          </Button>
-        </CardContent>
-      </Card>
+      <>
+        <Header />
+        <main className="mx-auto w-full max-w-5xl px-5 pb-16 pt-8">
+          <PageHeader title="Link a device" />
+          <Card className="max-w-md">
+            <CardHeader>
+              <CardTitle>Link a device</CardTitle>
+              <CardDescription>Device linking needs a configured auth backend.</CardDescription>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              {isDevBypassActive() ? (
+                <p>
+                  The dev bypass is active, so there is no live auth backend to mint a one-time code.
+                  Set <code className="font-mono">BETTER_AUTH_SECRET</code> (and Entra ID credentials)
+                  to sign in and link a device.
+                </p>
+              ) : (
+                <p>
+                  Set <code className="font-mono">BETTER_AUTH_SECRET</code> and{" "}
+                  <code className="font-mono">BETTER_AUTH_URL</code> to enable device linking.
+                </p>
+              )}
+              <Button variant="outline" render={<Link href="/" />} className="mt-4">
+                Back home
+              </Button>
+            </CardContent>
+          </Card>
+        </main>
+      </>
     );
   }
 
@@ -62,30 +70,43 @@ export default async function LinkDevicePage() {
   const user = await getRealSessionUser();
   if (!user) {
     return (
-      <Card className="mx-auto mt-10 max-w-md">
-        <CardHeader>
-          <CardTitle>Sign in required</CardTitle>
-          <CardDescription>
-            {isDevBypassActive()
-              ? "The dev bypass is active, but linking a device needs a real signed-in session."
-              : "Linking a device needs a signed-in session."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          <p className="mb-4">
-            Sign in with your organization account, then open this page to generate a one-time
-            code the phone can scan.
-          </p>
-          <Button render={<Link href="/sign-in" />}>Sign in</Button>
-        </CardContent>
-      </Card>
+      <>
+        <Header />
+        <main className="mx-auto w-full max-w-5xl px-5 pb-16 pt-8">
+          <PageHeader title="Link a device" />
+          <Card className="max-w-md">
+            <CardHeader>
+              <CardTitle>Sign in required</CardTitle>
+              <CardDescription>
+                {isDevBypassActive()
+                  ? "The dev bypass is active, but linking a device needs a real signed-in session."
+                  : "Linking a device needs a signed-in session."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              <p className="mb-4">
+                Sign in with your organization account, then open this page to generate a one-time
+                code the phone can scan.
+              </p>
+              <Button render={<Link href="/sign-in" />}>Sign in</Button>
+            </CardContent>
+          </Card>
+        </main>
+      </>
     );
   }
 
   const token = await generateLinkCode();
   return (
-    <main className="mx-auto max-w-5xl px-5 py-8">
-      <LinkDeviceClient initialToken={token} />
-    </main>
+    <>
+      <Header />
+      <main className="mx-auto w-full max-w-5xl px-5 pb-16 pt-8">
+        <PageHeader
+          title="Link a device"
+          description="Scan this code with the RFID Field app to sign the device in."
+        />
+        <LinkDeviceClient initialToken={token} />
+      </main>
+    </>
   );
 }
