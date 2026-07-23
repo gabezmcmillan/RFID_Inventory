@@ -32,7 +32,7 @@
     production never uses Tailscale
 - **Category**: security, migration, tests, operations
 - **Planned at**: commit `d73717b`, 2026-07-23
-- **Status**: IN_PROGRESS — Phase 1 credential gate PASSED (`DIRECT_SYNC_PASS`); Phase 2 (collision-safe IDs, local-only device state, credential control) PASSED its verify gate; Phase 3 (local-first sync coordinator, status UI, BOL upload queue, two-replica convergence) PASSED its verify gate; Phases 4–7 pending
+- **Status**: IN_PROGRESS — Phase 1 credential gate PASSED (`DIRECT_SYNC_PASS`); Phase 2 (collision-safe IDs, local-only device state, credential control) PASSED its verify gate; Phase 3 (local-first sync coordinator, status UI, BOL upload queue, two-replica convergence) PASSED its verify gate; Phase 4 deterministic code done (health hardening + test, production server-URL lock, CI workflow, launch/acceptance runbooks, web build + field iOS export verified, production DB verified empty with separate Preview hosts) — remaining Phase 4 (Entra/Sentry/Blob env, Sentry init, Entra callback) operator-blocked on secrets; Phases 5–7 pending
 
 ## Why this matters
 

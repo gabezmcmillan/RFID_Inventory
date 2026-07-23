@@ -390,3 +390,51 @@ must be verified on a physical iPhone. Operator checklist (max 5):
   same step.
 - A dedicated NetInfo listener for true network-reconnect detection (today
   reconnect is inferred from AppState `active` + the retry loop).
+
+## Phase 4 outcomes — production web, Sentry, rollback runbook (deterministic)
+
+### Done (deterministic, gate-green)
+
+- `/api/health` hardened: returns generic `service unavailable` (503) and logs
+  the raw cause server-side only — never echoes driver/host/token detail. New
+  `health.test.ts` injects a leaky internal error and asserts the body stays
+  generic (web tests now 30).
+- Field builds locked to the build-time server URL in production
+  (`fieldEnv.isProductionBuild = !__DEV__`): `getServerUrl()` ignores any stored
+  override and the Settings editor is hidden, so a production bundle can't be
+  redirected to an arbitrary host via AsyncStorage. Dev LAN/Tailscale editing
+  stays available in dev builds.
+- `.github/workflows/ci.yml`: install, typecheck, tests, web lint, web build,
+  field iOS export. Verified locally: `pnpm --filter @rfid/web build` passes;
+  `pnpm --filter @rfid/field export` (pinned to `--platform ios`) produces a
+  4.5MB Hermes bundle + `metadata.json` under `dist/` (gitignored).
+- `docs/operations/production-launch.md` (resource/env names, migration
+  verification, Turso PITR/backup, device+token revoke, deploy checklist,
+  rollback to previous Vercel/TestFlight build) and
+  `docs/operations/warehouse-acceptance.md` (Phase 6 warehouse-day checklist).
+
+### Production DB verification (run 2026-07-23, disposable-free)
+
+`turso db shell rfid-warehouse` reports the domain tables
+(`bol_docs, events, local_meta, notes, requests, tags, vendors`) with **0
+business rows** in every table — production starts empty, as required. The
+Preview warehouse (`rfid-warehouse-preview`) and auth (`rfid-auth-preview`) are
+separate DBs on different hosts from production; `local_meta.schema_version`
+will be seeded to the build's `SCHEMA_VERSION` on the first production request
+(`getDb` stamps it idempotently).
+
+### Operator-blocked (need secrets / external accounts)
+
+- Vercel env (Production target): `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL`,
+  `AUTH_DATABASE_*`, `TURSO_DATABASE_*`, `TURSO_MINT_TOKEN`/`TURSO_ORG`/
+  `TURSO_DB_NAME`, `FIELD_OPERATOR_ALLOWLIST` (real emails), Entra
+  `AZURE_AD_*`, `BLOB_READ_WRITE_TOKEN`, `SENTRY_DSN`. Listed in
+  `docs/operations/production-launch.md`.
+- Sentry init: add `@sentry/nextjs` (web) + `@sentry/react-native` (field),
+  init with redaction (auth headers/cookies, tokens, BOL/OCR content, EPCs,
+  request bodies), and confirm one symbolicated redacted Expo error + one Next
+  error arrive. Blocked on a Sentry DSN/account.
+- Entra production callback + sign-in/sign-out verification (needs the
+  production Entra app registration).
+- Production field default: set `EXPO_PUBLIC_DEFAULT_SERVER_URL` to the
+  production HTTPS domain at EAS build time (the in-app lock is in place).
