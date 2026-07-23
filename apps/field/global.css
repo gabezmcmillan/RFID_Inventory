@@ -2,69 +2,93 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Brasfield & Gorrie brand palette (2026 brand update), mirrored from the web
+ * app's `globals.css` so the field and web apps share one vocabulary:
+ *   navy        #002070  primary brand navy  — screen titles, headings, brand
+ *   navy-dark   #00143C  deep navy           — dark-mode backgrounds
+ *   vivid blue  #0028F0  signature accent    — primary CTAs, selected chips,
+ *                                              links, focus rings
+ *   bright blue #3888FF  accent on dark       — primary CTA in dark mode
+ * Lead with navy + white; vivid blue is the one strong accent for primary
+ * actions. Status palette (In = green, Partial = amber, Delivered = gray) is
+ * the same shared vocabulary as the web app. Destructive stays red.
+ */
 :root {
-  /* shadcn-style neutral surface tokens (light = warehouse daylight default). */
+  /* shadcn-style surface tokens (light = warehouse daylight default). */
   --background: 0 0% 100%;
-  --foreground: 240 10% 3.9%;
+  --foreground: 222 47% 11%;
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 3.9%;
+  --card-foreground: 222 47% 11%;
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 3.9%;
+  --popover-foreground: 222 47% 11%;
 
-  /* Primary = the warehouse "In" green (#0a7), used for primary actions + status. */
-  --primary: 162 100% 33%;
+  /* Primary = vivid blue (#0028F0): the one strong accent, used for primary
+   * actions + selected chips + focus rings. Mirrors the web `--primary`. */
+  --primary: 226 100% 47%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 240 4.8% 95.9%;
-  --secondary-foreground: 240 5.9% 10%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
+  /* Secondary = a soft navy-tinted surface for secondary buttons/chips. */
+  --secondary: 222 47% 96%;
+  --secondary-foreground: 222 47% 22%;
+  --muted: 222 40% 96%;
+  --muted-foreground: 222 16% 40%;
+  --accent: 222 47% 95%;
+  --accent-foreground: 222 47% 22%;
 
-  /* Destructive = admin delete/clear red (#c33). */
-  --destructive: 0 60% 50%;
+  /* Destructive = admin delete/clear red. */
+  --destructive: 0 72% 42%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --ring: 162 100% 33%;
+  --border: 222 30% 90%;
+  --input: 222 30% 90%;
+  --ring: 226 100% 47%;
 
-  --radius: 0.5rem;
+  --radius: 0.625rem;
 
-  /* Domain status palette (matches the prior StyleSheet colors). */
-  --status-in: 162 100% 33%;
+  /* Brand navy (screen titles, headings, deep surfaces). #002070 → ~225 100% 22%. */
+  --brand-navy: 225 100% 22%;
+  --brand-navy-dark: 220 64% 14%;
+
+  /* Domain status palette — mirrors the web app exactly so the two apps share
+   * one status vocabulary: In = green, Partial = amber, Delivered = gray. */
+  --status-in: 156 100% 33%;
   --status-partial: 44 100% 45%;
   --status-delivered: 0 0% 53%;
 
-  /* Brand info = the blue (#06c) used for info banners + the Requests accent. */
-  --brand: 210 100% 40%;
-  --brand-info: 210 100% 40%;
+  /* Brand info = vivid blue, used for info chips, the Requests accent, selected
+   * filter chips, and open-order markers. Same hue as primary. */
+  --brand: 226 100% 47%;
+  --brand-info: 226 100% 47%;
 }
 
 .dark:root {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 162 100% 33%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 45%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
-  --ring: 162 100% 33%;
-  --status-in: 162 100% 33%;
+  /* Dark mode: deep-navy app chrome, bright-blue accent (the legacy reserves
+   * bright blue for accents on dark). Surfaces raised one step above the bg. */
+  --background: 220 64% 10%;
+  --foreground: 210 40% 96%;
+  --card: 222 47% 14%;
+  --card-foreground: 210 40% 96%;
+  --popover: 222 47% 14%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 216 64% 61%;
+  --primary-foreground: 222 47% 10%;
+  --secondary: 222 40% 20%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 222 40% 20%;
+  --muted-foreground: 222 20% 70%;
+  --accent: 222 40% 24%;
+  --accent-foreground: 210 40% 96%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 222 30% 24%;
+  --input: 222 30% 24%;
+  --ring: 216 64% 61%;
+  --brand-navy: 225 100% 22%;
+  --brand-navy-dark: 220 64% 10%;
+  --status-in: 156 100% 33%;
   --status-partial: 44 100% 45%;
   --status-delivered: 0 0% 53%;
-  --brand: 210 100% 40%;
-  --brand-info: 210 100% 40%;
+  --brand: 216 64% 61%;
+  --brand-info: 216 64% 61%;
 }

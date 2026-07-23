@@ -55,6 +55,8 @@ module.exports = {
         brand: {
           DEFAULT: "hsl(var(--brand))",
           info: "hsl(var(--brand-info))",
+          navy: "hsl(var(--brand-navy))",
+          navyDark: "hsl(var(--brand-navy-dark))",
         },
       },
       fontFamily: {
