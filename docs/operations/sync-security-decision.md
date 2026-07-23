@@ -344,6 +344,45 @@ maxAttempts, REDACTED errors — the upload URL/token/bytes never appear in
 recorded messages). 6 tests cover upload, idempotent re-enqueue, content
 supersession, retry-then-succeed, dead-letter redaction, and restart resume.
 
+### BOL upload queue — wired (2026-07-23 cleanup pass)
+
+The deferred BOL wiring is now done (the `BLOB_READ_WRITE_TOKEN` blocker is
+resolved — see "Vercel Blob store" below):
+
+- **Server grant endpoint** `POST /api/bol/upload-grant` mints a short-lived
+  Vercel Blob client-upload grant (`generateClientTokenFromReadWriteToken`)
+  bound to `bol/{docId}/{contentHash}.{ext}`, capped at 25 MB, restricted to
+  `image/jpeg|image/png|application/pdf`, no random suffix, no overwrite. Auth
+  = device bearer + allowlist + active device; 503 when
+  `BLOB_READ_WRITE_TOKEN` is unset. 13 unit tests.
+- **Field enqueue**: `BolUploadQueue` entries now carry `contentType` +
+  `sizeBytes` and `GrantProvider` receives them (content- + size-bound grants).
+  `buildBlobGrant` reconstructs the `@vercel/blob` client-upload PUT request
+  (RN cannot use `@vercel/blob/client` — it imports node `crypto`/`undici`); the
+  API URL/version/header names are `@vercel/blob` v2.6.1 internals, unit-tested
+  deterministically, and the live upload needs on-device validation.
+  `ServerBolGrantProvider` calls the endpoint; `AsyncStorageQueueStorage`
+  persists redacted metadata; `bolUpload` builds/restores the queue singleton
+  after the domain db opens and exposes `enqueueBolArtifact` (read bytes,
+  SHA-256 via `js-sha256`, enqueue). `onUploaded` sets `storage_url` via the
+  new domain `setBolDocStorageUrl`. `documentStore.uploadBolDocument` enqueues
+  the single uploaded artifact. 14 new field unit tests (40 total).
+- **Scan-doc multi-page upload is still deferred**: scan docs are N JPEG pages
+  with no single artifact (the multi-page PDF assembly is deferred per
+  `MISTRAL_PAGE1_NOTE`), and `bol_docs.storage_url` is singular, so only the
+  single-file `uploadBolDocument` path enqueues today.
+
+### Vercel Blob store (2026-07-13 cleanup pass)
+
+Self-served via CLI: `vercel blob create-store rfid-bol --access private
+--environment production --environment preview` created a private Blob store
+(`store_KuuQEJ6n3Yfy58pT`, iad1) and linked it to `rfid-inventory-web`, which
+added `BLOB_READ_WRITE_TOKEN` to Production + Preview. (The CLI also created a
+root `.env.local` of pulled dev vars — deleted, unused by the web app — and
+added `.env*.local` to `.gitignore`, a safety improvement kept.) The
+development `BLOB_READ_WRITE_TOKEN` is not in `apps/web/.env.local`; local-dev
+BOL upload is an operator follow-up if needed.
+
 ### Two-replica convergence (DISPOSABLE, run once — PASS)
 
 `scripts/turso/convergence-test.mjs` (operator-run, like the Phase 1 spike)
@@ -392,11 +431,12 @@ must be verified on a physical iPhone. Operator checklist (max 5):
 
 ### Open follow-ups (not Phase 3 blockers)
 
-- BOL upload queue **wiring**: the pure queue is tested; the server
-  `/api/bol/upload-grant` endpoint (Vercel Blob client-upload) and the field
-  enqueue call-sites remain to be wired (needs `BLOB_READ_WRITE_TOKEN` env).
-  Mistral OCR fallback is to be disabled in production (env-driven) in that
-  same step.
+- BOL upload queue **on-device validation**: the wiring + unit tests are done
+  (see "BOL upload queue — wired" above); the remaining piece is a live
+  upload against the `rfid-bol` store on a device (RN `fetch` Blob-body PUT to
+  the `@vercel/blob` control API) plus scan-doc multi-page upload once the
+  PDF-assembly decision is made. Mistral OCR fallback is to be disabled in
+  production (env-driven) in that same step.
 - A dedicated NetInfo listener for true network-reconnect detection (today
   reconnect is inferred from AppState `active` + the retry loop).
 
