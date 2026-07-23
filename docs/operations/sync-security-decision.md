@@ -149,7 +149,9 @@ Operator-authorized decisions, recorded before starting Phase 2:
    (`field-operator@example.invalid`) in Vercel (Production environment-level
    + Preview `rewrite/expo` branch-scoped) and `apps/web/.env.local`.
    - **Operator checklist item:** replace the placeholder with the real
-     field-operator email(s) before launch.
+     field-operator email(s) before launch. **(DONE 2026-07-23 — see
+     "Action 2" below; placeholder replaced with the three real operator
+     emails in Production, Preview, and `apps/web/.env.local`.)**
 
 4. **Production env final confirmation (incident close-out).** Read-only
    confirmation that the four Production env vars point at the **original**
@@ -240,9 +242,9 @@ physical-device acceptance was performed (operator-owned, Phase 6).
   *name* (not the libSQL hostname, which doesn't split cleanly), so `TURSO_ORG`
   + `TURSO_DB_NAME` are explicit server-only env vars (operator to set in
   Phase 4).
-- **`FIELD_OPERATOR_ALLOWLIST`** still holds the documented placeholder (the
-  production auth `user` table was empty at Phase 1); operator to set the real
-  operator email(s) in Phase 4.
+- **`FIELD_OPERATOR_ALLOWLIST`** now holds the real operator emails (set
+  2026-07-23 — see "Action 2"); the production auth `user` table was empty at
+  Phase 1, so the placeholder was used until the operator supplied the list.
 
 ## Operator-action outcomes (pre-Phase-3, self-served)
 
@@ -280,11 +282,22 @@ The custom `field_devices` / `auth_meta` tables are ensured idempotently at
 runtime on the first device-endpoint call, so they appear after the first
 deploy/link without a separate migration step.
 
-### Action 2 — `FIELD_OPERATOR_ALLOWLIST` (still operator-owned)
+### Action 2 — `FIELD_OPERATOR_ALLOWLIST` (DONE 2026-07-23)
 
-Remains the documented placeholder (production auth `user` table still empty of
-a known operator email). Operator to set the real operator email(s) in
-Production + Preview before field linking is exercised.
+Set to the operator-provided real emails in Vercel Production + Preview
+(rewrite/expo) and `apps/web/.env.local` (placeholder replaced; all other keys
+preserved). Value (comma-separated, the parser's natural format):
+
+```
+jcourson@brasfieldgorrie.com, gmcmillan@brasfieldgorrie.com, rhittie@brasfieldgorrie.com
+```
+
+`apps/web/.env.example` now documents the var with a generic example
+(`ops@example.com, field-lead@example.com`), not the real emails. The Vercel
+values were set via `vercel env add --value`; `vercel env pull` redacts
+CLI-recently-added vars so they can't be visually re-confirmed via pull, but the
+adds succeeded and the non-secret value round-trips for dev-targeted vars (per
+the probe in the mint-seam note).
 
 ### Incident note (token leak to terminal scrollback)
 
