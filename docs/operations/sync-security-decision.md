@@ -102,6 +102,69 @@ proved, hence `DIRECT_SYNC_PASS`.
   QR, public env, or logs. The mobile token is always the short-lived,
   read+add+update-only, warehouse-scoped JWT from the server callback.
 
+## Operator-action outcomes (post-Phase-1, pre-Phase-2)
+
+Operator-authorized decisions, recorded before starting Phase 2:
+
+1. **Branch-scoped Preview env (`rewrite/expo`) — ACCEPTED.** The four
+   Preview-scoped DB env vars (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`,
+   `AUTH_DATABASE_URL`, `AUTH_DATABASE_AUTH_TOKEN`) point at the separate
+   preview databases (`rfid-warehouse-preview`, `rfid-auth-preview`) but are
+   scoped to the `rewrite/expo` Git branch only. This is a CLI limitation in
+   non-interactive mode (it cannot target "all Preview branches"). The
+   operator accepted it for now and can widen to all Preview branches in the
+   Vercel dashboard later. Tradeoff: other preview branches will not get
+   these DB vars until widened.
+
+2. **Server mint seam token — self-served, NARROW SCOPE UNAVAILABLE.** A named,
+   revocable Platform API token `rfid-field-sync` was minted and stored as the
+   server-only `TURSO_MINT_TOKEN` (Production environment-level + Preview
+   `rewrite/expo` branch-scoped in Vercel; also in `apps/web/.env.local`).
+   - **Tradeoff / deviation:** the CLI requires an **admin or owner** role in the
+     org to mint a group-scoped, `db:mint-token`-only token
+     (`turso auth api-tokens mint <name> --org <o> --group <g> --scope
+     db:mint-token` → `Error: You must be an admin or owner to create
+     group-restricted tokens`). The operator's account is not admin/owner of the
+     Vercel-managed marketplace org, so the narrowest scope available was the
+     named token's default, which is **scope `all` (broad)** — it can mint
+     tokens for any database in the org and perform other control-plane
+     actions, not just `db:mint-token` on the warehouse group.
+   - **Mitigation in place:** the token is server-only (never `NEXT_PUBLIC_*` /
+     `EXPO_PUBLIC_*`, never in the app bundle/QR/logs), encrypted at rest in
+     Vercel, and the server code mints **only** warehouse-scoped field tokens.
+   - **Rotation note:** to rotate, `turso auth api-tokens revoke
+     rfid-field-sync`, mint a replacement, and update `TURSO_MINT_TOKEN` in
+     Vercel (Prod + Preview) and `apps/web/.env.local`.
+   - **Operator hardening item (added to checklist):** have an admin/owner of
+     the marketplace org (or via Vercel marketplace controls) mint a
+     group-scoped `db:mint-token`-only token and replace this broad one, to
+     minimize blast radius if the server token leaks.
+   - Token value was never printed/logged/committed; temp files shredded.
+
+3. **Field-operator allowlist — PLACEHOLDER (no real users yet).** The
+   production auth database `user` table was queried read-only: **0 rows**.
+   No real signed-in user emails exist to seed the allowlist. The
+   env-driven server setting `FIELD_OPERATOR_ALLOWLIST` (comma-separated
+   emails) was created with a clearly-documented placeholder
+   (`field-operator@example.invalid`) in Vercel (Production environment-level
+   + Preview `rewrite/expo` branch-scoped) and `apps/web/.env.local`.
+   - **Operator checklist item:** replace the placeholder with the real
+     field-operator email(s) before launch.
+
+4. **Production env final confirmation (incident close-out).** Read-only
+   confirmation that the four Production env vars point at the **original**
+   hosts and carry tokens (values not printed):
+   - `TURSO_DATABASE_URL` host =
+     `rfid-warehouse-vercel-icfg-pwpqw6vsfjibquh1mwgj1cuk.aws-us-east-1.turso.io`
+     → matches original ✅
+   - `AUTH_DATABASE_URL` host =
+     `rfid-auth-vercel-icfg-pwpqw6vsfjibquh1mwgj1cuk.aws-us-east-1.turso.io`
+     → matches original ✅
+   - `TURSO_AUTH_TOKEN` present (len 336) ✅
+   - `AUTH_DATABASE_AUTH_TOKEN` present (len 336) ✅
+   Production is intact and unchanged from its original state following the
+   earlier accidental deletion/recovery during Preview re-pointing.
+
 ## Reproducing the spike
 
 ```sh
