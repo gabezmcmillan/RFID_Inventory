@@ -16,6 +16,13 @@ import { issueBolGetUrl } from "@/lib/bolBlob";
 import { getDb } from "@/lib/db";
 import { inventoryStatusBadge } from "@/lib/status";
 
+// Auth-gated + reads the warehouse DB and mints a presigned Blob URL at render,
+// so this page is inherently request-time. `force-dynamic` stops Next from
+// prerendering it at build, which would open the DB / hit Blob on a clean
+// machine. See docs/operations/sync-security-decision.md § "Cloud app auth
+// gate".
+export const dynamic = "force-dynamic";
+
 /** QR-code landing page (`/tag/{epc}`): box details + a link to its BOL document.
  * Printed labels carry this URL. Per the 2026-07-23 operator decision the whole
  * cloud app requires login, so this page is now behind the auth gate

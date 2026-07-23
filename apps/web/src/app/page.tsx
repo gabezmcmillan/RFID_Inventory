@@ -6,6 +6,12 @@ import { getDb } from "@/lib/db";
 import { getUser } from "@/lib/session";
 import { Cart } from "./cart/Cart";
 
+// Auth-gated + reads the warehouse DB at render (`getDb`), so this page is
+// inherently request-time. `force-dynamic` stops Next from prerendering it at
+// build, which would open the DB on a clean machine. See
+// docs/operations/sync-security-decision.md § "Cloud app auth gate".
+export const dynamic = "force-dynamic";
+
 /** Jobsite stock browse + cart. Server fetches the stock rows and delivery
  * buildings; the client `<Cart>` handles cart state and submits via the
  * `submitCart` server action. */

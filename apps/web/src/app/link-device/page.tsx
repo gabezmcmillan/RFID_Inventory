@@ -11,6 +11,13 @@ import { getRealSessionUser } from "@/lib/session";
 import { generateLinkCode } from "./actions";
 import { LinkDeviceClient } from "./LinkDeviceClient";
 
+// Auth-gated + resolves a REAL Better Auth session at render
+// (`getRealSessionUser`), so this page is inherently request-time.
+// `force-dynamic` stops Next from prerendering it at build, which would open
+// the auth DB on a clean machine. See docs/operations/sync-security-decision.md
+// § "Cloud app auth gate".
+export const dynamic = "force-dynamic";
+
 /**
  * `/link-device` — a signed-in web user generates a single-use, 5-minute
  * one-time token (server-side, via Better Auth's `oneTimeToken` plugin) and

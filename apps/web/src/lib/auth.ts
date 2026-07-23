@@ -61,7 +61,7 @@ function buildDialect(): { dialect: LibsqlDialect; url: string } {
     return { url, dialect: new LibsqlDialect({ url, authToken }) };
   }
   const localPath = resolve(
-    env.LOCAL_AUTH_DB_PATH ?? DEFAULT_LOCAL_AUTH_DB_PATH,
+    /*turbopackIgnore: true*/ env.LOCAL_AUTH_DB_PATH ?? DEFAULT_LOCAL_AUTH_DB_PATH,
   );
   return { url: `file:${localPath}`, dialect: new LibsqlDialect({ url: `file:${localPath}` }) };
 }

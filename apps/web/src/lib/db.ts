@@ -62,7 +62,12 @@ async function seedSchemaVersion(db: DomainDb): Promise<void> {
 
 /** Build a local-file DomainDb and apply all checked-in migrations. */
 async function openLocalDb(): Promise<DomainDb> {
-  const path = resolve(env.LOCAL_DB_PATH ?? DEFAULT_LOCAL_DB_PATH);
+  // `turbopackIgnore` keeps Turbopack's Node File Tracing from following this
+  // env-driven `path.resolve` and tracing the whole project (the NFT warning
+  // flagged this exact call via `api/health/route.ts`). This is the local-dev
+  // branch only — the production serverless branch opens no file. See
+  // `next.config.ts`.
+  const path = resolve(/*turbopackIgnore: true*/ env.LOCAL_DB_PATH ?? DEFAULT_LOCAL_DB_PATH);
   mkdirSync(dirname(path), { recursive: true });
   const client = await connect(path);
   const db = drizzleLocal({ client });

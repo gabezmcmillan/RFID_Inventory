@@ -9,6 +9,12 @@ import { getDb } from "@/lib/db";
 import { orderStateBadge, requestStatusBadge } from "@/lib/status";
 import { FocusRefresh } from "./FocusRefresh";
 
+// Auth-gated + reads the warehouse DB at render (`getDb`), so this page is
+// inherently request-time. `force-dynamic` stops Next from prerendering it at
+// build, which would open the DB on a clean machine. See
+// docs/operations/sync-security-decision.md § "Cloud app auth gate".
+export const dynamic = "force-dynamic";
+
 function OrderCard({ order }: { order: Order }) {
   const ref = order.order_ref || "";
   const state = orderStateBadge(order.open);

@@ -13,6 +13,14 @@ import { listDevicesWithLinker } from "@/lib/devices";
 
 import { DevicesTable } from "./DevicesTable";
 
+// Auth-gated + reads the auth DB at render (`listDevicesWithLinker`), so this
+// page is inherently request-time. `force-dynamic` stops Next from prerendering
+// it at build, which would open `.dev-data/auth.db` on a clean machine (CI has
+// no `.env.local`, so `getUser()` returns null without calling `headers()` and
+// the page would otherwise be statically prerendered → CANTOPEN). See
+// docs/operations/sync-security-decision.md § "Cloud app auth gate".
+export const dynamic = "force-dynamic";
+
 export default async function AdminDevicesPage(): Promise<React.ReactNode> {
   const devices = await listDevicesWithLinker();
   return (

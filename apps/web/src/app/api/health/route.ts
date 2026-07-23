@@ -8,7 +8,13 @@ import { getDb } from "@/lib/db";
  * Returns a generic status only — never the raw exception text (plan 010
  * Phase 4.3), so an internal error doesn't leak driver/host details to an
  * unauthenticated caller. The detail is logged server-side instead.
+ *
+ * `force-dynamic`: a liveness probe is inherently request-time, and this stops
+ * Next from prerendering the GET handler at build (which would open the DB on
+ * a clean machine).
  */
+export const dynamic = "force-dynamic";
+
 export async function GET(): Promise<Response> {
   try {
     const db = await getDb();

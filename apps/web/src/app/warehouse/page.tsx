@@ -18,6 +18,12 @@ import { getDb } from "@/lib/db";
 import { inventoryStatusBadge } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
+// Auth-gated + reads the warehouse DB at render (`getDb`), so this page is
+// inherently request-time. `force-dynamic` stops Next from prerendering it at
+// build, which would open the DB on a clean machine. See
+// docs/operations/sync-security-decision.md § "Cloud app auth gate".
+export const dynamic = "force-dynamic";
+
 /** A filter toggle: a link styled as a small button, active state filled. */
 function ToggleLink({ href, label, active }: { href: string; label: string; active: boolean }) {
   return (

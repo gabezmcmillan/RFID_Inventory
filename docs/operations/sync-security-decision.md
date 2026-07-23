@@ -937,3 +937,32 @@ reachable without a cookie, the bearer-only API passing the proxy (route
 enforces bearer), authenticated requests passing, and the dev bypass. The
 function is the single source of truth; the matcher is a perf hint + safety
 net.
+
+### Hermetic build — `force-dynamic` on DB/auth pages (2026-07-23)
+
+CI failed: `next build` on a clean ubuntu runner (no `.env.local`) prerendered
+`/admin/devices` and opened `.dev-data/auth.db` → `ConnectionFailed … : 14`
+(SQLITE_CANTOPEN). Root cause: with no `BETTER_AUTH_SECRET`, `getUser()`
+returns `null` WITHOUT calling `headers()`, so the page emits no dynamic
+signal → Next statically prerendered it → `listDevicesWithLinker()` (called at
+the top of the page, before `<Header/>`/`getUser`) opened the auth DB at build
+time. It only "worked" locally because `.env.local` sets the secret (so
+`getUser()` calls `headers()` → dynamic) and points both DBs at cloud Turso
+(no local file).
+
+Fix: every page/route that touches the warehouse DB, the auth DB, or a Blob
+presigned URL at render time is now `export const dynamic = "force-dynamic"` —
+`/`, `/requests`, `/warehouse`, `/admin/devices`, `/tag/[epc]`,
+`/link-device`, and `GET /api/health`. These are auth-gated, request-time
+surfaces, so `force-dynamic` is the honest signal and guarantees zero DB
+connections during `next build` on any platform. Verified hermetically: with
+`.env.local` and `.dev-data` both moved aside, `pnpm --filter @rfid/web build`
+succeeds and `.dev-data` is NOT recreated (no DB opened at build); all
+DB/auth pages render as `ƒ (Dynamic)`, only the DB-free pages
+(`/_not-found`, `/field/install`, `/login`, `/sign-in`) stay `○ (Static)`.
+
+Also quieted the Turbopack NFT warning ("Encountered unexpected file in NFT
+list … `src/lib/db.ts`") by adding a `/*turbopackIgnore: true*/` comment to the
+env-driven `path.resolve` in the local-dev DB branch of `src/lib/db.ts` (and
+the identical one in `src/lib/auth.ts`) — the production serverless branch
+opens no file, so tracing the whole project was unnecessary.
