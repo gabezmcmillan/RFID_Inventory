@@ -14,10 +14,7 @@ export function LockScreen({ onUnlock }: { onUnlock: () => void }): React.ReactN
   return (
     <View style={StyleSheet.absoluteFill} className="bg-background items-center justify-center">
       <View className="w-full max-w-md px-6">
-        <Text className="mb-1 text-center text-3xl font-extrabold tracking-tight text-brand-navy">RFID Field</Text>
-        <Text className="mb-6 text-center text-sm text-muted-foreground">
-          Enter the device PIN to unlock.
-        </Text>
+        <Text className="mb-8 text-center text-3xl font-extrabold tracking-tight text-brand-navy">RFID Field</Text>
         <PinEntry slot="device" title="Device PIN" onUnlock={onUnlock} />
       </View>
     </View>

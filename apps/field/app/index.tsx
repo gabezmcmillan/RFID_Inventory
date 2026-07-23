@@ -7,12 +7,18 @@
  * idle here. The SyncStatusBanner renders above this screen from the
  * SyncProvider; the reader connection chip here gives a glanceable hardware
  * status.
+ *
+ * The shell header owns the "RFID Field" title; the body leads with the
+ * reader-connection chip and the tile grid. The grid is wrapped in a
+ * ScrollView so on smaller iPhones the lower tiles stay reachable (a partial
+ * tile stays visible so scrolling is obvious); on taller devices the whole
+ * grid fits without scrolling.
  */
 
 import { countOpenRequests } from "@rfid/domain";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import {
   Boxes,
   ClipboardList,
@@ -76,40 +82,39 @@ export default function HomeScreen(): React.ReactNode {
   }, [db]);
 
   return (
-    <View className="flex-1 px-5 pt-2">
-      <View className="flex-row items-center justify-between pb-3">
-        <Text className="text-3xl font-extrabold tracking-tight text-brand-navy">RFID Field</Text>
-        <View
-          className={`flex-row items-center gap-1.5 rounded-full px-3 py-1.5 ${
-            connected ? "bg-status-in/15" : "bg-muted"
-          }`}
-        >
-          <View className={`h-2 w-2 rounded-full ${connected ? "bg-status-in" : "bg-muted-foreground"}`} />
-          <Text className={`text-xs font-semibold ${connected ? "text-status-in" : "text-muted-foreground"}`}>
-            {connected ? "Reader connected" : "Reader off"}
-          </Text>
-        </View>
+    <ScrollView
+      contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40, gap: 12 }}
+    >
+      <View
+        className={`flex-row items-center gap-2 self-start rounded-full px-3 py-1.5 ${
+          connected ? "bg-status-in/15" : "bg-muted"
+        }`}
+      >
+        <View className={`h-2 w-2 rounded-full ${connected ? "bg-status-in" : "bg-muted-foreground"}`} />
+        <Text className={`text-xs font-semibold ${connected ? "text-status-in" : "text-muted-foreground"}`}>
+          {connected ? "Reader connected" : "Reader off"}
+        </Text>
       </View>
 
       <View className="flex-row flex-wrap gap-3">
         {MODES.map((m) => (
           <Link key={m.href} href={m.href} asChild>
-            <Pressable className="w-[47%] flex-grow rounded-2xl border border-border bg-card p-4 active:opacity-70">
-              <View className="mb-2 h-11 w-11 items-center justify-center rounded-xl bg-brand-navy/10">
-                <Icon as={m.icon} size={22} className="text-brand-navy" />
+            <Pressable className="w-[47%] flex-grow rounded-2xl border border-border bg-card p-3.5 active:opacity-70">
+              <View className="mb-1.5 h-10 w-10 items-center justify-center rounded-xl bg-brand-navy/10">
+                <Icon as={m.icon} size={20} className="text-brand-navy" />
               </View>
-              <Text className="text-lg font-bold text-foreground">{m.title}</Text>
-              <Text className="mt-0.5 text-sm leading-snug text-muted-foreground">{m.subtitle}</Text>
+              <Text className="text-base font-bold text-foreground">{m.title}</Text>
+              <Text className="mt-0.5 text-xs leading-snug text-muted-foreground">{m.subtitle}</Text>
             </Pressable>
           </Link>
         ))}
         <Link href="/requests" asChild>
-          <Pressable className="relative w-[47%] flex-grow rounded-2xl border border-border bg-card p-4 active:opacity-70">
-            <View className="mb-2 h-11 w-11 items-center justify-center rounded-xl bg-brand-info/15">
-              <Icon as={ClipboardList} size={22} className="text-brand-info" />
+          <Pressable className="relative w-[47%] flex-grow rounded-2xl border border-border bg-card p-3.5 active:opacity-70">
+            <View className="mb-1.5 h-10 w-10 items-center justify-center rounded-xl bg-brand-info/15">
+              <Icon as={ClipboardList} size={20} className="text-brand-info" />
             </View>
-            <Text className="text-lg font-bold text-foreground">Requests</Text>
-            <Text className="mt-0.5 text-sm leading-snug text-muted-foreground">Open material requests</Text>
+            <Text className="text-base font-bold text-foreground">Requests</Text>
+            <Text className="mt-0.5 text-xs leading-snug text-muted-foreground">Open material requests</Text>
             {openCount > 0 ? (
               <Badge variant="destructive" className="absolute right-2.5 top-2.5">
                 {openCount}
@@ -118,6 +123,6 @@ export default function HomeScreen(): React.ReactNode {
           </Pressable>
         </Link>
       </View>
-    </View>
+    </ScrollView>
   );
 }

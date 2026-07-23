@@ -12,8 +12,8 @@
  * back to the enter step.
  */
 
-import { useState } from "react";
-import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { useNavigation, useRouter } from "expo-router";
 import { View } from "react-native";
 
 import { Text } from "@/components/ui/text";
@@ -25,6 +25,7 @@ type Step = "enter" | "confirm";
 
 export default function SetPinScreen(): React.ReactNode {
   const router = useRouter();
+  const navigation = useNavigation();
   const lock = useLock();
   const [step, setStep] = useState<Step>("enter");
   const [first, setFirst] = useState("");
@@ -32,6 +33,12 @@ export default function SetPinScreen(): React.ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [errorSignal, setErrorSignal] = useState(0);
   const [busy, setBusy] = useState(false);
+
+  // The shell header owns the screen title; reflect the current step there so
+  // the body doesn't have to repeat it.
+  useEffect(() => {
+    navigation.setOptions({ title: step === "enter" ? "Set Device PIN" : "Confirm PIN" });
+  }, [navigation, step]);
 
   const resetToEnter = (msg: string): void => {
     setError(msg);
@@ -71,19 +78,15 @@ export default function SetPinScreen(): React.ReactNode {
   };
 
   return (
-    <KeyboardDismissible className="flex-1 p-6 gap-6">
+    <KeyboardDismissible className="flex-1 justify-between p-6 pb-8">
       <View className="gap-2">
-        <Text className="text-2xl font-bold text-brand-navy">
-          {step === "enter" ? "Set device PIN" : "Confirm PIN"}
-        </Text>
         <Text className="text-sm leading-snug text-muted-foreground">
           {step === "enter"
             ? "This PIN unlocks the app on this device. The person who links the device may not be the person using it day-to-day, so share this PIN with the warehouse operator."
             : "Re-enter the PIN to confirm."}
         </Text>
+        {error ? <Text className="text-destructive">{error}</Text> : null}
       </View>
-
-      {error ? <Text className="text-destructive">{error}</Text> : null}
 
       {step === "enter" ? (
         <PinPad

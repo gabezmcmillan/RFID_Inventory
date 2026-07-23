@@ -58,7 +58,7 @@ export function EventsScreen(): React.ReactNode {
       />
 
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 40, gap: 8 }}
+        contentContainerStyle={{ paddingBottom: 60, gap: 8 }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >

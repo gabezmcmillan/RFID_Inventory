@@ -67,7 +67,7 @@ export function RequestsScreen(): React.ReactNode {
 
   return (
     <View className="flex-1 p-4">
-      <ScrollView contentContainerStyle={{ paddingBottom: 40, gap: 8 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 60, gap: 8 }}>
         {rows.length === 0 ? (
           <Text className="mt-3 text-sm italic text-muted-foreground">No requests.</Text>
         ) : (

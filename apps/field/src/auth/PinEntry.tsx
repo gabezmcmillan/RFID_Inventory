@@ -12,7 +12,6 @@
  */
 
 import { useEffect, useState } from "react";
-import { View } from "react-native";
 
 import { Text } from "@/components/ui/text";
 import { KeyboardDismissible } from "@/components/KeyboardDismissible";
@@ -72,10 +71,7 @@ export function PinEntry({ slot, title, placeholder = "PIN", onUnlock }: PinEntr
 
   return (
     <KeyboardDismissible className="flex-1 p-5 gap-6">
-      <View className="gap-2">
-        <Text className="text-2xl font-bold text-brand-navy">{title}</Text>
-        <Text className="text-sm text-muted-foreground">{placeholder}</Text>
-      </View>
+      <Text className="text-2xl font-bold text-brand-navy">{title}</Text>
 
       {error && !locked ? <Text className="text-destructive">{error}</Text> : null}
       {locked ? (
