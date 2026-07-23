@@ -150,5 +150,7 @@ pnpm --filter @rfid/web exec tsx "$ROOT/scripts/verify-dev-db.mjs"
 echo
 echo "Done. Vercel owns/provisions the dev Turso resources:"
 echo "  $WH_RESOURCE, $AUTH_RESOURCE (Development scope only)."
-echo "Direct `turso auth login` is NOT required."
+# Single-quoted so the backticks are literal text, NOT command substitution.
+# Never execute `turso auth login` or any Turso CLI from this script.
+echo 'Direct `turso auth login` is NOT required.'
 echo "Refresh local env anytime with:  pnpm --filter @rfid/web pull:dev"
