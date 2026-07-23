@@ -42,7 +42,7 @@ export function FieldRow({
               key={opt}
               onPress={() => onChange(opt)}
               className={cn(
-                "rounded-md px-3 py-2",
+                "rounded-lg px-3.5 py-2.5 active:opacity-70",
                 value === opt ? "bg-primary" : "bg-muted",
               )}
             >
@@ -82,7 +82,7 @@ function AddVendorChip({ onAdd }: { onAdd: (name: string) => Promise<void> | voi
   const [name, setName] = useState("");
   if (!adding) {
     return (
-      <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => setAdding(true)}>
+      <Pressable className="rounded-lg bg-muted px-3.5 py-2.5 active:opacity-70" onPress={() => setAdding(true)}>
         <Text className="text-sm text-foreground">+ add</Text>
       </Pressable>
     );
@@ -97,7 +97,7 @@ function AddVendorChip({ onAdd }: { onAdd: (name: string) => Promise<void> | voi
         className="w-30 py-1"
       />
       <Pressable
-        className="rounded-md bg-muted px-3 py-2"
+        className="rounded-lg bg-muted px-3.5 py-2.5 active:opacity-70"
         onPress={async () => {
           const trimmed = name.trim();
           if (trimmed) await onAdd(trimmed);

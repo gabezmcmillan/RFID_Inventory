@@ -114,7 +114,7 @@ function AdminTools(): React.ReactNode {
       <VendorSection vendors={vendors} onRemove={onRemoveVendor} />
       <ClearDbSection onConfirm={onClearAll} />
       <ChangePinSection onMsg={setMsg} />
-      {msg ? <Text className="mt-2 font-semibold text-primary">{msg}</Text> : null}
+      {msg ? <Text className="mt-3 text-center text-sm font-semibold text-primary">{msg}</Text> : null}
     </ScrollView>
   );
 }
@@ -155,10 +155,10 @@ function TagEditor({ onMsg }: { onMsg: (m: string) => void }): React.ReactNode {
   };
 
   return (
-    <View className="rounded-lg border border-border bg-card p-3">
-      <Text className="mb-2 text-base font-bold text-foreground">Edit tag</Text>
+    <View className="rounded-xl border border-border bg-card p-4">
+      <Text className="mb-3 text-lg font-bold text-brand-navy">Edit tag</Text>
       <View className="flex-row items-center gap-2">
-        <Input className="flex-1" value={epc} onChangeText={setEpc} placeholder="EPC" autoCapitalize="characters" />
+        <Input className="flex-1" value={epc} onChangeText={setEpc} placeholder="EPC" autoFocus autoCapitalize="characters" autoCorrect={false} />
         <Button variant="secondary" onPress={() => void lookup()}><Text>Find</Text></Button>
       </View>
       {tag
@@ -211,10 +211,10 @@ function ClearFlagSection({ onMsg }: { onMsg: (m: string) => void }): React.Reac
     onMsg(result.message);
   };
   return (
-    <View className="rounded-lg border border-border bg-card p-3">
-      <Text className="mb-2 text-base font-bold text-foreground">Clear flag</Text>
+    <View className="rounded-xl border border-border bg-card p-4">
+      <Text className="mb-3 text-lg font-bold text-brand-navy">Clear flag</Text>
       <View className="flex-row items-center gap-2">
-        <Input className="flex-1" value={epc} onChangeText={setEpc} placeholder="EPC" autoCapitalize="characters" />
+        <Input className="flex-1" value={epc} onChangeText={setEpc} placeholder="EPC" autoCapitalize="characters" autoCorrect={false} />
         <Button variant="secondary" onPress={() => void run()}><Text>Clear</Text></Button>
       </View>
     </View>
@@ -240,28 +240,28 @@ function DeleteGroupSection({
   };
 
   return (
-    <View className="rounded-lg border border-border bg-card p-3">
-      <Text className="mb-2 text-base font-bold text-foreground">Delete group</Text>
-      <Text className="mb-1 mt-1 text-xs font-semibold text-foreground">Item type</Text>
-      <View className="flex-row flex-wrap gap-1.5">
+    <View className="rounded-xl border border-border bg-card p-4">
+      <Text className="mb-3 text-lg font-bold text-brand-navy">Delete group</Text>
+      <Text className="mb-1.5 mt-1 text-xs font-semibold text-foreground">Item type</Text>
+      <View className="flex-row flex-wrap gap-2">
         {ITEM_TYPES.map((t) => (
-          <Pressable key={t} className={cn("rounded-md px-3 py-1.5", itemType === t ? "bg-brand-info" : "bg-muted")} onPress={() => setItemType(t)}>
-            <Text className={cn("text-[13px]", itemType === t ? "text-white font-semibold" : "text-foreground")}>{t}</Text>
+          <Pressable key={t} className={cn("rounded-lg px-3.5 py-2 active:opacity-70", itemType === t ? "bg-brand-info" : "bg-muted")} onPress={() => setItemType(t)}>
+            <Text className={cn("text-sm", itemType === t ? "text-white font-semibold" : "text-foreground")}>{t}</Text>
           </Pressable>
         ))}
       </View>
-      <Text className="mb-1 mt-2 text-xs font-semibold text-foreground">Group by</Text>
-      <View className="flex-row flex-wrap gap-1.5">
-        <Pressable className={cn("rounded-md px-3 py-1.5", groupBy === "bol" ? "bg-brand-info" : "bg-muted")} onPress={() => setGroupBy("bol")}>
-          <Text className={cn("text-[13px]", groupBy === "bol" ? "text-white font-semibold" : "text-foreground")}>BOL</Text>
+      <Text className="mb-1.5 mt-3 text-xs font-semibold text-foreground">Group by</Text>
+      <View className="flex-row flex-wrap gap-2">
+        <Pressable className={cn("rounded-lg px-3.5 py-2 active:opacity-70", groupBy === "bol" ? "bg-brand-info" : "bg-muted")} onPress={() => setGroupBy("bol")}>
+          <Text className={cn("text-sm", groupBy === "bol" ? "text-white font-semibold" : "text-foreground")}>BOL</Text>
         </Pressable>
-        <Pressable className={cn("rounded-md px-3 py-1.5", groupBy === "building" ? "bg-brand-info" : "bg-muted")} onPress={() => setGroupBy("building")}>
-          <Text className={cn("text-[13px]", groupBy === "building" ? "text-white font-semibold" : "text-foreground")}>Building</Text>
+        <Pressable className={cn("rounded-lg px-3.5 py-2 active:opacity-70", groupBy === "building" ? "bg-brand-info" : "bg-muted")} onPress={() => setGroupBy("building")}>
+          <Text className={cn("text-sm", groupBy === "building" ? "text-white font-semibold" : "text-foreground")}>Building</Text>
         </Pressable>
       </View>
-      <Text className="mb-1 mt-2 text-xs font-semibold text-foreground">Value</Text>
+      <Text className="mb-1.5 mt-3 text-xs font-semibold text-foreground">Value</Text>
       <Input value={value} onChangeText={setValue} placeholder="BOL # / Building # / Item Name" />
-      <Button variant="destructive" className="mt-2.5" onPress={confirm}>
+      <Button variant="destructive" className="mt-3" onPress={confirm}>
         <Text>Delete group</Text>
       </Button>
     </View>
@@ -277,13 +277,13 @@ function VendorSection({
   onRemove: (name: string) => void;
 }): React.ReactNode {
   return (
-    <View className="rounded-lg border border-border bg-card p-3">
-      <Text className="mb-2 text-base font-bold text-foreground">Vendors</Text>
+    <View className="rounded-xl border border-border bg-card p-4">
+      <Text className="mb-3 text-lg font-bold text-brand-navy">Vendors</Text>
       {vendors.length === 0 ? (
         <Text className="text-sm italic text-muted-foreground">No vendors.</Text>
       ) : (
         vendors.map((v) => (
-          <View key={v} className="flex-row items-center justify-between py-1.5">
+          <View key={v} className="flex-row items-center justify-between border-t border-border py-2 first:border-t-0">
             <Text className="text-[15px] text-foreground">{v}</Text>
             <Button variant="destructive" size="sm" onPress={() => onRemove(v)}><Text>Remove</Text></Button>
           </View>
@@ -296,8 +296,8 @@ function VendorSection({
 /** Clear database with a double confirm. */
 function ClearDbSection({ onConfirm }: { onConfirm: () => void }): React.ReactNode {
   return (
-    <View className="rounded-lg border border-border bg-card p-3">
-      <Text className="mb-2 text-base font-bold text-foreground">Danger zone</Text>
+    <View className="rounded-xl border border-destructive bg-destructive/5 p-4">
+      <Text className="mb-3 text-lg font-bold text-destructive">Danger zone</Text>
       <Button variant="destructive" onPress={onConfirm}>
         <Text>Clear database</Text>
       </Button>
@@ -327,8 +327,8 @@ function ChangePinSection({ onMsg }: { onMsg: (m: string) => void }): React.Reac
     }
   };
   return (
-    <View className="rounded-lg border border-border bg-card p-3">
-      <Text className="mb-2 text-base font-bold text-foreground">Change PIN</Text>
+    <View className="rounded-xl border border-border bg-card p-4">
+      <Text className="mb-3 text-lg font-bold text-brand-navy">Change PIN</Text>
       <Input
         value={pin}
         onChangeText={setPin}
@@ -336,7 +336,7 @@ function ChangePinSection({ onMsg }: { onMsg: (m: string) => void }): React.Reac
         secureTextEntry
         keyboardType="number-pad"
       />
-      <Button className="mt-2.5" disabled={busy} onPress={() => void run()}><Text>{busy ? "…" : "Save PIN"}</Text></Button>
+      <Button className="mt-3" disabled={busy} onPress={() => void run()}><Text>{busy ? "…" : "Save PIN"}</Text></Button>
     </View>
   );
 }

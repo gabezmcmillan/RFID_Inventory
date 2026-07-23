@@ -76,17 +76,17 @@ export function CheckoutConfirmCard({
   const verb = staged ? "Stage" : "Deliver";
 
   return (
-    <View className="rounded-lg border border-border bg-card p-3.5">
-      <Text className="mb-1 text-lg font-bold text-foreground">
+    <View className="rounded-xl border border-border bg-card p-4">
+      <Text className="mb-1 text-lg font-bold text-brand-navy">
         {lookupResult.item_type}
         {lookupResult.item_name ? ` · ${lookupResult.item_name}` : ""}
       </Text>
-      <Text className="mt-0.5 text-[13px] text-muted-foreground">EPC: {lookupResult.epc}</Text>
+      <Text className="mt-0.5 font-mono text-[13px] text-muted-foreground">EPC: {lookupResult.epc}</Text>
       <Text className="mt-0.5 text-[13px] text-muted-foreground">
         BOL {lookupResult.bol_number || "n/a"} · Received for Bldg {lookupResult.building || "n/a"}
       </Text>
       <Text className="mt-0.5 text-[13px] text-muted-foreground">
-        Units: <Text className="font-semibold text-foreground">{remaining}</Text> of {lookupResult.quantity} remaining
+        Units: <Text className="font-mono font-semibold tabular-nums text-foreground">{remaining}</Text> of <Text className="font-mono tabular-nums">{lookupResult.quantity}</Text> remaining
       </Text>
 
       <Text className="mb-1 mt-3 text-[13px] font-semibold text-foreground">Units to draw</Text>
@@ -94,7 +94,7 @@ export function CheckoutConfirmCard({
         <Button size="icon" variant="secondary" onPress={() => step(-1)}>
           <Text>−</Text>
         </Button>
-        <Text className="min-w-12 text-center text-lg font-semibold">{amount}</Text>
+        <Text className="min-w-12 text-center font-mono text-2xl font-semibold tabular-nums">{amount}</Text>
         <Button size="icon" variant="secondary" onPress={() => step(1)}>
           <Text>+</Text>
         </Button>
@@ -106,7 +106,7 @@ export function CheckoutConfirmCard({
           <Pressable
             key={opt}
             onPress={() => setBuilding(opt)}
-            className={cn("rounded-md px-3.5 py-2", building === opt ? "bg-brand-info" : "bg-muted")}
+            className={cn("rounded-lg px-3.5 py-2 active:opacity-70", building === opt ? "bg-brand-info" : "bg-muted")}
           >
             <Text
               className={cn(

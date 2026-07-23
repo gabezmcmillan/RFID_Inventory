@@ -232,7 +232,7 @@ export default function SettingsScreen(): React.ReactNode {
     >
       <View className="flex-row items-center justify-between">
         <View>
-          <Text className="text-base font-semibold">Native Bluetooth sled</Text>
+          <Text className="text-base font-bold text-foreground">Native Bluetooth sled</Text>
           <Text className="text-xs text-muted-foreground">Off = simulated reader (dev)</Text>
         </View>
         <Switch checked={useNative} onCheckedChange={(v) => void toggleTransport(v)} disabled={busy} />
@@ -244,7 +244,7 @@ export default function SettingsScreen(): React.ReactNode {
       ) : null}
 
       <View className="flex-row items-center justify-between">
-        <Text className="text-base font-semibold">Check power</Text>
+        <Text className="text-base font-bold text-foreground">Check power</Text>
         <View className="flex-row items-center gap-3">
           <Button size="icon" variant="secondary" onPress={() => adjustPower(-1)}>
             <Text>−</Text>
@@ -256,7 +256,7 @@ export default function SettingsScreen(): React.ReactNode {
         </View>
       </View>
 
-      <Text className="text-sm font-semibold mt-2 text-foreground">Label printer (Zebra ZD621R)</Text>
+      <Text className="text-base font-bold text-brand-navy mt-2">Label printer (Zebra ZD621R)</Text>
       <Text className="text-xs text-muted-foreground">Host IP on the warehouse LAN (empty = printing disabled)</Text>
       <Input
         value={printerHost}
@@ -277,7 +277,7 @@ export default function SettingsScreen(): React.ReactNode {
         <Text className={statusOk ? "text-primary text-sm mt-1.5" : "text-destructive text-sm mt-1.5"}>{statusMsg}</Text>
       ) : null}
 
-      <Text className="text-sm font-semibold mt-2 text-foreground">Cloud base URL</Text>
+      <Text className="text-base font-bold text-brand-navy mt-2">Cloud base URL</Text>
       <Text className="text-xs text-muted-foreground">Base for label QR links (empty = no QR code)</Text>
       <Input
         value={cloudBaseUrl}
@@ -288,7 +288,7 @@ export default function SettingsScreen(): React.ReactNode {
         keyboardType="url"
       />
 
-      <Text className="text-sm font-semibold mt-2 text-foreground">Mistral OCR API key</Text>
+      <Text className="text-base font-bold text-brand-navy mt-2">Mistral OCR API key</Text>
       <Text className="text-xs text-muted-foreground">Enables online BOL extraction (empty = local on-device OCR only)</Text>
       <Input
         value={mistralKey}
@@ -301,7 +301,7 @@ export default function SettingsScreen(): React.ReactNode {
       />
 
       <View className="mt-2 border-t border-border pt-4 gap-2">
-        <Text className="text-sm font-semibold text-foreground">Web server URL</Text>
+        <Text className="text-base font-bold text-brand-navy">Web server URL</Text>
         {fieldEnv.isProductionBuild ? (
           <View className="gap-1">
             <Text className="text-xs text-muted-foreground">
@@ -346,12 +346,12 @@ export default function SettingsScreen(): React.ReactNode {
           </>
         )}
 
-        <Text className="text-sm font-semibold mt-2 text-foreground">Device account</Text>
+        <Text className="text-base font-bold text-brand-navy mt-2">Device account</Text>
         {linked ? (
           <View className="gap-2">
             <View className="flex-row items-center justify-between">
               <View>
-                <Text className="text-base font-semibold">{linked.name}</Text>
+                <Text className="text-base font-bold text-foreground">{linked.name}</Text>
                 <Text className="text-xs text-muted-foreground">{linked.email}</Text>
               </View>
               <Button variant="secondary" disabled={unlinking} onPress={() => void unlink()}>
@@ -360,7 +360,7 @@ export default function SettingsScreen(): React.ReactNode {
             </View>
           </View>
         ) : (
-          <Button onPress={() => router.push("/link-device")}>
+          <Button size="lg" onPress={() => router.push("/link-device")}>
             <Text>Link device</Text>
           </Button>
         )}
@@ -414,7 +414,7 @@ function ChangeDevicePinSection(): React.ReactNode {
 
   return (
     <View className="mt-3 gap-2">
-      <Text className="text-sm font-semibold text-foreground">Device unlock PIN</Text>
+      <Text className="text-base font-bold text-brand-navy">Device unlock PIN</Text>
       <Text className="text-xs text-muted-foreground">
         The PIN the warehouse operator enters to unlock this device.
       </Text>

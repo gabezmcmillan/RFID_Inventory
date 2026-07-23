@@ -71,21 +71,24 @@ export function BolDocsScreen(): React.ReactNode {
   return (
     <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 10 }}>
       {docs.length === 0 ? (
-        <Text className="my-3 text-sm italic text-muted-foreground">No BOL documents yet. Capture one from Check In.</Text>
+        <View className="mt-2 rounded-xl border border-dashed border-border bg-muted/30 p-4">
+          <Text className="text-sm font-semibold text-foreground">No BOL documents yet</Text>
+          <Text className="mt-0.5 text-sm text-muted-foreground">Capture one from the Check In screen to get started.</Text>
+        </View>
       ) : (
         docs.map((d) => (
           <Pressable
             key={d.id}
-            className="mb-1.5 rounded-lg border border-border bg-card p-3"
+            className="rounded-xl border border-border bg-card p-3.5 active:opacity-70"
             onPress={() => router.setParams({ docId: String(d.id) })}
           >
             <View className="flex-row items-center justify-between">
-              <Text className="text-base font-semibold text-foreground">
+              <Text className="flex-1 text-base font-bold text-foreground">
                 {d.storage_url ? "☁ " : ""}
                 {d.bol_number || "(unnamed)"}
                 {d.auto_named ? " · auto" : ""}
               </Text>
-              <Text className="text-xs font-semibold text-muted-foreground">{d.boxes} box{d.boxes === 1 ? "" : "es"}</Text>
+              <Text className="font-mono text-xs font-semibold tabular-nums text-muted-foreground">{d.boxes} box{d.boxes === 1 ? "" : "es"}</Text>
             </View>
             <Text className="mt-1 text-xs text-muted-foreground">
               {d.source} · {d.pages} page{d.pages === 1 ? "" : "s"}
@@ -148,7 +151,7 @@ function BolDocDetail({
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
     >
-      <Text className="text-xl font-bold text-foreground">{doc.bol_number || "(unnamed)"}</Text>
+      <Text className="text-2xl font-bold text-brand-navy">{doc.bol_number || "(unnamed)"}</Text>
       <Text className="text-[13px] text-muted-foreground">
         {doc.source} · {doc.pages} page{doc.pages === 1 ? "" : "s"}
         {doc.vendor ? ` · ${doc.vendor}` : ""}
@@ -159,7 +162,7 @@ function BolDocDetail({
       {pageUris.length > 0 ? (
         <View className="my-2 gap-2.5">
           {pageUris.map((uri) => (
-            <Image key={uri} source={{ uri }} className="h-65 w-full rounded-md border border-border" resizeMode="contain" />
+            <Image key={uri} source={{ uri }} className="h-65 w-full rounded-lg border border-border" resizeMode="contain" />
           ))}
         </View>
       ) : (
@@ -175,12 +178,12 @@ function BolDocDetail({
       </View>
 
       {confirmingDelete ? (
-        <View className="rounded-lg border border-border bg-muted/40 p-2">
-          <Text className="mt-2 text-sm font-semibold text-foreground">Enter admin PIN to delete</Text>
+        <View className="rounded-xl border border-destructive bg-destructive/10 p-3">
+          <Text className="text-sm font-semibold text-destructive">Enter admin PIN to delete</Text>
           <PinPrompt onUnlock={() => void onDelete()} />
         </View>
       ) : (
-        <Button variant="destructive" className="mt-2.5" disabled={busy} onPress={() => setConfirmingDelete(true)}>
+        <Button variant="destructive" className="mt-3" disabled={busy} onPress={() => setConfirmingDelete(true)}>
           <Text>Delete document</Text>
         </Button>
       )}

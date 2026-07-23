@@ -111,65 +111,71 @@ export function SweepScreen(): React.ReactNode {
   const totalUnits = Object.values(counts).reduce((a, b) => a + b, 0);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 6 }}>
-      <View className="mb-2 flex-row items-baseline gap-2.5">
-        <Text className="text-[32px] font-bold text-foreground">{distinct}</Text>
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60, gap: 12 }}>
+      <View className="flex-row items-baseline gap-3">
+        <Text className="font-mono text-4xl font-bold tabular-nums text-brand-navy">{distinct}</Text>
         <Text className="text-sm text-muted-foreground">distinct tags · {totalUnits} units counted</Text>
       </View>
 
-      <Button variant="secondary" className="mb-2" onPress={() => readerService.injectScan([randomEpc()])}>
+      <Button variant="secondary" onPress={() => readerService.injectScan([randomEpc()])}>
         <Text>Simulate scan</Text>
       </Button>
 
-      <Text className="mb-1 mt-3 text-sm font-semibold text-foreground">Counts by type</Text>
-      {Object.keys(counts).length === 0 ? (
-        <Text className="text-sm italic text-muted-foreground">No tags scanned yet.</Text>
-      ) : (
-        Object.entries(counts).map(([type, n]) => (
-          <View key={type} className="flex-row justify-between py-1">
-            <Text className="text-base font-semibold text-foreground">{type}</Text>
-            <Text className="text-base text-foreground">{n} units</Text>
-          </View>
-        ))
-      )}
+      <View className="rounded-xl border border-border bg-card p-3">
+        <Text className="mb-1 text-sm font-semibold text-foreground">Counts by type</Text>
+        {Object.keys(counts).length === 0 ? (
+          <Text className="text-sm italic text-muted-foreground">No tags scanned yet. Pull the trigger to start.</Text>
+        ) : (
+          Object.entries(counts).map(([type, n]) => (
+            <View key={type} className="flex-row justify-between border-t border-border py-1.5 first:border-t-0">
+              <Text className="text-base font-semibold text-foreground">{type}</Text>
+              <Text className="font-mono text-base tabular-nums text-foreground">{n} units</Text>
+            </View>
+          ))
+        )}
+      </View>
 
-      <Text className="mb-1 mt-3 text-sm font-semibold text-foreground">Unknown ({unknown.length})</Text>
-      {unknown.length === 0 ? (
-        <Text className="text-sm italic text-muted-foreground">None.</Text>
-      ) : (
-        unknown.map((e) => <Text key={e} className="font-mono text-xs text-muted-foreground">{e}</Text>)
-      )}
+      <View className="rounded-xl border border-border bg-card p-3">
+        <Text className="mb-1 text-sm font-semibold text-foreground">Unknown ({unknown.length})</Text>
+        {unknown.length === 0 ? (
+          <Text className="text-sm italic text-muted-foreground">None.</Text>
+        ) : (
+          unknown.map((e) => <Text key={e} className="font-mono text-xs text-muted-foreground">{e}</Text>)
+        )}
+      </View>
 
-      <Text className="mb-1 mt-3 text-sm font-semibold text-foreground">Flagged ({flagged.length})</Text>
-      {flagged.length === 0 ? (
-        <Text className="text-sm italic text-muted-foreground">None.</Text>
-      ) : (
-        flagged.map((f) => (
-          <View key={f.epc} className="my-1 rounded-md border border-destructive bg-destructive/10 p-2.5">
-            <Text className="text-[13px] font-semibold text-destructive">⚠ {f.flag}</Text>
-            <Text className="mt-0.5 text-xs text-muted-foreground">{f.item_type} · BOL {f.bol_number || "n/a"} · Bldg {f.building || "n/a"}</Text>
-            <Text className="font-mono text-xs text-muted-foreground">{f.epc}</Text>
-          </View>
-        ))
-      )}
+      <View className="rounded-xl border border-border bg-card p-3">
+        <Text className="mb-1 text-sm font-semibold text-foreground">Flagged ({flagged.length})</Text>
+        {flagged.length === 0 ? (
+          <Text className="text-sm italic text-muted-foreground">None.</Text>
+        ) : (
+          flagged.map((f) => (
+            <View key={f.epc} className="my-1 rounded-lg border border-destructive bg-destructive/10 p-2.5">
+              <Text className="text-[13px] font-semibold text-destructive">⚠ {f.flag}</Text>
+              <Text className="mt-0.5 text-xs text-muted-foreground">{f.item_type} · BOL {f.bol_number || "n/a"} · Bldg {f.building || "n/a"}</Text>
+              <Text className="font-mono text-xs text-muted-foreground">{f.epc}</Text>
+            </View>
+          ))
+        )}
+      </View>
 
-      <View className="mt-4 flex-row gap-2.5">
-        <Button className="flex-1" disabled={busy} onPress={() => void onReconcile()}>
-          <Text className="font-semibold">{busy ? "…" : "Reconcile"}</Text>
+      <View className="mt-2 flex-row gap-3">
+        <Button size="lg" className="flex-1" disabled={busy} onPress={() => void onReconcile()}>
+          <Text className="text-base font-semibold">{busy ? "…" : "Reconcile"}</Text>
         </Button>
-        <Button className="flex-1" variant="secondary" onPress={newSession}>
-          <Text className="font-semibold">New session</Text>
+        <Button size="lg" className="flex-1" variant="secondary" onPress={newSession}>
+          <Text className="text-base font-semibold">New session</Text>
         </Button>
       </View>
 
       {reconcile ? (
-        <View className="mt-3 rounded-lg border border-border bg-card p-3">
-          <Text className="mb-1 text-base font-bold text-foreground">Reconciliation</Text>
-          <Text className="text-xs text-muted-foreground">
+        <View className="mt-2 rounded-xl border border-border bg-card p-3">
+          <Text className="mb-1 text-lg font-bold text-foreground">Reconciliation</Text>
+          <Text className="font-mono text-xs tabular-nums text-muted-foreground">
             Expected {reconcile.expected} · Found {reconcile.found_count} · Missing {reconcile.missing_count}
           </Text>
           {reconcile.missing.length === 0 ? (
-            <Text className="text-sm italic text-muted-foreground">Nothing missing.</Text>
+            <Text className="mt-1 text-sm italic text-muted-foreground">Nothing missing.</Text>
           ) : (
             reconcile.missing.map((m) => (
               <View key={m.epc} className="border-t border-border py-1.5">

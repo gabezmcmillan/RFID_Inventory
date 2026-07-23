@@ -122,37 +122,41 @@ export function FinderScreen(): React.ReactNode {
   };
 
   return (
-    <View className="flex-1 gap-3 p-5">
-      <Text className="text-2xl font-bold text-foreground">Find a Tag</Text>
+    <View className="flex-1 gap-4 p-5">
       {tag ? (
-        <View>
-          <Text className="text-lg font-semibold text-foreground">{tag.item_type}{tag.item_name ? ` · ${tag.item_name}` : ""}</Text>
+        <View className="rounded-xl border border-border bg-card p-3">
+          <Text className="text-lg font-bold text-foreground">{tag.item_type}{tag.item_name ? ` · ${tag.item_name}` : ""}</Text>
           <Text className="text-[13px] text-muted-foreground">Item No. {tag.sku || "—"}</Text>
           <Text className="font-mono text-xs text-muted-foreground">{tag.epc}</Text>
         </View>
       ) : (
-        <Text className="text-sm italic text-destructive">{targetEpc ? "Target tag not registered." : "No target EPC."}</Text>
+        <View className="rounded-xl border border-destructive bg-destructive/10 p-3">
+          <Text className="text-sm font-semibold text-destructive">{targetEpc ? "Target tag not registered." : "No target EPC."}</Text>
+        </View>
       )}
 
-      <View className="relative min-h-70 flex-1 justify-end overflow-hidden rounded-xl border border-border bg-muted/40">
+      <View className="relative min-h-64 flex-1 justify-end overflow-hidden rounded-2xl border border-border bg-muted/40">
         <View style={[styles.barFill, { height: `${percent}%` }]} />
         <View className="absolute inset-0 items-center justify-center">
-          <Text className="text-5xl font-bold text-foreground">{percent}%</Text>
+          <Text className="font-mono text-6xl font-bold tabular-nums text-foreground">{percent}%</Text>
         </View>
       </View>
 
       {percent >= ALERT_THRESHOLD_PERCENT ? (
-        <Text className="text-center text-lg font-bold text-primary">● LOCKED</Text>
+        <View className="flex-row items-center justify-center gap-2 rounded-xl bg-status-in/15 py-2">
+          <View className="h-2.5 w-2.5 rounded-full bg-status-in" />
+          <Text className="text-lg font-bold text-status-in">LOCKED ON TARGET</Text>
+        </View>
       ) : null}
 
       {__DEV__ ? (
-        <View className="mt-2">
+        <View className="mt-1">
           <Text className="mb-1 text-xs text-muted-foreground">Dev (simulated transport):</Text>
           <View className="flex-row flex-wrap gap-2">
-            <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => simulate(-75)}><Text className="text-[13px] font-semibold text-foreground">25%</Text></Pressable>
-            <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => simulate(-60)}><Text className="text-[13px] font-semibold text-foreground">50%</Text></Pressable>
-            <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => simulate(-45)}><Text className="text-[13px] font-semibold text-foreground">88%</Text></Pressable>
-            <Pressable className="rounded-md bg-muted px-3 py-2" onPress={() => simulate(-40)}><Text className="text-[13px] font-semibold text-foreground">100%</Text></Pressable>
+            <Pressable className="rounded-lg bg-muted px-3.5 py-2 active:opacity-70" onPress={() => simulate(-75)}><Text className="text-[13px] font-semibold text-foreground">25%</Text></Pressable>
+            <Pressable className="rounded-lg bg-muted px-3.5 py-2 active:opacity-70" onPress={() => simulate(-60)}><Text className="text-[13px] font-semibold text-foreground">50%</Text></Pressable>
+            <Pressable className="rounded-lg bg-muted px-3.5 py-2 active:opacity-70" onPress={() => simulate(-45)}><Text className="text-[13px] font-semibold text-foreground">88%</Text></Pressable>
+            <Pressable className="rounded-lg bg-muted px-3.5 py-2 active:opacity-70" onPress={() => simulate(-40)}><Text className="text-[13px] font-semibold text-foreground">100%</Text></Pressable>
             <Button variant="destructive" size="sm" onPress={simulateRelease}><Text>release</Text></Button>
           </View>
         </View>
@@ -163,6 +167,7 @@ export function FinderScreen(): React.ReactNode {
 
 // The proximity bar fill height is a computed numeric style (percent of signal);
 // keep it as a StyleSheet entry rather than recomputing a className each event.
+// Vivid blue (brand primary) so the bar reads as a brand affordance, not a status.
 const styles = StyleSheet.create({
-  barFill: { backgroundColor: "#0a7", width: "100%" },
+  barFill: { backgroundColor: "#0028F0", width: "100%" },
 });

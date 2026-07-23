@@ -170,7 +170,7 @@ function NormalCheckOut({
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
     >
-      <Text className="mb-1 text-sm italic text-muted-foreground">Pull the trigger on a box to look it up for check-out…</Text>
+      <Text className="mb-2 text-sm italic text-muted-foreground">Pull the trigger on a box to look it up for check-out…</Text>
 
       {lookup ? (
         <CheckoutConfirmCard lookupResult={lookup} onCommit={(a, b) => void onCommit(a, b)} busy={busy} />
@@ -324,9 +324,9 @@ function StagingCheckOut({
   if (summary) {
     return (
       <View className="flex-1 p-5">
-        <Text className="mb-2 text-[22px] font-bold text-primary">Delivered</Text>
+        <Text className="mb-2 text-2xl font-bold text-status-in">Delivered</Text>
         <Text className="mb-4 text-base text-foreground">{summary}</Text>
-        <Button onPress={() => router.back()}>
+        <Button size="lg" onPress={() => router.back()}>
           <Text>Back to requests</Text>
         </Button>
       </View>
@@ -339,12 +339,12 @@ function StagingCheckOut({
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
     >
-      <View className="rounded-lg border border-brand-info bg-brand-info/10 p-3">
+      <View className="rounded-xl border border-brand-info bg-brand-info/10 p-4">
         <Text className="text-lg font-bold text-brand-info">{itemLabel(request)}</Text>
-        <Text className="mt-0.5 text-[13px] text-brand-info/80">
+        <Text className="mt-1 font-mono text-[13px] tabular-nums text-brand-info/80">
           Request #{request.id} · {requested} unit(s) requested · Bldg {request.building || "n/a"}
         </Text>
-        <Text className="mt-0.5 text-[13px] text-brand-info/80">
+        <Text className="mt-0.5 font-mono text-[13px] tabular-nums text-brand-info/80">
           Staged: {stagedTotal} of {requested} unit(s) · {staged.length} box(es)
         </Text>
       </View>
@@ -366,10 +366,10 @@ function StagingCheckOut({
         <View className="mt-2 gap-1.5">
           <Text className="text-[13px] font-bold uppercase text-muted-foreground">Staged draws</Text>
           {staged.map((d, i) => (
-            <View key={`${d.epc}-${i}`} className="flex-row items-center gap-2 rounded-md border border-border bg-card p-2.5">
+            <View key={`${d.epc}-${i}`} className="flex-row items-center gap-2 rounded-xl border border-border bg-card p-3">
               <View className="flex-1">
                 <Text className="font-mono text-xs text-foreground">{d.epc}</Text>
-                <Text className="mt-0.5 text-xs text-muted-foreground">
+                <Text className="mt-0.5 font-mono text-xs tabular-nums text-muted-foreground">
                   {d.amount ?? 0} unit(s) · Bldg {d.building || "n/a"}
                 </Text>
               </View>
@@ -409,7 +409,7 @@ function StagingCheckOut({
       <Modal visible={shortfall !== null} transparent animationType="slide" onRequestClose={() => setShortfall(null)}>
         <KeyboardDismissible className="flex-1 justify-end bg-black/40">
           <View className="rounded-t-2xl bg-background p-4 pb-6">
-            <Text className="mb-2 text-xl font-bold text-foreground">Shortfall</Text>
+            <Text className="mb-2 text-xl font-bold text-brand-navy">Shortfall</Text>
             <Text className="mb-3 text-sm text-foreground">{shortfall ?? ""}</Text>
             <Input
               value={fulfillNote}
@@ -443,11 +443,11 @@ function ResultRow({ entry }: { entry: CheckoutResultEntry }): React.ReactNode {
   const message = result.message;
   const flag = "flag" in result && result.flag ? result.flag : null;
   return (
-    <View className="rounded-lg border border-border bg-card p-3">
+    <View className="rounded-xl border border-border bg-card p-3.5">
       <Text className={cn("text-[15px] font-semibold", result.ok ? "text-foreground" : "text-destructive")}>
         {message}
       </Text>
-      <Text className="mt-1 text-xs text-muted-foreground">EPC: {entry.epc}</Text>
+      <Text className="mt-1.5 font-mono text-xs text-muted-foreground">EPC: {entry.epc}</Text>
       {flag ? <Text className="mt-1.5 text-[13px] font-semibold text-destructive">⚠ {flag}</Text> : null}
     </View>
   );

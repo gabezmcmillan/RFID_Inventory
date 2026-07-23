@@ -70,7 +70,9 @@ export default function DevToolsScreen(): React.ReactNode {
         onChangeText={setText}
         placeholder="AAAA11112222333344445555"
         multiline
+        autoFocus
         autoCapitalize="characters"
+        autoCorrect={false}
         className="min-h-20 font-mono"
       />
       <Button onPress={inject}>

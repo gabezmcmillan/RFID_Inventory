@@ -288,18 +288,18 @@ export function CheckInScreen(): React.ReactNode {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
-        <Text className="mt-2 text-sm font-semibold text-foreground">BOL document</Text>
+        <Text className="mt-2 text-sm font-bold text-brand-navy">BOL document</Text>
         <View className="my-2 flex-row flex-wrap gap-2">
-          <Button disabled={capturing} onPress={() => void onScanBol()}>
+          <Button size="lg" disabled={capturing} onPress={() => void onScanBol()}>
             <Text>{capturing ? "Scanning…" : "Scan BOL"}</Text>
           </Button>
-          <Button variant="secondary" onPress={() => void onUploadBol()}>
+          <Button size="lg" variant="secondary" onPress={() => void onUploadBol()}>
             <Text>Upload</Text>
           </Button>
-          <Button variant="secondary" onPress={() => void openRecent()}>
+          <Button size="lg" variant="secondary" onPress={() => void openRecent()}>
             <Text>Recent</Text>
           </Button>
-          <Button variant="secondary" onPress={onSkip}>
+          <Button size="lg" variant="secondary" onPress={onSkip}>
             <Text>Skip</Text>
           </Button>
         </View>
@@ -333,13 +333,13 @@ export function CheckInScreen(): React.ReactNode {
           </View>
         ) : null}
 
-        <Text className="mt-2 text-sm font-semibold text-foreground">Item type</Text>
+        <Text className="mt-2 text-sm font-bold text-brand-navy">Item type</Text>
         <View className="my-2 flex-row flex-wrap gap-2">
           {ITEM_TYPES.map((t) => (
             <Pressable
               key={t}
               onPress={() => setItemType(t)}
-              className={cn("rounded-md px-3 py-2", itemType === t ? "bg-primary" : "bg-muted")}
+              className={cn("rounded-lg px-3.5 py-2.5 active:opacity-70", itemType === t ? "bg-primary" : "bg-muted")}
             >
               <Text
                 className={cn(
@@ -377,8 +377,8 @@ export function CheckInScreen(): React.ReactNode {
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
     >
-      <View className="mb-3 flex-row items-center justify-between">
-        <Text className="text-base font-semibold text-foreground">
+      <View className="mb-3 flex-row items-center justify-between rounded-xl border border-border bg-card p-3">
+        <Text className="flex-1 text-base font-bold text-brand-navy">
           {itemType} · BOL {shipment.bol_number ?? ""} · Bldg {shipment.building_number ?? ""}
         </Text>
         <Button variant="destructive" onPress={endCheckIn}>
@@ -425,7 +425,9 @@ export function CheckInScreen(): React.ReactNode {
       ))}
 
       {results.length === 0 ? (
-        <Text className="my-3 text-sm italic text-muted-foreground">Pull the trigger to scan a box…</Text>
+        <View className="my-3 rounded-xl border border-dashed border-border bg-muted/30 p-4">
+          <Text className="text-sm text-muted-foreground">Pull the trigger to scan a box…</Text>
+        </View>
       ) : (
         results.map((entry, i) => (
           <ResultCard key={`${entry.epc}-${i}`} entry={entry} newest={i === results.length - 1} onAmend={setAmendEpc} />

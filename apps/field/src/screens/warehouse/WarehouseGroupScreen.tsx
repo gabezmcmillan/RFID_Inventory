@@ -74,7 +74,7 @@ export function WarehouseGroupScreen(): React.ReactNode {
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
     >
-      <Text className="mb-1 text-lg font-bold text-foreground">{itemType} · {value || "(blank)"}</Text>
+      <Text className="mb-2 text-xl font-bold text-brand-navy">{itemType} · {value || "(blank)"}</Text>
 
       {checkoutLookup ? (
         <CheckoutConfirmCard
@@ -87,27 +87,31 @@ export function WarehouseGroupScreen(): React.ReactNode {
       {loading ? (
         <Text className="text-sm italic text-muted-foreground">Loading…</Text>
       ) : tags.length === 0 ? (
-        <Text className="text-sm italic text-muted-foreground">No boxes in this group.</Text>
+        <View className="mt-2 rounded-xl border border-dashed border-border bg-muted/30 p-4">
+          <Text className="text-sm text-muted-foreground">No boxes in this group.</Text>
+        </View>
       ) : (
         tags.map((tag) => {
           const { prefix, tail } = splitEpc(tag.epc);
           return (
-            <View key={tag.epc} className="rounded-lg border border-border bg-card p-3">
+            <View key={tag.epc} className="rounded-xl border border-border bg-card p-3.5">
               <View className="flex-row items-center justify-between">
                 <Text className="font-mono text-[13px] text-foreground">
                   <Text className="text-muted-foreground/60">{prefix}</Text>
                   <Text className="font-bold">{tail}</Text>
                 </Text>
-                <Text className="text-xs font-semibold text-muted-foreground">{tag.status}</Text>
+                <View className="rounded-full bg-muted px-2.5 py-0.5">
+                  <Text className="text-[11px] font-bold text-foreground">{tag.status}</Text>
+                </View>
               </View>
-              <Text className="mt-0.5 text-xs text-muted-foreground">
+              <Text className="mt-1 text-xs text-muted-foreground">
                 Item No. {tag.sku || "—"} · Mfc {tag.mfc_date || "—"}
               </Text>
-              <Text className="mt-0.5 text-xs text-muted-foreground">
+              <Text className="mt-0.5 font-mono text-xs tabular-nums text-muted-foreground">
                 {tag.remaining}/{tag.quantity} units · Bldg {tag.building || "n/a"} · BOL {tag.bol_number || "n/a"}
               </Text>
-              {tag.flag ? <Text className="mt-1 text-xs font-semibold text-destructive">⚠ {tag.flag}</Text> : null}
-              <View className="mt-2.5 flex-row gap-2">
+              {tag.flag ? <Text className="mt-1.5 text-xs font-semibold text-destructive">⚠ {tag.flag}</Text> : null}
+              <View className="mt-3 flex-row gap-2.5">
                 <Link href={{ pathname: "/finder", params: { epc: tag.epc } }} asChild>
                   <Button className="flex-1" variant="secondary">
                     <Text>Find</Text>

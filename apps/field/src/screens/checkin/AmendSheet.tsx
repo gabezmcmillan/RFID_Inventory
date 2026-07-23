@@ -42,7 +42,7 @@ export function AmendSheet({ epc, initial, onAmend, onClose }: AmendSheetProps):
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardDismissible className="flex-1 justify-end bg-black/40">
         <View className="gap-2 rounded-t-2xl bg-background p-5">
-          <Text className="text-xl font-bold">Amend tag</Text>
+          <Text className="text-xl font-bold text-brand-navy">Amend tag</Text>
           <Text className="mb-2 font-mono text-xs text-muted-foreground">{epc ?? ""}</Text>
           <Field label="Item Name" value={form.item_name} onChange={(v) => setForm({ ...form, item_name: v })} />
           <Field label="Item No." value={form.sku} onChange={(v) => setForm({ ...form, sku: v })} />

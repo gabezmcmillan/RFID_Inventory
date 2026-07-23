@@ -35,7 +35,7 @@ export function ResultCard({ entry, newest, onAmend }: ResultCardProps): React.R
   return (
     <View
       className={cn(
-        "mb-2 rounded-lg border p-3",
+        "mb-2 rounded-xl border p-3.5",
         isDuplicate ? "border-status-partial bg-status-partial/10" : "border-border bg-card",
       )}
     >
@@ -49,13 +49,13 @@ export function ResultCard({ entry, newest, onAmend }: ResultCardProps): React.R
           {result.message}
         </Text>
         {newest && !isDuplicate ? (
-          <Pressable onPress={() => onAmend(entry.epc)} className="rounded-md bg-muted px-2.5 py-1">
+          <Pressable onPress={() => onAmend(entry.epc)} className="rounded-lg bg-muted px-3 py-1.5 active:opacity-70">
             <Text className="text-[13px] font-semibold text-foreground">Edit</Text>
           </Pressable>
         ) : null}
       </View>
-      <Text className="mt-1 text-xs text-muted-foreground">EPC: {entry.epc}</Text>
-      <Text className="mt-1 text-xs text-muted-foreground">Group qty: {qty ?? "—"}</Text>
+      <Text className="mt-1.5 font-mono text-xs text-muted-foreground">EPC: {entry.epc}</Text>
+      <Text className="mt-1 font-mono text-xs tabular-nums text-muted-foreground">Group qty: {qty ?? "—"}</Text>
     </View>
   );
 }

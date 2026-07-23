@@ -105,20 +105,20 @@ function RequestCard({
   onOpen: () => void;
 }): React.ReactNode {
   return (
-    <Pressable className="rounded-lg border border-border bg-card p-3" onPress={onOpen}>
+    <Pressable className="rounded-xl border border-border bg-card p-3.5 active:opacity-70" onPress={onOpen}>
       <View className="flex-row items-center justify-between">
-        <Text className="flex-1 text-base font-semibold text-foreground">{itemLabel(req)}</Text>
-        <View className={cn("ml-2 rounded-full px-2 py-0.5", statusClass(req.status))}>
+        <Text className="flex-1 text-base font-bold text-foreground">{itemLabel(req)}</Text>
+        <View className={cn("ml-2 rounded-full px-2.5 py-0.5", statusClass(req.status))}>
           <Text className="text-[11px] font-bold text-white">{req.status}</Text>
         </View>
       </View>
-      <Text className="mt-0.5 text-xs text-muted-foreground">
+      <Text className="mt-1 font-mono text-xs tabular-nums text-muted-foreground">
         {req.quantity} unit(s) · Bldg {req.building || "n/a"} · {req.jobsite || req.requester || "jobsite"}
       </Text>
       <Text className="mt-0.5 text-xs text-muted-foreground">
         {req.requester || "—"} · {req.contact || "—"}
       </Text>
-      {req.note ? <Text className="mt-1 text-xs italic text-muted-foreground">“{req.note}”</Text> : null}
+      {req.note ? <Text className="mt-1.5 text-xs italic text-muted-foreground">“{req.note}”</Text> : null}
       {req.order_ref ? <Text className="mt-1 text-[11px] font-semibold text-brand-info">order {req.order_ref}</Text> : null}
       {req.handler_note ? (
         <Text className="mt-1.5 text-xs font-semibold text-primary">
@@ -207,8 +207,8 @@ function RequestDetail({
             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           >
             <View className="mb-2 flex-row items-center justify-between">
-              <Text className="flex-1 text-xl font-bold text-foreground">{itemLabel(req)}</Text>
-              <View className={cn("ml-2 rounded-full px-2 py-0.5", statusClass(req.status))}>
+              <Text className="flex-1 text-xl font-bold text-brand-navy">{itemLabel(req)}</Text>
+              <View className={cn("ml-2 rounded-full px-2.5 py-0.5", statusClass(req.status))}>
                 <Text className="text-[11px] font-bold text-white">{req.status}</Text>
               </View>
             </View>
@@ -280,7 +280,7 @@ function RequestDetail({
               </View>
             )}
           </ScrollView>
-          <Pressable className="border-t border-border py-3.5 items-center" onPress={onClose}>
+          <Pressable className="border-t border-border py-4 items-center active:opacity-70" onPress={onClose}>
             <Text className="text-base font-semibold text-brand-info">Close</Text>
           </Pressable>
         </View>

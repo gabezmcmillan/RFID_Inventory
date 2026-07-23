@@ -76,15 +76,15 @@ export function WarehouseScreen(): React.ReactNode {
       keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
     >
       <View className="mb-2 flex-row items-center justify-between">
-        <View className="flex-row">
+        <View className="flex-row gap-2">
           <Pressable
-            className={cn("rounded-md px-3.5 py-2", groupBy === "bol" ? "bg-brand-info" : "bg-muted")}
+            className={cn("rounded-lg px-4 py-2.5 active:opacity-70", groupBy === "bol" ? "bg-brand-info" : "bg-muted")}
             onPress={() => setGroupBy("bol")}
           >
             <Text className={cn("text-sm font-semibold", groupBy === "bol" ? "text-white" : "text-foreground")}>BOL</Text>
           </Pressable>
           <Pressable
-            className={cn("ml-1.5 rounded-md px-3.5 py-2", groupBy === "building" ? "bg-brand-info" : "bg-muted")}
+            className={cn("rounded-lg px-4 py-2.5 active:opacity-70", groupBy === "building" ? "bg-brand-info" : "bg-muted")}
             onPress={() => setGroupBy("building")}
           >
             <Text className={cn("text-sm font-semibold", groupBy === "building" ? "text-white" : "text-foreground")}>Building</Text>
@@ -100,12 +100,15 @@ export function WarehouseScreen(): React.ReactNode {
       ) : null}
 
       {tree?.types.length === 0 ? (
-        <Text className="my-3 text-sm italic text-muted-foreground">No boxes match the current filters.</Text>
+        <View className="my-3 rounded-xl border border-dashed border-border bg-muted/30 p-4">
+          <Text className="text-sm font-semibold text-foreground">No boxes match</Text>
+          <Text className="mt-0.5 text-sm text-muted-foreground">Adjust the filters or group-by to see inventory.</Text>
+        </View>
       ) : null}
       {tree?.types.map((t) => (
         <View key={t.item_type} className="mt-2">
-          <Text className="mb-1 text-lg font-bold text-foreground">
-            {t.item_type} — {t.qty} unit{t.qty === 1 ? "" : "s"}
+          <Text className="mb-1.5 text-lg font-bold text-brand-navy">
+            {t.item_type} — <Text className="font-mono tabular-nums">{t.qty}</Text> unit{t.qty === 1 ? "" : "s"}
           </Text>
           {t.groups.map((g) => (
             <Link
@@ -116,14 +119,14 @@ export function WarehouseScreen(): React.ReactNode {
               }}
               asChild
             >
-              <Pressable className="mb-1.5 rounded-lg border border-border bg-card p-3">
+              <Pressable className="mb-1.5 rounded-xl border border-border bg-card p-3.5 active:opacity-70">
                 <View className="flex-row items-center justify-between">
                   <Text className="text-base font-semibold text-foreground">{g.value || "(blank)"}</Text>
-                  <View className={cn("rounded-full px-2 py-0.5", statusClass(g.status))}>
+                  <View className={cn("rounded-full px-2.5 py-0.5", statusClass(g.status))}>
                     <Text className="text-[11px] font-bold text-white">{g.status}</Text>
                   </View>
                 </View>
-                <Text className="mt-1 text-xs text-muted-foreground">
+                <Text className="mt-1 font-mono text-xs tabular-nums text-muted-foreground">
                   {g.qty}/{g.total} units · {g.boxes} box{g.boxes === 1 ? "" : "es"}
                   {g.flagged > 0 ? ` · ⚠ ${g.flagged} flagged` : ""}
                   {g.note_count > 0 ? ` · ${g.note_count} note${g.note_count === 1 ? "" : "s"}` : ""}
@@ -135,7 +138,7 @@ export function WarehouseScreen(): React.ReactNode {
                 </Text>
                 {g.bol_doc_id ? (
                   <Link href={{ pathname: "/bol-docs", params: { docId: String(g.bol_doc_id) } }} asChild>
-                    <Pressable className="mt-1.5 self-start rounded-md bg-brand-info/15 px-2 py-1">
+                    <Pressable className="mt-2 self-start rounded-lg bg-brand-info/15 px-3 py-1.5 active:opacity-70">
                       <Text className="text-xs font-semibold text-brand-info">BOL document →</Text>
                     </Pressable>
                   </Link>
@@ -146,7 +149,7 @@ export function WarehouseScreen(): React.ReactNode {
         </View>
       ))}
 
-      <Button className="mt-3" disabled={exporting} onPress={() => void onExport()}>
+      <Button size="lg" className="mt-3" disabled={exporting} onPress={() => void onExport()}>
         <Text className="text-base font-semibold">{exporting ? "Exporting…" : "Export CSV"}</Text>
       </Button>
       {exportMsg ? <Text className="mt-1.5 text-center text-[13px] text-muted-foreground">{exportMsg}</Text> : null}
@@ -171,7 +174,7 @@ function FilterSheet({
       <Text className="mt-2 text-xs font-semibold text-foreground">Building</Text>
       <View className="my-1 flex-row flex-wrap gap-1.5">
         <Pressable
-          className={cn("rounded-md px-3 py-1.5", !filters.building ? "bg-brand-info" : "bg-muted")}
+          className={cn("rounded-lg px-3.5 py-2 active:opacity-70", !filters.building ? "bg-brand-info" : "bg-muted")}
           onPress={() => set({ building: undefined })}
         >
           <Text className={cn("text-[13px]", !filters.building ? "text-white font-semibold" : "text-foreground")}>any</Text>
@@ -179,7 +182,7 @@ function FilterSheet({
         {BUILDING_OPTIONS.map((opt) => (
           <Pressable
             key={opt}
-            className={cn("rounded-md px-3 py-1.5", filters.building === opt ? "bg-brand-info" : "bg-muted")}
+            className={cn("rounded-lg px-3.5 py-2 active:opacity-70", filters.building === opt ? "bg-brand-info" : "bg-muted")}
             onPress={() => set({ building: opt })}
           >
             <Text className={cn("text-[13px]", filters.building === opt ? "text-white font-semibold" : "text-foreground")}>{opt}</Text>

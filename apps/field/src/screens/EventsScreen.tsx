@@ -33,15 +33,18 @@ export function EventsScreen(): React.ReactNode {
   }, [load]);
 
   return (
-    <KeyboardDismissible className="flex-1 gap-2 p-4">
+    <KeyboardDismissible className="flex-1 gap-3 p-4">
       <View className="flex-row flex-wrap gap-2">
         {FILTERS.map((f) => (
           <Pressable
             key={f}
             onPress={() => setFilter(f)}
-            className={cn("rounded-full px-3 py-1.5", filter === f ? "bg-brand-info" : "bg-muted")}
+            className={cn(
+              "rounded-full px-4 py-2 active:opacity-70",
+              filter === f ? "bg-brand-info" : "bg-muted",
+            )}
           >
-            <Text className={cn("text-[13px]", filter === f ? "text-white font-semibold" : "text-foreground")}>{f}</Text>
+            <Text className={cn("text-sm capitalize", filter === f ? "text-white font-semibold" : "text-foreground")}>{f}</Text>
           </Pressable>
         ))}
       </View>
@@ -55,20 +58,20 @@ export function EventsScreen(): React.ReactNode {
       />
 
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 40, gap: 6 }}
+        contentContainerStyle={{ paddingBottom: 40, gap: 8 }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
         {events.length === 0 ? (
-          <Text className="mt-3 text-sm italic text-muted-foreground">No events match.</Text>
+          <Text className="mt-3 text-sm italic text-muted-foreground">No events match. Try a different filter or EPC.</Text>
         ) : (
           events.map((e) => (
-            <View key={e.id} className="rounded-md border border-border bg-card p-2.5">
+            <View key={e.id} className="rounded-xl border border-border bg-card p-3">
               <View className="flex-row items-center justify-between">
-                <Text className="text-[13px] font-bold text-brand-info">{e.action}</Text>
-                <Text className="text-[11px] text-muted-foreground/70">{e.ts}</Text>
+                <Text className="text-[13px] font-bold capitalize text-brand-info">{e.action}</Text>
+                <Text className="font-mono text-[11px] tabular-nums text-muted-foreground/70">{e.ts}</Text>
               </View>
-              {e.epc ? <Text className="mt-0.5 font-mono text-[11px] text-muted-foreground">{e.epc}</Text> : null}
+              {e.epc ? <Text className="mt-1 font-mono text-[11px] text-muted-foreground">{e.epc}</Text> : null}
               <Text className="mt-0.5 text-xs text-muted-foreground">
                 {[e.item_type, e.bol_number && `BOL ${e.bol_number}`, e.building && `Bldg ${e.building}`, e.vendor]
                   .filter(Boolean)
