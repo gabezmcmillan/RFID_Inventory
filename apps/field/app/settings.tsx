@@ -185,6 +185,10 @@ export default function SettingsScreen(): React.ReactNode {
       } else {
         await clearLinkedCredential();
       }
+      // Drop any cached sync token so the coordinator goes reauth rather than
+      // retrying a now-revoked credential.
+      const { clearSyncCredential } = await import("../src/sync/access");
+      clearSyncCredential();
       setLinked(null);
     } finally {
       setUnlinking(false);

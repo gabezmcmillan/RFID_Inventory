@@ -4,10 +4,13 @@
  * immediate `state.sync.sync_now()` push "to tell the requester ASAP"
  * (app.py:521-523, 539-541).
  *
- * Plan 010 wires the real Turso `push()` here. Until then this is a no-op so
- * the call sites exist in one place rather than as scattered TODOs.
+ * Plan 010 Phase 3 wires this to the live {@link SyncCoordinator} as a
+ * debounced mutation trigger (coalesces a burst of writes into one cycle). It
+ * is a no-op before the coordinator is mounted.
  */
 
+import { triggerMutation } from "./access";
+
 export async function syncNow(): Promise<void> {
-  // No-op placeholder; plan 010 replaces this with a real cloud push.
+  triggerMutation();
 }

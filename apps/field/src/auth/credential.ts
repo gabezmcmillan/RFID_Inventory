@@ -383,10 +383,13 @@ export async function unlinkDevice(serverUrl: string, bearer: string): Promise<v
   await resetDeviceState();
 }
 
-/** Outcome of {@link fetchSyncToken}: a short-lived Turso sync token + TTL. */
+/** Outcome of {@link fetchSyncToken}: a short-lived Turso sync token + TTL + the
+ *  warehouse libSQL URL the phone's embedded replica should sync with. The URL
+ *  is per-environment (prod vs preview) and NOT secret — only the token is. */
 export interface SyncTokenResult {
   token: string;
   expiresAt: number;
+  url: string;
 }
 
 /**
@@ -413,11 +416,11 @@ export async function fetchSyncToken(
     const message = await deviceErrorMessage(res);
     throw new Error(message);
   }
-  const body = (await res.json()) as { token?: string; expiresAt?: number };
-  if (!body.token || typeof body.expiresAt !== "number") {
-    throw new Error("credential response missing token or expiresAt");
+  const body = (await res.json()) as { token?: string; expiresAt?: number; url?: string };
+  if (!body.token || typeof body.expiresAt !== "number" || !body.url) {
+    throw new Error("credential response missing token, expiresAt, or url");
   }
-  return { token: body.token, expiresAt: body.expiresAt };
+  return { token: body.token, expiresAt: body.expiresAt, url: body.url };
 }
 
 /** Extract a user-facing error message from a device-endpoint error response. */

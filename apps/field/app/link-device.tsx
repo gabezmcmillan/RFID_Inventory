@@ -45,6 +45,10 @@ export default function LinkDeviceScreen(): React.ReactNode {
       const cred = await exchangeOneTimeToken(serverUrl, token);
       // Register the device with the server (allowlist + permanent EPC byte).
       await registerDevice(serverUrl, cred.token);
+      // A fresh bearer is now stored — escape any prior reauth/blocked state
+      // and prime the sync credential store so the next cycle syncs.
+      const { resetSync } = await import("../src/sync/access");
+      resetSync();
       router.back();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

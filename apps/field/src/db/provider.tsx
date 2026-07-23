@@ -1,17 +1,20 @@
 /**
- * On-device database provider: opens a local-only Turso sync database, wraps
- * it with Drizzle (RN-safe adapter), applies migrations, seeds the device id,
- * and exposes the resulting {@link DomainDb} via React Context.
+ * On-device database provider: opens a local-first Turso sync database, wraps
+ * it with Drizzle (RN-safe adapter), applies migrations while sync is OFF, and
+ * exposes the resulting {@link DomainDb} plus the raw sync client and the
+ * sync credential store via React Context.
  *
- * Sync (plan 010) is intentionally off here — the database is opened with no
- * `url`, so it is local-first only until cloud sync is wired. The Drizzle
- * wrapper (`drizzleTursoRn`) and the migration bundle (`applyMigrations`) are
- * both RN-safe (no Node `fs` / native addon imports).
+ * Plan 010 Phase 3: the database is opened ONCE with function-valued `url` and
+ * `authToken` callbacks + `bootstrapIfEmpty`. Sync stays off (url null) until
+ * the credential store is primed with a server-minted token + the warehouse
+ * URL, so `applyMigrations` runs only while sync is off — never "on the replica
+ * in synced mode." The single client is the only opener of `inventory.db`.
  */
 
 import { applyMigrations, type DomainDb } from "@rfid/domain";
 import { Database, getDbPath } from "@tursodatabase/sync-react-native";
 import { drizzleTursoRn } from "./drizzleTursoRnDriver";
+import { SyncCredentialStore } from "../sync/credentialStore";
 
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -19,6 +22,10 @@ import type { ReactNode } from "react";
 interface DbContextValue {
   /** The Drizzle-wrapped on-device database, or `null` until open+migrated. */
   db: DomainDb | null;
+  /** The raw Turso sync client (the sole opener of `inventory.db`), or null. */
+  client: Database | null;
+  /** The sync credential store (url/authToken callbacks source), or null. */
+  credStore: SyncCredentialStore | null;
   /** `true` while the database is opening / migrating. */
   loading: boolean;
   /** Set if opening or migrating failed. */
@@ -28,17 +35,28 @@ interface DbContextValue {
 const DbContext = createContext<DbContextValue | null>(null);
 
 /**
- * Open the on-device warehouse database, wrap it with Drizzle, and apply
- * migrations. The device id and EPC serial counter no longer live here — they
- * moved to the separate local-only `device.db` (plan 010 Phase 2; see
- * `db/deviceDb.ts`) so two replicas never share a serial sequence.
+ * Open the on-device warehouse database ONCE, wrap it with Drizzle, and apply
+ * migrations while sync is still off (url null). The device id and EPC serial
+ * counter live in the separate local-only `device.db` (plan 010 Phase 2).
  */
-async function openDomainDb(): Promise<DomainDb> {
-  const client = new Database({ path: getDbPath("inventory.db") });
+async function openDomainDb(
+  credStore: SyncCredentialStore,
+): Promise<{ db: DomainDb; client: Database }> {
+  const client = new Database({
+    path: getDbPath("inventory.db"),
+    // Sync switches on only once the credential store is primed (linked +
+    // online). Until then url() returns null → local-only.
+    url: () => credStore.syncUrl,
+    // The Turso `authToken` callback must return a string; when not linked sync
+    // is off (url null) so this is never called, but the type requires a string.
+    authToken: async () => (await credStore.getSyncToken()) ?? "",
+    bootstrapIfEmpty: true,
+  });
   await client.connect();
   const db = drizzleTursoRn(client);
+  // Runs while sync is off (url null) — never on the replica in synced mode.
   await applyMigrations(db);
-  return db;
+  return { db, client };
 }
 
 /**
@@ -49,19 +67,30 @@ async function openDomainDb(): Promise<DomainDb> {
 export function DatabaseProvider({ children }: { children: ReactNode }): ReactNode {
   const [state, setState] = useState<DbContextValue>({
     db: null,
+    client: null,
+    credStore: null,
     loading: true,
     error: null,
   });
 
   useEffect(() => {
     let cancelled = false;
-    openDomainDb()
-      .then((db) => {
-        if (!cancelled) setState({ db, loading: false, error: null });
+    const credStore = new SyncCredentialStore();
+    openDomainDb(credStore)
+      .then(({ db, client }) => {
+        if (!cancelled) {
+          setState({ db, client, credStore, loading: false, error: null });
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setState({ db: null, loading: false, error: err instanceof Error ? err : new Error(String(err)) });
+          setState({
+            db: null,
+            client: null,
+            credStore: null,
+            loading: false,
+            error: err instanceof Error ? err : new Error(String(err)),
+          });
         }
       });
     return () => {
@@ -87,8 +116,8 @@ export function useDb(): DomainDb {
 }
 
 /**
- * Reactive database status for screens that need to gate on readiness.
- * Prefer {@link useDb} for the db itself once ready.
+ * Reactive database status for screens that need to gate on readiness, including
+ * the raw sync client and credential store for the sync coordinator.
  */
 export function useDbStatus(): DbContextValue {
   const ctx = useContext(DbContext);

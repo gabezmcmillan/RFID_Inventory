@@ -117,8 +117,9 @@ describe("device endpoints — credential control", () => {
     await registerOk();
     const res = await credential(bearerReq("ops@acme.com"));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { token: string; expiresAt: number };
+    const body = (await res.json()) as { token: string; expiresAt: number; url: string };
     expect(body.token).toBe("sync-jwt");
+    expect(body.url).toBe("libsql://rfid-warehouse-vercel-icfg-x.turso.io");
     expect(mintSyncToken).toHaveBeenCalledTimes(1);
   });
 

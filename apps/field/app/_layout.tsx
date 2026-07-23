@@ -13,6 +13,7 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { PortalHost } from "@rn-primitives/portal";
 
 import { DatabaseProvider, useDbStatus } from "../src/db/provider";
+import { SyncProvider } from "../src/sync/SyncProvider";
 import { readerService } from "../src/reader/readerService";
 import { useEffect } from "react";
 
@@ -53,22 +54,24 @@ export default function RootLayout(): React.ReactNode {
   return (
     <DatabaseProvider>
       <Gate>
-        <Stack screenOptions={{ headerShown: true }}>
-          <Stack.Screen name="index" options={{ title: "RFID Field" }} />
-          <Stack.Screen name="check-in" options={{ title: "Check In" }} />
-          <Stack.Screen name="check-out" options={{ title: "Check Out" }} />
-          <Stack.Screen name="sweep" options={{ title: "Sweep & Count" }} />
-          <Stack.Screen name="warehouse" options={{ title: "Warehouse" }} />
-          <Stack.Screen name="warehouse-group" options={{ title: "Group" }} />
-          <Stack.Screen name="bol-docs" options={{ title: "BOL Documents" }} />
-          <Stack.Screen name="finder" options={{ title: "Find a Tag" }} />
-          <Stack.Screen name="events" options={{ title: "Event Log" }} />
-          <Stack.Screen name="requests" options={{ title: "Requests" }} />
-          <Stack.Screen name="admin" options={{ title: "Admin" }} />
-          <Stack.Screen name="settings" options={{ title: "Settings" }} />
-          <Stack.Screen name="link-device" options={{ title: "Link Device" }} />
-          <Stack.Screen name="dev-tools" options={{ title: "Dev Tools" }} />
-        </Stack>
+        <SyncProvider>
+          <Stack screenOptions={{ headerShown: true }}>
+            <Stack.Screen name="index" options={{ title: "RFID Field" }} />
+            <Stack.Screen name="check-in" options={{ title: "Check In" }} />
+            <Stack.Screen name="check-out" options={{ title: "Check Out" }} />
+            <Stack.Screen name="sweep" options={{ title: "Sweep & Count" }} />
+            <Stack.Screen name="warehouse" options={{ title: "Warehouse" }} />
+            <Stack.Screen name="warehouse-group" options={{ title: "Group" }} />
+            <Stack.Screen name="bol-docs" options={{ title: "BOL Documents" }} />
+            <Stack.Screen name="finder" options={{ title: "Find a Tag" }} />
+            <Stack.Screen name="events" options={{ title: "Event Log" }} />
+            <Stack.Screen name="requests" options={{ title: "Requests" }} />
+            <Stack.Screen name="admin" options={{ title: "Admin" }} />
+            <Stack.Screen name="settings" options={{ title: "Settings" }} />
+            <Stack.Screen name="link-device" options={{ title: "Link Device" }} />
+            <Stack.Screen name="dev-tools" options={{ title: "Dev Tools" }} />
+          </Stack>
+        </SyncProvider>
       </Gate>
       <StatusBar style="auto" />
       {/* PortalHost must be the last child of the root providers; overlays

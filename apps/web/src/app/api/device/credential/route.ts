@@ -54,5 +54,5 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "Failed to mint a sync token" }, 502);
   }
 
-  return json({ token: jwt, expiresAt: SYNC_TOKEN_TTL_SEC }, 200);
+  return json({ token: jwt, expiresAt: SYNC_TOKEN_TTL_SEC, url: env.TURSO_DATABASE_URL }, 200);
 }

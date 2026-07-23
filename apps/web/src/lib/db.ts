@@ -27,7 +27,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { connect } from "@tursodatabase/database";
-import { applyMigrations, type DomainDb } from "@rfid/domain";
+import { applyMigrations, getMeta, SCHEMA_VERSION, setMeta, type DomainDb } from "@rfid/domain";
 import { drizzle as drizzleLocal } from "drizzle-orm/tursodatabase/database";
 import { drizzle as drizzleServerless } from "drizzle-orm/tursodatabase-serverless";
 
@@ -39,9 +39,25 @@ const GLOBAL = globalThis as unknown as { __rfidWebDbPromise?: Promise<DomainDb>
 /** Default local warehouse-domain dev database path. */
 const DEFAULT_LOCAL_DB_PATH = "../../.dev-data/web.db";
 
+/** `local_meta` key holding the warehouse schema version, replicated to every
+ *  field replica so the phone can block writes when the server is ahead. */
+const SCHEMA_VERSION_META_KEY = "schema_version";
+
 /** True when Turso cloud credentials are configured (the production path). */
 function hasTursoCloudConfig(): boolean {
   return Boolean(env.TURSO_DATABASE_URL && env.TURSO_AUTH_TOKEN);
+}
+
+/**
+ * Idempotently stamp the warehouse's `schema_version` meta row to this build's
+ * {@link SCHEMA_VERSION} so it replicates down to field replicas (plan 010,
+ * Phase 3). One read + (rare) write per process; safe to repeat.
+ */
+async function seedSchemaVersion(db: DomainDb): Promise<void> {
+  const current = await getMeta(db, SCHEMA_VERSION_META_KEY);
+  if (current !== String(SCHEMA_VERSION)) {
+    await setMeta(db, SCHEMA_VERSION_META_KEY, String(SCHEMA_VERSION));
+  }
 }
 
 /** Build a local-file DomainDb and apply all checked-in migrations. */
@@ -72,9 +88,16 @@ function openServerlessDb(): DomainDb {
  */
 export function getDb(): Promise<DomainDb> {
   if (!GLOBAL.__rfidWebDbPromise) {
-    GLOBAL.__rfidWebDbPromise = hasTursoCloudConfig()
+    GLOBAL.__rfidWebDbPromise = (hasTursoCloudConfig()
       ? Promise.resolve(openServerlessDb())
-      : openLocalDb();
+      : openLocalDb()
+    ).then(async (db) => {
+      // Stamp the warehouse schema version so field replicas can detect an
+      // upgrade-required mismatch. Best-effort: a failure here must not break
+      // the app's own db access.
+      await seedSchemaVersion(db).catch(() => {});
+      return db;
+    });
   }
   return GLOBAL.__rfidWebDbPromise;
 }
