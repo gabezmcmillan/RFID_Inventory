@@ -12,9 +12,9 @@
  * and enqueues (idempotent by `(docId, contentHash)`).
  *
  * ON-DEVICE VALIDATION REQUIRED: the upload body is a RN `Blob` built from the
- * artifact bytes; RN `fetch` must accept a Blob body for the PUT to the Vercel
- * Blob control API. This is wired but not runtime-verified off-device (see
- * `buildBlobGrant.ts` for the protocol-reconstruction caveat).
+ * artifact bytes; RN `fetch` must accept a Blob body for the PUT to the server
+ * proxy. This is wired but not runtime-verified off-device (the proxy uploads to
+ * Vercel Blob with the official server SDK; see `bolGrantProvider.ts`).
  */
 
 import { sha256 } from "js-sha256";
@@ -26,6 +26,17 @@ import { BolUploadQueue, type UploadClock } from "./bolQueue";
 import { ServerBolGrantProvider } from "./bolGrantProvider";
 import { AsyncStorageQueueStorage } from "./bolQueueStorage";
 import { readBytes } from "../bol/documentStore";
+
+/**
+ * Hard cap on a single BOL artifact upload, sized to stay safely under the
+ * Vercel serverless request-body limit (~4.5 MB). The server proxy enforces
+ * the same cap; this pre-flight guard avoids streaming an oversized body just
+ * to have it rejected. The document scanner already emits compressed JPEG
+ * pages well under this limit; a picked high-res photo or large PDF that
+ * exceeds it is skipped (the `storage_url` stays null and the tag page shows
+ * no link) rather than dead-lettered after repeated retries.
+ */
+export const MAX_BOL_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 let queue: BolUploadQueue | null = null;
 let queueDb: DomainDb | null = null;
@@ -45,8 +56,6 @@ export async function buildBolQueue(db: DomainDb): Promise<BolUploadQueue> {
       fetchImpl: fetch,
       getServerUrl,
       getBearer: getLinkedToken,
-      now: Date.now,
-      rand: Math.random,
     }),
     storage: new AsyncStorageQueueStorage(AsyncStorage),
     fetchImpl: fetch,
@@ -89,6 +98,11 @@ export async function enqueueBolArtifact(
   const bytes = await readBytes(uri);
   const contentHash = sha256(bytes);
   const sizeBytes = bytes.byteLength;
+  // Pre-flight the serverless body cap so an oversized artifact is skipped
+  // rather than streamed to a 413 and retried to a dead-letter.
+  if (sizeBytes > MAX_BOL_UPLOAD_BYTES) {
+    return null;
+  }
   const blob = new Blob([new Uint8Array(bytes)], { type: contentType });
   return q.enqueue(docId, contentHash, contentType, sizeBytes, blob);
 }
