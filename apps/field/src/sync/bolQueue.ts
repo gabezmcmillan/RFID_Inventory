@@ -18,12 +18,20 @@
 import { nextBackoffMs } from "./backoff";
 
 export interface BlobGrant {
-  /** Signed client-upload URL from Vercel Blob. */
+  /** Signed client-upload URL from Vercel Blob (presigned PUT) or a server proxy. */
   uploadUrl: string;
   /** HTTP method (default PUT). */
   method?: string;
-  /** Extra headers to send with the upload (e.g. x-ms-blob-type). */
+  /** Extra headers to send with the upload (e.g. `content-type` for a presigned PUT). */
   headers?: Record<string, string>;
+  /**
+   * The canonical object URL the upload will produce, when the server knows it
+   * ahead of time (e.g. a Vercel Blob presigned PUT to a content-addressed
+   * pathname). When set, the queue records this as the entry's `storage_url` on
+   * a 200 without parsing the upload response body. When unset, the queue falls
+   * back to parsing the response body for `url` (the proxy/`put()` shape).
+   */
+  storageUrl?: string;
 }
 
 /** Context the grant provider needs to mint a content-bound upload grant. */
@@ -251,10 +259,10 @@ export class BolUploadQueue {
         headers: grant.headers,
       });
       if (res.status >= 200 && res.status < 300) {
-        // Vercel Blob returns the object URL in a JSON body for client uploads,
-        // or the caller may have configured a fixed pathname. Prefer the body,
-        // fall back to the grant URL's pathname origin.
-        const storageUrl = await this._extractStorageUrl(res, grant);
+        // Prefer the grant's server-known `storageUrl` (presigned PUT to a
+        // content-addressed pathname); fall back to parsing the response body
+        // for `url` (the proxy/`put()` shape). Redacted: never logged.
+        const storageUrl = grant.storageUrl ?? (await this._extractStorageUrl(res, grant));
         entry.status = "done";
         entry.storageUrl = storageUrl;
         entry.lastError = null;

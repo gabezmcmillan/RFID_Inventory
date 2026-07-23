@@ -12,9 +12,10 @@
  * and enqueues (idempotent by `(docId, contentHash)`).
  *
  * ON-DEVICE VALIDATION REQUIRED: the upload body is a RN `Blob` built from the
- * artifact bytes; RN `fetch` must accept a Blob body for the PUT to the server
- * proxy. This is wired but not runtime-verified off-device (the proxy uploads to
- * Vercel Blob with the official server SDK; see `bolGrantProvider.ts`).
+ * artifact bytes; RN `fetch` must accept a Blob body for the PUT to the
+ * Vercel Blob presigned URL. This is wired but not runtime-verified off-device
+ * (the server mints the presigned URL with the official `@vercel/blob` SDK; see
+ * `bolGrantProvider.ts`).
  */
 
 import { sha256 } from "js-sha256";
@@ -28,15 +29,17 @@ import { AsyncStorageQueueStorage } from "./bolQueueStorage";
 import { readBytes } from "../bol/documentStore";
 
 /**
- * Hard cap on a single BOL artifact upload, sized to stay safely under the
- * Vercel serverless request-body limit (~4.5 MB). The server proxy enforces
- * the same cap; this pre-flight guard avoids streaming an oversized body just
- * to have it rejected. The document scanner already emits compressed JPEG
- * pages well under this limit; a picked high-res photo or large PDF that
- * exceeds it is skipped (the `storage_url` stays null and the tag page shows
- * no link) rather than dead-lettered after repeated retries.
+ * Hard cap on a single BOL artifact upload. The server grant endpoint enforces
+ * the same cap on the presigned PUT (`maximumSizeInBytes` is bound into the
+ * delegation token, enforced by the CDN); this pre-flight guard avoids
+ * streaming an oversized body just to have it rejected. Presigned PUT uploads
+ * go directly device→Blob storage (no Vercel serverless body cap), so this is
+ * generous (25 MB — a scanned JPEG page or a small PDF). The document scanner
+ * already emits compressed JPEG pages well under this limit; a picked artifact
+ * that exceeds it is skipped (the `storage_url` stays null and the tag page
+ * shows no link) rather than dead-lettered after repeated retries.
  */
-export const MAX_BOL_UPLOAD_BYTES = 4 * 1024 * 1024;
+export const MAX_BOL_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 let queue: BolUploadQueue | null = null;
 let queueDb: DomainDb | null = null;
@@ -98,8 +101,8 @@ export async function enqueueBolArtifact(
   const bytes = await readBytes(uri);
   const contentHash = sha256(bytes);
   const sizeBytes = bytes.byteLength;
-  // Pre-flight the serverless body cap so an oversized artifact is skipped
-  // rather than streamed to a 413 and retried to a dead-letter.
+  // Pre-flight the size cap so an oversized artifact is skipped rather than
+  // streamed to the CDN and rejected (the grant also enforces this server-side).
   if (sizeBytes > MAX_BOL_UPLOAD_BYTES) {
     return null;
   }

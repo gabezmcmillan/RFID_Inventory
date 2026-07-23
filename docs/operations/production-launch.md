@@ -31,9 +31,14 @@ Add only what is missing; never copy Development values or expose a secret as
 - `FIELD_OPERATOR_ALLOWLIST` (real operator emails)
 - Entra: `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`, `AZURE_AD_TENANT_ID`,
   callback `https://<prod>/api/auth/callback/microsoft`
-- `BLOB_READ_WRITE_TOKEN` (Vercel Blob, for BOL client-upload grants)
+- `BLOB_READ_WRITE_TOKEN` (Vercel Blob, for BOL presigned upload grants; the
+  `rfid-bol` store is **private** — uploads use presigned PUT, the tag page mints
+  a presigned GET)
 - `SENTRY_DSN` (web) and the field `SENTRY_DSN` baked as `EXPO_PUBLIC_*`? **No** —
   Sentry DSN is public-safe but keep it server-injected, not in the bundle.
+  **(OPERATOR DECISION 2026-07-23: Sentry SKIPPED for launch — `SENTRY_DSN` is
+  NOT required to launch. Add it post-launch; see
+  `docs/operations/sync-security-decision.md` § "Sentry — SKIPPED for launch".)**
 
 ## Migration verification (before deploy)
 

@@ -359,6 +359,10 @@ supersession, retry-then-succeed, dead-letter redaction, and restart resume.
 
 ### BOL upload queue — wired (2026-07-23 cleanup pass)
 
+> **SUPERSEDED** by the "1b. BOL upload — presigned-URL migration" cleanup
+> below (the `buildBlobGrant` reconstruction and the client-token-minting grant
+> endpoint are gone). Kept as the historical record of the original wiring.
+
 The deferred BOL wiring is now done (the `BLOB_READ_WRITE_TOKEN` blocker is
 resolved — see "Vercel Blob store" below):
 
@@ -661,6 +665,91 @@ token minting, no SDK internals); added the proxy route + 13-test suite; added
 the 4 MB pre-flight guard in `enqueueBolArtifact`. The tested queue
 idempotency/redaction core (`bolQueue.ts`) is unchanged — the `BlobGrant`
 abstraction still carries `uploadUrl`/`method`/`headers`. Commit `f4bb9f9`.
+
+> **SUPERSEDED 2026-07-23 by the presigned-URL migration below** — the proxy
+> worked but paid the serverless body cap and (it turned out) mis-set
+> `access: 'public'` on a **private** store, which fails on-device. The
+> presigned path is the documented public contract the operator flagged.
+
+#### 1b. BOL upload — presigned-URL migration (supersedes the proxy)
+
+**Verification (do not trust the operator's AI paste blindly — confirmed against
+official Vercel docs):** Vercel Blob ships **GA** presigned upload URLs since
+`@vercel/blob@2.4.0`; this repo runs `2.6.1` (✓ has `issueSignedToken` +
+`presignUrl` + `parseStoreIdFromDelegationToken`, confirmed in
+`node_modules/@vercel/blob/dist`). The server calls
+`issueSignedToken({ pathname, operations: ['put'], allowedContentTypes,
+maximumSizeInBytes, validUntil, token })` then
+`presignUrl(token, { operation: 'put', pathname, access, allowedContentTypes,
+maximumSizeInBytes, addRandomSuffix, allowOverwrite, validUntil })`; the client
+(RN included) plain `fetch` PUTs the bytes with a `content-type` header — **no
+`@vercel/blob` SDK on the device**, no reconstructed internals, and **no Vercel
+serverless body cap** (bytes go device→Blob storage directly). `maximumSizeInBytes`
+is bound into the delegation token and enforced by the CDN.
+
+**Store access mode (verified, not assumed):** `vercel blob get-store
+store_KuuQEJ6n3Yfy58pT` reports `Access: Private`, base URL
+`kuuqej6n3yfy58pt.private.blob.vercel-storage.com`. So `access: 'private'` on
+the presigned PUT — and the proxy's `access: 'public'` was a latent on-device
+bug (access must match the store), now fixed by the migration.
+
+**Decision: migrate. Delete the proxy.** New `POST /api/bol/upload-grant`
+replaces `PUT /api/bol/upload`. Same auth as the proxy (device bearer +
+`FIELD_OPERATOR_ALLOWLIST` + active device; 503 when
+`BLOB_READ_WRITE_TOKEN` unset). It validates `(docId, contentHash, contentType,
+sizeBytes)` from the JSON body, mints a presigned PUT scoped to
+`bol/{docId}/{contentHash}.{ext}` + `put` + 25 MB + the allowed content types
+(`addRandomSuffix: false`, `allowOverwrite: true` ⇒ content-addressed idempotent),
+and returns `{ presignedUrl, storageUrl, contentType }`. `storageUrl` is the
+canonical **private** object URL the server constructs from
+`parseStoreIdFromDelegationToken(delegationToken)` + the pathname
+(`https://{storeId}.private.blob.vercel-storage.com/{pathname}`) — the queue
+records it on a 200 (the server knows the URL ahead of time; no response-body
+parsing needed). Shared logic lives in `apps/web/src/lib/bolBlob.ts`.
+
+**Field side:** `ServerBolGrantProvider` now POSTs to the grant endpoint with the
+bearer + artifact fields and returns a `BlobGrant { uploadUrl: presignedUrl,
+method: 'PUT', headers: { 'content-type' }, storageUrl }`. `BlobGrant` gained an
+optional `storageUrl`; the queue prefers it on a 200 (falls back to parsing the
+response body for `url`). `MAX_BOL_UPLOAD_BYTES` raised 4 MB → **25 MB** (no
+serverless cap now; the grant enforces the same 25 MB CDN-side). The
+queue/idempotency/redaction core is unchanged.
+
+**Tag page (private store ⇒ presigned GET):** the public `/tag/{epc}` page can no
+longer link `storage_url` directly (it is a private object URL). `issueBolGetUrl`
+mints a short-lived (5 min) presigned GET on render — `access: 'private'`, scoped
+to the one pathname — so the "View bill of lading" link works without exposing the
+read-write token. A module-level get-token cache keyed by pathname reuses the
+delegation token until near expiry (per the Vercel docs: "cache the result and
+reuse it across requests until it's near expiry"), so repeat renders do one HMAC,
+not a control-API call. Returns `null` (no link) when Blob is unconfigured.
+
+**Completion detection:** the device trusts the PUT `2xx` (the docs' raw-presigned
+example does exactly this — `await fetch(presignedUrl, { method: 'PUT', … })` with
+no body parsing); the server-constructed `storageUrl` is recorded, so no webhook /
+HEAD probe is needed. (The `handleUploadPresigned` webhook path was rejected: it
+needs `@vercel/blob/client` on the device, which RN can't run.)
+
+**What changed:** deleted `apps/web/src/app/api/bol/upload/{route,route.test}.ts`
+(the proxy); added `apps/web/src/lib/bolBlob.ts` + `__tests__/bolBlob.test.ts`
+(6 tests: pathname decode, put-grant shape + private `storageUrl` + not-configured
+throw, get-URL shape + private access, get-URL null when unconfigured, get-token
+cache reuse), `apps/web/src/app/api/bol/upload-grant/route.ts` + its 14-test suite
+(auth/allowlist/active-device/503/200/oversize/invalid-meta/502), rewrote
+`apps/field/src/sync/bolGrantProvider.ts` + its 5-test suite (POST grant, no-bearer,
+non-OK status, network failure, missing fields), added `storageUrl` to `BlobGrant`
++ prefer-it-on-200 in `bolQueue.ts`, raised the cap in `bolUpload.ts`, and pointed
+the `/tag/{epc}` page at `issueBolGetUrl`. `.env.example` updated. Commit (pending).
+
+**Tradeoffs / follow-ups:** (1) the public tag page now does one Blob control-API
+call (`issueSignedToken` for `get`) per distinct BOL pathname until the token
+expires — acceptable at warehouse scale (low traffic, internal); the cache keeps
+repeat renders to a local HMAC. (2) Presigned GET URLs expire in 5 min, so a printed
+or screenshot-captured link stops working shortly after — by design (private
+store); the page mints a fresh one each visit. (3) On-device validation of the RN
+`fetch` Blob-body PUT to the presigned URL is still Phase 6 (same as the proxy
+before it). (4) Scan-doc multi-page upload remains deferred (single-artifact path
+only, as before).
 
 #### 2. Web env parsing — `@t3-oss/env-nextjs`
 

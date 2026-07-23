@@ -11,18 +11,22 @@ import {
   TableCell,
   TableRow,
 } from "@/components/ui/table";
+import { issueBolGetUrl } from "@/lib/bolBlob";
 import { getDb } from "@/lib/db";
 import { inventoryStatusBadge } from "@/lib/status";
 
 /** Public QR-code landing page (`/tag/{epc}`): box details + a link to its BOL
  * document. Printed labels carry this URL, so it must not require sign-in. The
- * "View bill of lading" link renders only when the doc row has a `storage_url`. */
+ * "View bill of lading" link renders only when the doc row has a `storage_url`;
+ * the `rfid-bol` Blob store is private, so the link is a short-lived presigned
+ * GET URL minted on render (no read-write token in the page). */
 export default async function TagPage({ params }: { params: Promise<{ epc: string }> }) {
   const { epc } = await params;
   const db = await getDb();
   const tag = await findTag(db, epc);
   if (!tag) notFound();
   const doc = tag.bol_doc_id ? await getBolDoc(db, tag.bol_doc_id) : null;
+  const bolUrl = doc?.storage_url ? await issueBolGetUrl(doc.storage_url) : null;
   const status = inventoryStatusBadge(tag.status);
   const rows: { label: string; value: React.ReactNode }[] = [
     { label: "Item type", value: tag.item_type },
@@ -56,9 +60,9 @@ export default async function TagPage({ params }: { params: Promise<{ epc: strin
                 ))}
               </TableBody>
             </Table>
-            {doc && doc.storage_url ? (
-              <Button variant="link" className="mt-4 h-auto p-0" render={<a href={doc.storage_url} />}>
-                View bill of lading ({doc.bol_number || doc.filename})
+            {bolUrl ? (
+              <Button variant="link" className="mt-4 h-auto p-0" render={<a href={bolUrl} />}>
+                View bill of lading ({doc!.bol_number || doc!.filename})
               </Button>
             ) : null}
           </CardContent>

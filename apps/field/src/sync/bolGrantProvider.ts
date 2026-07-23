@@ -1,27 +1,36 @@
 /**
- * {@link GrantProvider} that returns a grant pointing the upload queue at the
- * web app's server-side BOL upload proxy `PUT /api/bol/upload` (plan 010,
- * Phase 3 operator cleanup).
+ * {@link GrantProvider} that mints a Vercel Blob presigned PUT URL by calling
+ * the web app's `POST /api/bol/upload-grant` with the device's stored bearer
+ * (plan 010, Phase 3 operator cleanup — presigned-URL migration).
  *
- * Why a server proxy and not a Vercel Blob client-upload grant: the documented
- * client-upload flow requires `@vercel/blob/client`'s JS SDK (`upload`/`put`),
- * which imports node-only `crypto` + `undici` and cannot run on React Native. The
- * client-side PUT wire format (control-API URL, `x-vercel-blob-store-id`,
- * `x-api-version`, …) is an SDK internal, not a documented public contract, so
- * reconstructing it (the former `buildBlobGrant`) coupled us to SDK internals.
- * Instead the queue PUTs the artifact bytes to this server route, which uploads
- * to Vercel Blob with the official server SDK `put()`. The bytes flow through
- * the server, so the upload is bounded by the Vercel serverless request-body
- * cap (~4.5 MB) — the proxy enforces a 4 MB cap and the field app pre-flights
- * the same limit (see `enqueueBolArtifact`).
+ * Why presigned URLs and not a server proxy: Vercel Blob ships GA presigned
+ * upload URLs (`issueSignedToken` + `presignUrl`, `@vercel/blob` ≥ 2.4.0; this
+ * repo runs 2.6.1). The server mints a short-lived URL scoped to one pathname +
+ * `put` operation + size/content-type caps; the field app plain `fetch` PUTs
+ * the artifact bytes directly to Blob storage — no `@vercel/blob` SDK on the
+ * device (RN can't run it), no reconstructed SDK internals, and no Vercel
+ * serverless request-body cap (bytes never flow through the server). The
+ * `rfid-bol` store is private, so the server also returns the canonical
+ * private object URL (`storageUrl`) for the queue to record on a 200.
  *
- * The grant carries the artifact's content-addressed metadata in headers so the
- * proxy can bind the Blob pathname to `bol/{docId}/{contentHash}.{ext}` without
- * trusting a client-supplied pathname. `getUploadGrant` does no network call —
- * it just constructs the proxy URL + headers; the queue's PUT does the auth and
- * upload, and the proxy rejects early (401/403/503) before consuming the body.
+ * Errors are thrown with a numeric `status` when the server responded (so the
+ * queue records `{ kind: "http", status }`) or without one for a network/auth
+ * failure (`{ kind: "network" }`). Messages never contain the bearer,
+ * presigned URL, or `storageUrl` — and the queue discards messages anyway
+ * (redacted).
  */
+
 import type { BlobGrant, GrantProvider, GrantRequest } from "./bolQueue";
+
+/** Fields the server grant endpoint returns for one artifact. */
+export interface GrantResponse {
+  /** Time-limited presigned PUT URL the device fetch-PUTs the bytes to. */
+  presignedUrl: string;
+  /** Canonical private object URL the upload produces (recorded as storage_url). */
+  storageUrl: string;
+  /** The artifact's content type (echoed so the PUT sends the right header). */
+  contentType: string;
+}
 
 export interface ServerBolGrantProviderDeps {
   fetchImpl: typeof fetch;
@@ -31,29 +40,54 @@ export interface ServerBolGrantProviderDeps {
   getBearer: () => Promise<string | null>;
 }
 
+function httpError(status: number): Error {
+  const e = new Error(`bol grant rejected (${status})`);
+  (e as Error & { status: number }).status = status;
+  return e;
+}
+
 export class ServerBolGrantProvider implements GrantProvider {
   constructor(private readonly _deps: ServerBolGrantProviderDeps) {}
 
-  /**
-   * Return the proxy grant. The queue immediately PUTs the artifact bytes to
-   * {@link grant.uploadUrl} with {@link grant.headers}; the proxy uploads them
-   * to Vercel Blob and returns the object URL, which the queue records as the
-   * entry's `storage_url`. Throws only when there is no linked bearer.
-   */
   async getUploadGrant(req: GrantRequest): Promise<BlobGrant> {
     const bearer = await this._deps.getBearer();
     if (!bearer) throw new Error("no linked device bearer");
 
-    const uploadUrl = `${await this._deps.getServerUrl()}/api/bol/upload`;
+    const url = `${await this._deps.getServerUrl()}/api/bol/upload-grant`;
+    let res: Response;
+    try {
+      res = await this._deps.fetchImpl(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          docId: req.docId,
+          contentHash: req.contentHash,
+          contentType: req.contentType,
+          sizeBytes: req.sizeBytes,
+        }),
+      });
+    } catch {
+      throw new Error("bol grant network failure");
+    }
+    if (!res.ok) throw httpError(res.status);
+
+    let body: GrantResponse;
+    try {
+      body = (await res.json()) as GrantResponse;
+    } catch {
+      throw new Error("bol grant bad response");
+    }
+    if (!body.presignedUrl || !body.storageUrl || !body.contentType) {
+      throw new Error("bol grant missing fields");
+    }
     return {
-      uploadUrl,
+      uploadUrl: body.presignedUrl,
       method: "PUT",
-      headers: {
-        authorization: `Bearer ${bearer}`,
-        "x-bol-doc-id": req.docId,
-        "x-bol-content-hash": req.contentHash,
-        "x-bol-content-type": req.contentType,
-      },
+      headers: { "content-type": body.contentType },
+      storageUrl: body.storageUrl,
     };
   }
 }

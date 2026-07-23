@@ -49,17 +49,29 @@
   "current user" and the admin UI says "Linked by", not "Owner". Web admin UI is
   a minimal shadcn page at `/admin/devices`. Tests cover PIN hash/verify/backoff,
   deactivate→refresh denial→coordinator stops, and registry fields.
-- **Architecture cleanups (2026-07-23, operator-approved)**: three independent
+- **Architecture cleanups (2026-07-23, operator-approved)**: independent
   reviewable batches on `rewrite/expo`, full gate green each, no push: (1) BOL
   upload replaced the reconstructed `@vercel/blob` internals with a server proxy
   `PUT /api/bol/upload` using the official server SDK `put()` (4 MB cap + field
-  pre-flight; `access:public` so the tag-page link works); (2) web env parsing
-  swapped to `@t3-oss/env-nextjs` `createEnv` (vars, cross-field refinements, and
-  per-issue error ergonomics preserved); (3) Better Auth device-authorization
-  plugin assessed and **not** migrated — no approval hook to bind register+EPC
-  atomically, and its OAuth access token regresses the session-based revoke
-  lifecycle; the custom QR/OTT flow is kept. See
+  pre-flight; `access:public` so the tag-page link works) — **then (1b) superseded
+  by the presigned-URL migration**: `POST /api/bol/upload-grant` mints a Vercel
+  Blob presigned PUT (GA since `@vercel/blob@2.4.0`; repo on 2.6.1) scoped to the
+  content-addressed pathname + 25 MB + content-type caps; the device plain `fetch`
+  PUTs bytes directly to Blob storage (no SDK on-device, no serverless body cap);
+  the private store is handled with `access:'private'` on the PUT and a
+  short-lived presigned GET minted on the tag page (the proxy's `access:public`
+  was a latent on-device bug on the private store); the proxy route is deleted;
+  (2) web env parsing swapped to `@t3-oss/env-nextjs` `createEnv` (vars,
+  cross-field refinements, and per-issue error ergonomics preserved); (3) Better
+  Auth device-authorization plugin assessed and **not** migrated — no approval
+  hook to bind register+EPC atomically, and its OAuth access token regresses the
+  session-based revoke lifecycle; the custom QR/OTT flow is kept. See
   `docs/operations/sync-security-decision.md` for the full tradeoffs.
+- **Sentry — SKIPPED for launch (operator decision, 2026-07-23)**: launch
+  without error tracking; a recommended post-launch addition (redaction spec
+  drafted). The Phase-4 Sentry operator-action item is annotated SKIPPED, not
+  pending; no `@sentry/*` packages or `SENTRY_DSN` are required for launch. See
+  `docs/operations/sync-security-decision.md` § "Sentry — SKIPPED for launch".
 
 ## Why this matters
 
