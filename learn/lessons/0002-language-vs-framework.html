@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lesson 2 — TypeScript vs React vs Next.js vs Expo</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+<main>
+
+  <header class="masthead">
+    <p class="eyebrow">RFID Inventory · Lesson 2</p>
+    <h1>Language vs. library vs. framework</h1>
+    <p class="subtitle">Untangling TypeScript, React, React Native, Next.js and Expo — and why <code>apps/web</code> and <code>apps/field</code> are more alike than they look.</p>
+  </header>
+
+  <p>You asked exactly the right question: <em>"is React Native a framework for writing TypeScript?"</em> Almost — but the one word to fix is what unlocks everything. So let's fix it first.</p>
+
+  <div class="note">
+    <span class="callout-label">The misconception to drop</span>
+    React, React Native, Next.js and Expo are <strong>not</strong> "frameworks for writing TypeScript." <strong>Only TypeScript is a language.</strong> The others are <em>tools you use while writing TypeScript</em> — and they stack on top of one another. Sorting out <em>what layer each one lives on</em> is the whole lesson.
+  </div>
+
+  <h2>1. The four things, one sentence each</h2>
+  <ul>
+    <li><strong>TypeScript</strong> — the <strong>language</strong> you type. It's JavaScript (the language of the web) plus a "type system" that catches typos and mismatched data <em>before</em> the app runs. This is the actual text in every <code>.ts</code> / <code>.tsx</code> file.</li>
+    <li><strong>React</strong> — a <strong>library</strong> for building a user interface out of reusable <em>components</em> (a button, a form, a list row). React is just the <em>idea and the rules</em>; on its own it doesn't know whether it's drawing to a phone or a browser.</li>
+    <li><strong>React Native / React DOM</strong> — the two <strong>renderers</strong> that give React somewhere to actually draw. <em>React DOM</em> draws into a <strong>web browser</strong>; <em>React Native</em> draws to a <strong>real iOS/Android screen</strong>. Same React, different destination.</li>
+    <li><strong>Next.js / Expo</strong> — the <strong>frameworks</strong> that wrap everything above into a productive whole: routing between screens, a dev server, the build, connections to device features. <em>Next.js</em> wraps React-for-web; <em>Expo</em> wraps React Native.</li>
+  </ul>
+
+  <div class="analogy">
+    <span class="callout-label">Analogy — writing and publishing a book</span>
+    <strong>TypeScript</strong> is the <em>language you write in</em> (English). <strong>React</strong> is a <em>style guide</em> — "compose everything out of small, reusable sections." <strong>React DOM vs React Native</strong> is the <em>format you publish in</em> — a printed book vs an audiobook: same words, different medium. <strong>Next.js / Expo</strong> is the <em>publishing house</em> that handles binding, printing, and distribution so you only worry about the writing.
+  </div>
+
+  <h2>2. The stack, drawn out</h2>
+  <p>Read each column bottom-to-top: every layer sits on the one below it. Notice the bottom two layers are <em>identical</em> — both apps are the same language and the same UI idea. They only diverge at "where does it draw," and in the framework wrapped around it.</p>
+
+  <div class="stacks">
+    <div class="stack">
+      <div class="stack-title">The website · <code>apps/web</code></div>
+      <div class="layer l-framework"><span class="lname">Next.js</span><span class="lrole">framework — routing, server, build (<code>next dev</code>)</span></div>
+      <div class="arrow">▲ sits on</div>
+      <div class="layer l-renderer"><span class="lname">React DOM</span><span class="lrole">renderer — draws to a browser (HTML)</span></div>
+      <div class="arrow">▲ sits on</div>
+      <div class="layer l-react"><span class="lname">React</span><span class="lrole">library — UI as components</span></div>
+      <div class="arrow">▲ written in</div>
+      <div class="layer l-lang"><span class="lname">TypeScript</span><span class="lrole">the language (<code>.tsx</code> files)</span></div>
+    </div>
+
+    <div class="stack">
+      <div class="stack-title">The iPhone app · <code>apps/field</code></div>
+      <div class="layer l-framework"><span class="lname">Expo</span><span class="lrole">framework — routing, build, device APIs (<code>expo start</code>)</span></div>
+      <div class="arrow">▲ sits on</div>
+      <div class="layer l-renderer"><span class="lname">React Native</span><span class="lrole">renderer — draws to native iOS/Android</span></div>
+      <div class="arrow">▲ sits on</div>
+      <div class="layer l-react"><span class="lname">React</span><span class="lrole">library — UI as components</span></div>
+      <div class="arrow">▲ written in</div>
+      <div class="layer l-lang"><span class="lname">TypeScript</span><span class="lrole">the language (<code>.tsx</code> files)</span></div>
+    </div>
+  </div>
+  <p class="stack-caption">Same bottom two layers. Different top two. That's the whole relationship.</p>
+
+  <h2>3. Why layer at all? (the transferable idea)</h2>
+  <p>This "stack" pattern is everywhere in web development, so it's worth internalizing beyond this repo. Each layer exists so the layer above doesn't have to re-solve a hard problem:</p>
+  <ul>
+    <li>You <em>could</em> write a phone app in raw TypeScript talking directly to iOS — but you'd hand-build every button and screen transition.</li>
+    <li><strong>React</strong> spares you that by letting you describe UI as components.</li>
+    <li>But React alone doesn't handle navigation, building an installable app, or camera access.</li>
+    <li><strong>Expo</strong> spares you <em>that</em>. You get to spend your time on <em>the warehouse logic</em>, not plumbing.</li>
+  </ul>
+  <p>The trade: each layer you adopt is power you don't have to write, in exchange for learning that layer's conventions. That's the deal web frameworks offer.</p>
+
+  <h2>4. See it in this repo</h2>
+  <p>Because React is shared, a "screen" in each app looks strikingly similar — both are TypeScript files ending in <code>.tsx</code> that return a component:</p>
+  <ul>
+    <li><strong>Field (Expo):</strong> screens live in <code>apps/field/app/</code> — e.g. <code>check-in.tsx</code>, <code>warehouse.tsx</code>. The <em>file name is the route</em>; that's an <strong>Expo</strong> feature (<code>expo-router</code>).</li>
+    <li><strong>Web (Next.js):</strong> screens live in <code>apps/web/src/app/</code> — e.g. <code>warehouse/</code>, <code>cart/</code>, <code>requests/</code>. The <em>folder name is the route</em>; that's a <strong>Next.js</strong> feature (the "App Router").</li>
+  </ul>
+  <p>So when you open a <code>.tsx</code> file: the <em>syntax</em> is TypeScript, the <em>components and <code>useState</code>/<code>useEffect</code></em> are React, the <em>on-screen elements</em> (<code>&lt;View&gt;</code> for the phone vs <code>&lt;div&gt;</code> for the web) tell you which renderer, and the <em>routing/config conventions</em> are Expo or Next.js.</p>
+
+  <div class="note">
+    <span class="callout-label">Handy tell</span>
+    Which renderer am I looking at? If you see <code>&lt;div&gt;</code>, <code>&lt;button&gt;</code>, <code>&lt;p&gt;</code> — that's <strong>React DOM</strong> (web). If you see <code>&lt;View&gt;</code>, <code>&lt;Text&gt;</code>, <code>&lt;Pressable&gt;</code> — that's <strong>React Native</strong> (phone). Phones have no "div."
+  </div>
+
+  <h2>5. What you should now be able to say</h2>
+  <ul>
+    <li>"TypeScript is the <strong>language</strong>; the other three are libraries/frameworks I use while writing it."</li>
+    <li>"React is the <strong>UI idea</strong>; React DOM and React Native are two <strong>renderers</strong> for it."</li>
+    <li>"Next.js wraps React-for-web; Expo wraps React Native. Both apps share the bottom two layers."</li>
+  </ul>
+
+  <div class="source">
+    <span class="callout-label">Read this next (primary source)</span>
+    <a href="https://react.dev/learn">React's official "Learn React" intro</a> — read just the first page, <em>"Your first component."</em> React is the layer shared by <em>both</em> your apps, so it's the highest-leverage thing to understand next. Ignore, for now, anything web-vs-native specific; focus on "what is a component."
+  </div>
+
+  <div class="teacher-reminder">
+    <strong>I'm your teacher — ask me anything.</strong> Good follow-ups from here: "show me the same idea in a real <code>check-in.tsx</code>", "what does a type actually look like?", or "why did they pick Next.js and Expo specifically?" Ask and I'll go deeper.
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>Course so far:</strong></p>
+    <ol class="next-lessons">
+      <li class="ready"><a href="./0001-the-big-picture.html">1 · The big picture: what got re-written, and why</a></li>
+      <li class="ready">2 · Language vs library vs framework <em>(you are here)</em></li>
+      <li>3 · What a React component really is — read a real <code>apps/field</code> screen</li>
+      <li>4 · Follow one box end-to-end: phone → database → website</li>
+    </ol>
+  </footer>
+
+</main>
+</body>
+</html>

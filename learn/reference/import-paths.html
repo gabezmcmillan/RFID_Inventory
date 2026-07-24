@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reference — Reading an import line</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+<main>
+
+  <header class="masthead">
+    <p class="eyebrow">RFID Inventory · Reference</p>
+    <h1>Reading an <code>import</code> line</h1>
+    <p class="subtitle">A one-glance cheat-sheet: where does this code actually come from? Four kinds of path, and the <code>@</code> trap.</p>
+  </header>
+
+  <p>Every <code>.ts</code>/<code>.tsx</code> file starts with a stack of <code>import</code> lines. The <em>text after <code>from</code></em> tells you <strong>where that code lives</strong>. Four possibilities:</p>
+
+  <h2>The four kinds</h2>
+  <table class="compare">
+    <thead>
+      <tr><th>What you see after <code>from</code></th><th>Where the code lives</th><th>Real examples in this repo</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th>Bare name<br><small>(no <code>.</code>, no <code>@/</code>)</small></th>
+        <td>A <strong>third-party package</strong> someone installed into <code>node_modules</code>.</td>
+        <td><code>react</code>, <code>better-auth</code>, <code>drizzle-orm</code>, <code>@tursodatabase/database</code>, <code>expo-router</code></td>
+      </tr>
+      <tr>
+        <th><code>@rfid/…</code></th>
+        <td>Our own <strong>shared workspace package</strong> — the code both apps agree on.</td>
+        <td><code>@rfid/domain</code>, <code>@rfid/reader-protocol</code></td>
+      </tr>
+      <tr>
+        <th><code>@/…</code></th>
+        <td><strong>This app's own <code>src/</code> folder</strong> — an alias (a nickname) defined in <code>tsconfig.json</code>.</td>
+        <td><code>@/components/Header</code>, <code>@/lib/db</code>, <code>@/lib/utils</code></td>
+      </tr>
+      <tr>
+        <th><code>./</code> or <code>../</code></th>
+        <td>A <strong>nearby file</strong>, by relative path (<code>.</code> = this folder, <code>..</code> = up one).</td>
+        <td><code>./AmendSheet</code>, <code>../../db/provider</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <span class="callout-label">The <code>@</code> trap (this is what trips everyone)</span>
+    Three things all start with <code>@</code> but mean different things:
+    <ul>
+      <li><code>@tursodatabase/database</code> — a <strong>third-party package</strong> (a "scoped" package: <code>@org/name</code>).</li>
+      <li><code>@rfid/domain</code> — <strong>our shared package</strong> (also <code>@org/name</code> shape, but the org is us).</li>
+      <li><code>@/lib/db</code> — <strong>NOT a package at all.</strong> The slash comes <em>right after</em> the <code>@</code>. This is the "my own <code>src/</code> folder" alias.</li>
+    </ul>
+    Tell them apart by what follows the <code>@</code>: a <strong>word</strong> (<code>@rfid</code>, <code>@tursodatabase</code>) = a package; a <strong>slash</strong> (<code>@/</code>) = the local-src alias.
+  </div>
+
+  <h2>Where the aliases are defined</h2>
+  <p>These aren't magic — each app declares them once. In <code>apps/web/tsconfig.json</code>:</p>
+  <div class="tree">"paths": {
+  "@/*": ["./src/*"]   <span class="cmt"># "@/anything" means "./src/anything"</span>
+}</div>
+  <p>So <code>@/lib/db</code> is exactly <code>apps/web/src/lib/db.ts</code>. Workspace packages like <code>@rfid/domain</code> are wired up a level higher, in the repo's <code>pnpm-workspace.yaml</code> + each package's <code>package.json</code> <code>name</code>.</p>
+
+  <h2>Worked example — the top of <code>apps/web/src/app/warehouse/page.tsx</code></h2>
+  <div class="tree"><span class="cmt"># shared brain — used by BOTH apps (types + real functions)</span>
+import { BUILDING_OPTIONS, inventoryTree, type InventoryType } from <span class="dir">"@rfid/domain"</span>;
+
+<span class="cmt"># this app's OWN components (the ui/* ones are shadcn copied into the repo)</span>
+import { Header } from <span class="dir">"@/components/Header"</span>;
+import { Card } from <span class="dir">"@/components/ui/card"</span>;
+
+<span class="cmt"># this app's OWN helpers — @/lib/db is where the real Turso package gets used</span>
+import { getDb } from <span class="dir">"@/lib/db"</span>;
+import { cn } from <span class="dir">"@/lib/utils"</span>;</div>
+  <p>Nothing on that page imports a third-party package <em>directly</em>. The only external dependency (Turso) arrives <em>through</em> <code>@/lib/db</code>, which is the team's own file that imports the real <code>@tursodatabase/database</code> package by its bare name and wraps it. That "wrap external tools in your own <code>lib/</code> file" habit is a common, healthy pattern.</p>
+
+  <div class="note">
+    <span class="callout-label">One more distinction</span>
+    <code>import { type InventoryType }</code> — the <code>type</code> keyword marks a <strong>type-only</strong> import: a data-shape description used while writing/checking code that <strong>disappears when the app runs</strong>. Without <code>type</code> (e.g. <code>inventoryTree</code>, <code>BUILDING_OPTIONS</code>), you're importing <strong>real code</strong> that executes.
+  </div>
+
+  <p style="margin-top:2rem"><a href="../lessons/0002-language-vs-framework.html">← back to Lesson 2</a> · Ask your teacher if any row above is fuzzy.</p>
+
+</main>
+</body>
+</html>

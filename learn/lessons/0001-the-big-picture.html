@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lesson 1 — The Big Picture</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+<main>
+
+  <header class="masthead">
+    <p class="eyebrow">RFID Inventory · Lesson 1</p>
+    <h1>The Big Picture: what got re-written, and why</h1>
+    <p class="subtitle">A map of the whole codebase for someone who has never done web development — and how the new version differs from the old one.</p>
+  </header>
+
+  <p>Before we touch a single line of code, you need a <strong>mental map</strong>. Once you can picture where things live and why, every later lesson has somewhere to hang. That is the only goal of this lesson: by the end you should be able to open the repo and say, out loud, what each folder is for.</p>
+
+  <div class="analogy">
+    <span class="callout-label">Analogy</span>
+    Think of the whole system as a <strong>warehouse and a storefront</strong>. In the back, staff receive boxes and put them on shelves. Out front, customers browse what's in stock and ask for things. The <em>re-write</em> didn't change that story — it changed the <em>tools</em> the staff and customers use, and the <em>ledger</em> everyone writes in.
+  </div>
+
+  <h2>1. What does this system actually do?</h2>
+  <p>It tracks physical inventory using <strong>RFID tags</strong> — little chips stuck to boxes that a handheld reader can detect by radio. There are two kinds of people using it:</p>
+  <ul>
+    <li><strong>Warehouse staff</strong> — receive truckloads, scan each box's tag to <em>check it in</em>, later scan again to <em>check it out</em> when it ships to a jobsite. They can also sweep a room to count everything, or play "hotter/colder" to physically <em>find</em> one specific tag.</li>
+    <li><strong>Jobsite / office people</strong> — can't touch the warehouse computer. They open a website to see what's in stock and submit a <strong>material request</strong> ("please send me 4 of these"). The warehouse sees the request and fulfils it.</li>
+  </ul>
+  <p>Both the old and new versions do exactly this. Keep that in mind — the <em>job</em> is unchanged, only the <em>machinery</em> was rebuilt.</p>
+
+  <h2>2. A few words you'll need first</h2>
+  <p>You said you're new to web dev, so here are the load-bearing terms. Don't memorize — just get the gist; they'll recur.</p>
+  <ul>
+    <li><strong>Client</strong> — the thing a person actually touches (a phone app, or a web page in a browser). Also called the <em>front-end</em>.</li>
+    <li><strong>Server</strong> — a program running on some computer elsewhere that the client talks to over the internet. Also called the <em>back-end</em>.</li>
+    <li><strong>Database</strong> — the organized, permanent memory where all the facts live (every box, every request). The "ledger" in our analogy.</li>
+    <li><strong>Framework</strong> — a big pre-built toolkit that gives an app its skeleton so you don't rebuild the basics. (<a href="https://nextjs.org">Next.js</a> and <a href="https://expo.dev">Expo</a> below are frameworks.)</li>
+    <li><strong>Package / monorepo</strong> — a "package" is a self-contained chunk of code with a name. A <em>monorepo</em> ("mono" = one) is a single repository holding several apps and shared packages together, so they can share code. This repo is a monorepo.</li>
+  </ul>
+
+  <h2>3. The old system (Python)</h2>
+  <p>The version being replaced — still documented in the repo's <code>README.md</code> and living under <code>apps/warehouse/</code> and <code>apps/cloud/</code> — was written in the <strong>Python</strong> language and came in two separate programs that barely shared any code:</p>
+
+  <div class="vs">
+    <div class="col old">
+      <span class="tag">Old · warehouse</span>
+      <h4><code>apps/warehouse/</code></h4>
+      <ul>
+        <li>A Python program you install on a <strong>Windows PC</strong> in the warehouse (bundled into one <code>.exe</code> file).</li>
+        <li>The staff used it through a <strong>web browser pointed at that same PC</strong> (<code>127.0.0.1:8000</code>).</li>
+        <li>Talked to the RFID reader over a <strong>USB cable</strong>, and scanned bills-of-lading on an Epson desktop scanner.</li>
+        <li>Saved everything to a <strong>SQLite file</strong> (<code>inventory.db</code>) sitting on that one PC.</li>
+      </ul>
+    </div>
+    <div class="col old">
+      <span class="tag">Old · cloud</span>
+      <h4><code>apps/cloud/</code></h4>
+      <ul>
+        <li>A <em>second, separate</em> Python program hosted on the internet (on <a href="https://vercel.com">Vercel</a>).</li>
+        <li>Showed jobsite users a read-only stock list and a request form.</li>
+        <li>Had its <strong>own separate database</strong> (Postgres) — a <em>copy</em> of the warehouse data.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="callout-label">The hard part of the old design</span>
+    Two programs, two databases, in two places. Someone had to write code by hand to constantly <strong>copy</strong> data from the warehouse PC up to the cloud and pull requests back down. That copying machinery — <code>apps/warehouse/sync.py</code> plus a <code>packages/contract</code> defining exactly which columns to copy — was fiddly, easy to break, and a lot of the total code. Remember this pain; the re-write exists largely to erase it.
+  </div>
+
+  <h2>4. The new system (TypeScript)</h2>
+  <p>The re-write is written in <strong>TypeScript</strong> (a stricter, typo-catching cousin of JavaScript — the language of the web). Instead of two isolated Python programs, it's <strong>four cooperating pieces</strong> in one monorepo, three of which you already have open a lot:</p>
+
+  <div class="tree">
+<span class="dir">apps/field/</span>      <span class="cmt"># the iPhone app — replaces the warehouse PC entirely</span>
+<span class="dir">apps/web/</span>        <span class="cmt"># the new website — jobsite stock, requests, office browse</span>
+<span class="dir">packages/domain/</span> <span class="cmt"># shared brain: the data shape + all the business rules</span>
+<span class="dir">packages/reader-protocol/</span> <span class="cmt"># how to talk to the RFID reader hardware</span>
+  </div>
+
+  <h3>apps/field — the iPhone app</h3>
+  <p>Built with <a href="https://expo.dev">Expo</a>, which is the standard toolkit for <a href="https://reactnative.dev">React Native</a> — a way to build <em>real native phone apps</em> using the same <strong>React</strong> ideas the web uses. The phone <strong>clips onto the RFID sled</strong> and talks to the reader over <strong>Bluetooth</strong> (no more USB cable, no more Windows PC). The <code>app/</code> folder inside it has one file per screen — <code>check-in.tsx</code>, <code>check-out.tsx</code>, <code>sweep.tsx</code>, <code>finder.tsx</code>, <code>warehouse.tsx</code>, <code>requests.tsx</code> — which line up almost exactly with the "Modes" listed in the old README. Bills-of-lading are now photographed with the <strong>phone camera</strong> instead of a desk scanner.</p>
+
+  <h3>apps/web — the new website</h3>
+  <p>Built with <a href="https://nextjs.org">Next.js</a>, the most common React framework for websites, also hosted on Vercel. It does what the old <code>apps/cloud/</code> did (stock browsing, a request <em>cart</em>, order status) <em>plus</em> an office-facing warehouse view, and it now has real <strong>sign-in</strong> (Microsoft company login, via a library called <a href="https://better-auth.com">Better Auth</a>). Screens live under <code>src/app/</code> (<code>warehouse/</code>, <code>cart/</code>, <code>requests/</code>, <code>tag/</code>, <code>sign-in/</code>).</p>
+
+  <h3>packages/domain — the shared brain</h3>
+  <p>This is the clever part and the biggest change. All the <em>rules</em> and the <em>shape of the data</em> — what a "tag" is, what a "request" is, how check-in works — live <strong>once</strong> here, in plain TypeScript. Both the phone app and the website <em>import</em> this same package. In the old world those rules were duplicated across the two Python programs; now there's a single source of truth. It's a direct port of the old <code>apps/warehouse/config.py</code> (constants) and <code>db.py</code> (database logic).</p>
+
+  <h3>The database: one Turso, not two</h3>
+  <p>The new system uses a single <a href="https://turso.tech">Turso</a> database (Turso is a modern, cloud-hosted version of that same SQLite technology). Here's the magic: the phone keeps a <strong>local copy</strong> it can read and write even with no signal, and Turso <strong>automatically syncs</strong> that copy with the cloud when there's a connection. The website reads and writes the very same cloud database directly. Because Turso handles the copying, the entire hand-written sync machinery from the old system (<code>sync.py</code>, <code>packages/contract</code>) simply <strong>gets deleted</strong>.</p>
+
+  <div class="win">
+    <span class="callout-label">The one big idea</span>
+    The re-write trades <strong>two Python programs + two databases + hand-written copying</strong> for <strong>two TypeScript apps + one shared brain + one auto-syncing database</strong>. Almost every other difference flows from that single decision.
+  </div>
+
+  <h2>5. Old vs new, side by side</h2>
+  <table class="compare">
+    <thead>
+      <tr><th>Concern</th><th>Old (Python)</th><th>New (TypeScript)</th></tr>
+    </thead>
+    <tbody>
+      <tr><th>Language</th><td class="old-cell">Python</td><td class="new-cell">TypeScript</td></tr>
+      <tr><th>Warehouse tool</th><td class="old-cell">Browser app on a Windows PC (<code>.exe</code>)</td><td class="new-cell">iPhone app (<code>apps/field</code>)</td></tr>
+      <tr><th>Reader link</th><td class="old-cell">USB serial cable</td><td class="new-cell">Bluetooth</td></tr>
+      <tr><th>BOL capture</th><td class="old-cell">Epson desk scanner</td><td class="new-cell">Phone camera</td></tr>
+      <tr><th>Jobsite site</th><td class="old-cell">Separate Python app (<code>apps/cloud</code>)</td><td class="new-cell">Next.js site (<code>apps/web</code>)</td></tr>
+      <tr><th>Database</th><td class="old-cell">Local SQLite file <em>plus</em> a separate cloud Postgres</td><td class="new-cell">One Turso database, mirrored to the phone</td></tr>
+      <tr><th>Keeping data in sync</th><td class="old-cell">Hand-written <code>sync.py</code> + contract</td><td class="new-cell">Built in to Turso (deleted our code)</td></tr>
+      <tr><th>Shared code</th><td class="old-cell">Almost none across the two apps</td><td class="new-cell">One <code>packages/domain</code> brain</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <span class="callout-label">Trivia that explains a file you'll see</span>
+    The Python <code>apps/warehouse/</code> and <code>apps/cloud/</code> folders are <strong>still in the repo on purpose</strong> — the plan (see <code>plans/README.md</code>) keeps the old system running until the new one fully takes over ("cutover"). So don't be confused seeing Python and TypeScript side by side; they're the before and after.
+  </div>
+
+  <h2>Your tangible win</h2>
+  <p>Open the repo and, without reading anything, try to say what these five folders are: <code>apps/field</code>, <code>apps/web</code>, <code>packages/domain</code>, <code>packages/reader-protocol</code>, and the old <code>apps/warehouse</code>. If you can, this lesson worked. If any feels fuzzy, that's exactly what to ask me about.</p>
+
+  <div class="source">
+    <span class="callout-label">Read this next (primary source)</span>
+    The repo's own <a href="../../plans/README.md"><code>plans/README.md</code></a> — specifically the "What is being built" section — is the highest-trust description of this exact re-write, written by the people who planned it. Read just that top section; it will now make sense.
+  </div>
+
+  <div class="teacher-reminder">
+    <strong>I'm your teacher — ask me anything.</strong> If a term didn't land ("what <em>is</em> React, really?", "why is TypeScript safer than Python?", "show me an actual file"), just ask in the chat. Follow-up questions are how these lessons get tuned to you.
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>Where we're headed</strong> (future lessons, roughly in order):</p>
+    <ol class="next-lessons">
+      <li class="ready">1 · The big picture <em>(you are here)</em></li>
+      <li class="ready"><a href="./0002-language-vs-framework.html">2 · Language vs library vs framework: TypeScript, React, Next.js, Expo</a></li>
+      <li>3 · What a React component really is, using a real screen from <code>apps/field</code></li>
+      <li>4 · Follow one box end-to-end: check-in on the phone → database → the website</li>
+      <li>5 · The shared brain: how <code>packages/domain</code> lets both apps agree</li>
+    </ol>
+  </footer>
+
+</main>
+</body>
+</html>

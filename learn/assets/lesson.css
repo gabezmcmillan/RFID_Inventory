@@ -1,0 +1,171 @@
+/* Shared stylesheet for all RFID Inventory lessons.
+   One stylesheet so every lesson feels like one course, not a pile of one-offs.
+   Design goals: calm, readable, prints well. Inspired by Edward Tufte. */
+
+:root {
+  --ink: #1a1a1a;
+  --ink-soft: #4a4a4a;
+  --ink-faint: #767676;
+  --paper: #fdfcf9;
+  --rule: #e4e0d6;
+  --accent: #8a3324;      /* warehouse rust-red */
+  --accent-soft: #f3e7e3;
+  --old: #6b7280;         /* the previous Python system */
+  --old-soft: #eef0f2;
+  --new: #1f6f5c;         /* the new TypeScript system */
+  --new-soft: #e3f0eb;
+  --code-bg: #f4f1ea;
+  --maxw: 46rem;
+}
+
+* { box-sizing: border-box; }
+
+html { font-size: 18px; }
+
+body {
+  margin: 0;
+  padding: 3rem 1.5rem 6rem;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+main { max-width: var(--maxw); margin: 0 auto; }
+
+/* ---- Masthead --------------------------------------------------------- */
+.masthead { border-bottom: 2px solid var(--ink); padding-bottom: 1rem; margin-bottom: 2.5rem; }
+.eyebrow {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.72rem;
+  color: var(--accent); font-weight: 700; margin: 0 0 0.4rem;
+}
+.masthead h1 { font-size: 2.1rem; line-height: 1.15; margin: 0 0 0.5rem; font-weight: 700; }
+.masthead .subtitle { color: var(--ink-soft); font-size: 1.05rem; font-style: italic; margin: 0; }
+
+/* ---- Typography ------------------------------------------------------- */
+h2 {
+  font-size: 1.4rem; margin: 2.8rem 0 0.8rem; padding-top: 0.6rem;
+  border-top: 1px solid var(--rule); font-weight: 700;
+}
+h3 { font-size: 1.12rem; margin: 1.8rem 0 0.4rem; font-weight: 700; }
+p { margin: 0.7rem 0; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
+a:hover { border-bottom-color: var(--accent); }
+strong { font-weight: 700; }
+ul, ol { padding-left: 1.3rem; }
+li { margin: 0.35rem 0; }
+
+code {
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.82em; background: var(--code-bg); padding: 0.1em 0.35em;
+  border-radius: 4px; color: #5a3e2b;
+}
+
+/* ---- Callouts --------------------------------------------------------- */
+.note, .analogy, .win {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.95rem; border-radius: 10px; padding: 1rem 1.2rem; margin: 1.4rem 0;
+}
+.analogy { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+.note    { background: #fbf6e8; border-left: 4px solid #d8a72a; }
+.win     { background: var(--new-soft); border-left: 4px solid var(--new); }
+.callout-label {
+  display: block; text-transform: uppercase; letter-spacing: 0.1em;
+  font-size: 0.68rem; font-weight: 700; margin-bottom: 0.25rem; opacity: 0.75;
+}
+
+/* ---- Old vs New comparison ------------------------------------------- */
+.vs { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.4rem 0; }
+.vs .col {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.9rem; border-radius: 10px; padding: 1rem 1.1rem;
+}
+.vs .old { background: var(--old-soft); border-top: 4px solid var(--old); }
+.vs .new { background: var(--new-soft); border-top: 4px solid var(--new); }
+.vs .col h4 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+.vs .col .tag {
+  display: inline-block; font-size: 0.65rem; text-transform: uppercase;
+  letter-spacing: 0.08em; font-weight: 700; padding: 0.15em 0.5em;
+  border-radius: 999px; margin-bottom: 0.5rem;
+}
+.vs .old .tag { background: var(--old); color: white; }
+.vs .new .tag { background: var(--new); color: white; }
+.vs ul { padding-left: 1.1rem; margin: 0.4rem 0 0; }
+
+table.compare {
+  width: 100%; border-collapse: collapse; margin: 1.4rem 0; font-size: 0.9rem;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+table.compare th, table.compare td {
+  text-align: left; padding: 0.6rem 0.7rem; border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+table.compare thead th { border-bottom: 2px solid var(--ink); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
+table.compare tbody th { font-weight: 700; }
+table.compare .old-cell { color: var(--old); }
+table.compare .new-cell { color: var(--new); }
+
+/* ---- Layer / stack diagram (reusable) --------------------------------- */
+.stacks { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin: 1.6rem 0; }
+.stack {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.stack .stack-title {
+  text-align: center; font-weight: 700; font-size: 0.9rem; margin-bottom: 0.5rem;
+}
+.stack .stack-title code { font-size: 0.85em; }
+.layer {
+  border-radius: 8px; padding: 0.6rem 0.8rem; margin: 0.3rem 0; text-align: center;
+  border: 1px solid rgba(0,0,0,0.08);
+}
+.layer .lname { font-weight: 700; font-size: 0.9rem; }
+.layer .lrole { display: block; font-size: 0.72rem; opacity: 0.8; margin-top: 0.1rem; }
+.layer.l-framework { background: var(--accent); color: #fff; border-color: var(--accent); }
+.layer.l-framework .lrole { opacity: 0.9; }
+.layer.l-renderer  { background: var(--new-soft); }
+.layer.l-react     { background: #eaf0f6; }
+.layer.l-lang      { background: var(--code-bg); }
+.stack .arrow { text-align: center; color: var(--ink-faint); font-size: 0.9rem; line-height: 1; margin: 0.05rem 0; }
+.stack-caption { text-align: center; font-size: 0.75rem; color: var(--ink-faint); margin-top: 0.4rem; }
+
+/* ---- File tree -------------------------------------------------------- */
+.tree {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 0.8rem;
+  background: var(--code-bg); border-radius: 10px; padding: 1.1rem 1.3rem;
+  line-height: 1.7; margin: 1.4rem 0; overflow-x: auto;
+}
+.tree .dir { color: var(--accent); font-weight: 700; }
+.tree .cmt { color: var(--ink-faint); }
+
+/* ---- Footer / nav ----------------------------------------------------- */
+.lesson-footer { margin-top: 3.5rem; border-top: 2px solid var(--ink); padding-top: 1.2rem; }
+.next-lessons {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 0.9rem;
+}
+.next-lessons li { color: var(--ink-soft); }
+.next-lessons li.ready { color: var(--ink); }
+.teacher-reminder {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--accent); color: #fff; border-radius: 10px;
+  padding: 1rem 1.2rem; margin: 2rem 0; font-size: 0.95rem;
+}
+.teacher-reminder strong { color: #fff; }
+.source {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.9rem; background: #fff; border: 1px solid var(--rule);
+  border-radius: 10px; padding: 1rem 1.2rem; margin: 1.6rem 0;
+}
+.source .callout-label { color: var(--accent); }
+
+@media (max-width: 640px) {
+  html { font-size: 16px; }
+  .vs { grid-template-columns: 1fr; }
+}
+
+@media print {
+  body { background: #fff; padding: 0; }
+  .teacher-reminder { background: #fff; color: var(--ink); border: 1px solid var(--rule); }
+  a { color: var(--ink); border: none; }
+}
